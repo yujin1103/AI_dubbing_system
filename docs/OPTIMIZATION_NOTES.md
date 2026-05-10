@@ -141,3 +141,44 @@ export LATENTSYNC_TEACACHE=0.1
 - **GFPGAN-TRT**: 후처리 22분 → ~7분 (진행 중)
 - **TRT FP8 재빌드**: 추가 +20% 가능 (NVIDIA Modelopt 사용)
 - **DeepCache vs TeaCache**: 둘 중 더 잘 맞는 것 선택 (TeaCache 채택)
+
+
+---
+
+## 2026-05-11 — 2단계 가속 (GFPGAN 후처리 + RetinaFace)
+
+### 측정 결과 (1080p 64초 영상 기준)
+
+| Run | 설정 | 시간 | baseline 대비 |
+|---|---|---|---|
+| baseline | GFPGAN PyTorch FP32 + face_helper | 18:00 (1080s) | – |
+| TRT GFPGAN | TRT BF16 generator (FP16 broken) | 15:24 (924s) | −14% |
+| + TRT RetinaFace | + 4-resolution dispatch (HD/FHD/QHD/UHD) | ~14:55 (예상) | −17% |
+
+### 핵심 발견
+
+1. **GFPGAN FP16은 사용 불가** — StyleGAN2 modulated conv weight^2.sum 이 FP16 overflow → PSNR 13.9 dB. **BF16 엔진**이 정답 (PSNR 49.8 dB)
+2. **RetinaFace TRT 효과는 ~2%** — forward 자체는 5.7× 가속이지만 전체에서 차지하는 비중 작음. 진짜 병목은 **alignment+paste-back warpAffine (CPU)**
+3. **다중 해상도 인프라**: HD 720p / FHD 1080p / QHD 1440p / UHD 2160p 4개 정적 엔진 + 자동 dispatcher → 미래 UI 해상도 선택 대비
+
+### 추가 가속 후보 (품질 무손실 조건)
+
+- **GPU warpAffine** (alignment + paste-back) — 별도 spawn task 진행 중, 예상 −17%
+- NMS GPU化 (torchvision.ops.nms): −3%
+- CUDA graph capture: −10%
+- LatentSync VAE TRT: LatentSync 단계 −15% 별도 절감
+
+### upscale=2 측정 (참고)
+
+| 모드 | 시간 (단독 추정) | 출력 해상도 | 파일 크기 |
+|---|---|---|---|
+| upscale=1 (현재) | 15:24 | 512×512 face | 42 MB |
+| upscale=2 | ~20분 (단독) / 34:55 (GPU 경합) | 1024×1024 face | 126 MB |
+
+→ 디테일 4배 향상 / 시간 +30% (GPU 경합 빼고). 품질 우선이면 upscale=2 권장.
+
+### 추가 최적화 인프라 (zero quality drop)
+
+- `patches/retinaface_postprocess_gpu.py` — facexlib NMS → torchvision.ops.nms (GPU)
+  - 동일 IoU 알고리즘, 결과 비트단위 동일
+  - face 검출 후처리 ~30ms → ~3ms
