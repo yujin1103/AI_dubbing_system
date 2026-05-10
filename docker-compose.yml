@@ -1,0 +1,78 @@
+## ============================================================
+##  AI 더빙 파이프라인 — 단일 오케스트레이터 구조
+##  베이스: NGC PyTorch 26.02 (Blackwell sm_120 네이티브)
+##
+##  빌드 + 실행:
+##    docker build -f dockerfile.base -t tts_base:latest .
+##    docker build -f dockerfile.orchestrator -t dubbing_pipeline:latest .
+##    docker compose up -d
+##    docker exec -it dubbing_pipeline bash
+##
+##  더빙 (LatentSync 립싱크 기본):
+##    python orchestrator.py --input /workspace/media/input/test.mp4 \
+##      --lang ko --speakers 1 --content-type lecture --enable-lipsync
+##
+##  더빙 (MuseTalk 립싱크):
+##    python orchestrator.py --input ... --enable-lipsync \
+##      --lipsync-engine musetalk --lipsync-enhance-face
+##
+##  파인튜닝된 LatentSync 가중치 사용:
+##    python orchestrator.py --input ... --enable-lipsync \
+##      --lipsync-ckpt /workspace/media/training_outputs/full_train/checkpoint-50000.pt
+##
+##  학습 (LatentSync 한국어 LoRA, ~10시간):
+##    cd /opt/LatentSync && \
+##      PYTORCH_CUDA_ALLOC_CONF="expandable_segments:True,max_split_size_mb:128,garbage_collection_threshold:0.6" \
+##      /opt/venv_lipsync/bin/python -m torch.distributed.run \
+##        --nproc_per_node=1 --master_port=29501 \
+##        -m scripts.train_unet --unet_config_path full_train.yaml
+## ============================================================
+
+services:
+
+  tts_base:
+    build:
+      context: .
+      dockerfile: dockerfile.base
+    image: tts_base:latest
+    profiles:
+      - base
+
+  dubbing_pipeline:
+    build:
+      context: .
+      dockerfile: dockerfile.orchestrator
+    image: dubbing_pipeline:latest
+    container_name: dubbing_pipeline
+    # 🚀 RAM 50g (WSL2 기본 한계 호환, 이전 검증된 값), GPU 전체, IPC host (CUDA 공유메모리 가속)
+    #    50g가 WSL2 default 메모리 할당과 충돌 안 함. 더 늘리려면 %USERPROFILE%\.wslconfig 에 [wsl2] memory=58GB 추가 필요.
+    shm_size: '4gb'
+    ipc: host
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: 1
+              capabilities: [gpu]
+        limits:
+          memory: 50g
+    entrypoint: sleep
+    command: infinity
+    environment:
+      - NVIDIA_VISIBLE_DEVICES=all
+      - NVIDIA_DRIVER_CAPABILITIES=compute,utility
+      - HF_TOKEN=${HF_TOKEN}
+      # 🚀 PyTorch 성능 (TF32, 단편화 방지)
+      - PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True,max_split_size_mb:512
+      - NVIDIA_TF32_OVERRIDE=1
+      - CUBLAS_WORKSPACE_CONFIG=:4096:8
+      - HF_HOME=/workspace/media/model_cache/huggingface
+      - HUGGINGFACE_HUB_CACHE=/workspace/media/model_cache/huggingface/hub
+      - MODELSCOPE_CACHE=/workspace/media/model_cache/modelscope
+      - TORCH_HOME=/workspace/media/model_cache/torch
+      - VECTORENGINE_API_KEY=${VECTORENGINE_API_KEY}
+      - VECTORENGINE_BASE_URL=https://api.vectorengine.ai
+      - VECTORENGINE_MODEL=gpt-5.4
+    volumes:
+      - //e/TTS_capstone:/workspace

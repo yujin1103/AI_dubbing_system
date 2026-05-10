@@ -1,0 +1,12 @@
+model_cache/
+media/
+scripts/
+.vscode/
+*.zip
+*.mp4
+*.wav
+*.m4a
+*.mp3
+*.flac
+.env
+.git/

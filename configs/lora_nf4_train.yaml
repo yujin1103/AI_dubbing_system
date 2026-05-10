@@ -1,0 +1,117 @@
+# LatentSync LoRA+ 본 학습 — 한국어 AIHub 538
+# 베이스: lora_smoke.yaml + PROJECT_STATE 권장 settings
+# 데이터: TS1/10/20/30/40/50 multi-angle (A 100% + B/C/F/G 50%)
+# 학습: 50k step, peak 14.5GB VRAM verified
+data:
+  syncnet_config_path: configs/syncnet/syncnet_16_pixel_attn.yaml
+  train_output_dir: /workspace/media/training_outputs/lora_nf4_train
+  train_fileslist: ""
+  train_data_dir: /workspace/media/aihub_processed/train
+  audio_embeds_cache_dir: /workspace/media/audio_cache/embeds
+  audio_mel_cache_dir: /workspace/media/audio_cache/mel
+
+  val_video_path: assets/demo1_video.mp4
+  val_audio_path: assets/demo1_audio.wav
+  batch_size: 1              # 검증값 (peak 14.5GB)
+  num_workers: 8             # 2 → 8 (DataLoader 병목 해소, GPU util ↑ 기대)
+  num_frames: 4              # 16GB fit
+  resolution: 256
+  mask_image_path: latentsync/utils/mask.png
+  audio_sample_rate: 16000
+  video_fps: 25
+  audio_feat_length: [2, 2]
+
+ckpt:
+  resume_ckpt_path: /workspace/media/lora/latentsync_ko_50k.pt
+  save_ckpt_steps: 5000      # 5k마다 체크포인트 (50k = 10개 ckpt)
+
+run:
+  pixel_space_supervise: false   # VAE decode skip (~3-4GB 절감)
+  use_syncnet: false
+  sync_loss_weight: 0.0
+  perceptual_loss_weight: 0.0    # LPIPS off
+  recon_loss_weight: 1
+  guidance_scale: 1.5
+  trepa_loss_weight: 0
+  inference_steps: 20
+  trainable_modules:
+    - motion_modules.
+    - attn2.
+  # === LoRA+ 본 학습 (PROJECT_STATE 권장값) ===
+  use_lora: true
+  lora_r: 32                 # rank (smoke 16 → 본 32)
+  lora_alpha: 16             # alpha=r/2 (smoother transfer)
+  lora_dropout: 0.0
+  lora_target_modules:       # attn1+attn2+motion_modules cross/self-attention 전체
+    - to_q
+    - to_k
+    - to_v
+    - to_out.0
+  use_lora_plus: false       # LoRA+ 패치 적용 실패 → 일반 LoRA (50k step으로 충분 보완)
+  lora_plus_ratio: 16
+
+  seed: 1247
+  use_mixed_noise: true
+  mixed_noise_alpha: 1
+  mixed_precision_training: true
+  enable_gradient_checkpointing: false   # 14.5GB fit, off로 속도 ↑
+  max_train_steps: 50000                 # 본 학습 50k step
+  max_train_epochs: -1
+
+optimizer:
+  lr: 1e-4              # LoRA 표준 lr
+  scale_lr: false
+  max_grad_norm: 1.0
+  lr_scheduler: constant
+  lr_warmup_steps: 0
+  use_8bit_adam: true   # bitsandbytes 8-bit AdamW (필수)
+
+model:
+  act_fn: silu
+  add_audio_layer: true
+  attention_head_dim: 8
+  block_out_channels: [320, 640, 1280, 1280]
+  center_input_sample: false
+  cross_attention_dim: 384
+  down_block_types:
+    [
+      "CrossAttnDownBlock3D",
+      "CrossAttnDownBlock3D",
+      "CrossAttnDownBlock3D",
+      "DownBlock3D",
+    ]
+  mid_block_type: UNetMidBlock3DCrossAttn
+  up_block_types:
+    [
+      "UpBlock3D",
+      "CrossAttnUpBlock3D",
+      "CrossAttnUpBlock3D",
+      "CrossAttnUpBlock3D",
+    ]
+  downsample_padding: 1
+  flip_sin_to_cos: true
+  freq_shift: 0
+  in_channels: 13
+  layers_per_block: 2
+  mid_block_scale_factor: 1
+  norm_eps: 1e-5
+  norm_num_groups: 32
+  out_channels: 4
+  sample_size: 64
+  resnet_time_scale_shift: default
+
+  use_motion_module: true
+  motion_module_resolutions: [1, 2, 4, 8]
+  motion_module_mid_block: false
+  motion_module_decoder_only: true
+  motion_module_type: Vanilla
+  motion_module_kwargs:
+    num_attention_heads: 8
+    num_transformer_block: 1
+    attention_block_types:
+      - Temporal_Self
+      - Temporal_Self
+    temporal_position_encoding: true
+    temporal_position_encoding_max_len: 24
+    temporal_attention_dim_div: 1
+    zero_initialize: true

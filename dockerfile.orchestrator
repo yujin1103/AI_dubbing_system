@@ -1,0 +1,218 @@
+# ============================================================
+#  AI 더빙 파이프라인 — 오케스트레이터 (LatentSync 립싱크 통합)
+# ============================================================
+FROM tts_base:latest
+
+# 1. CosyVoice3 설정
+RUN git clone --recursive https://github.com/FunAudioLLM/CosyVoice.git /opt/CosyVoice
+RUN cd /opt/CosyVoice && \
+    grep -v "openai-whisper\|whisper\|torch\|torchvision\|torchaudio\|grpcio" requirements.txt > req_f.txt && \
+    pip install --no-cache-dir -r req_f.txt
+ENV PYTHONPATH="/opt/CosyVoice:/opt/CosyVoice/third_party/Matcha-TTS"
+
+# flow.py 패치: nn.Embedding Float 텐서 방지
+RUN sed -i 's/token = self.input_embedding(torch.clamp(token, min=0)) \* mask/token = self.input_embedding(torch.clamp(token.long(), min=0)) * mask/g' \
+    /opt/CosyVoice/cosyvoice/flow/flow.py && \
+    echo "[PATCH] flow.py token.long() applied"
+
+# 2. pyannote.audio 및 모든 의존성
+RUN pip install --no-cache-dir --no-deps pyannote.audio==4.0.4 speechbrain && \
+    pip install --no-cache-dir --ignore-installed PyYAML \
+        pyannote.core pyannote.database pyannote.pipeline pyannote.metrics \
+        pytorch-metric-learning asteroid-filterbanks torch-audiomentations \
+        torchmetrics lightning einops rich safetensors pyannoteai-sdk \
+        opentelemetry-api opentelemetry-sdk opentelemetry-exporter-otlp \
+        omegaconf
+
+RUN sed -i 's/torchaudio.list_audio_backends/lambda: ["ffmpeg"]/g' \
+    /usr/local/lib/python3.12/dist-packages/pyannote/audio/core/io.py
+
+# 3. 기타 분석 도구 (+ pyrubberband, + silero-vad)
+RUN pip install --no-cache-dir funasr demucs deep-translator soundfile librosa pydub pyrubberband silero-vad
+
+# 4. openai-whisper + onnxruntime
+RUN pip install --no-cache-dir --no-deps openai-whisper tiktoken && \
+    pip uninstall -y onnxruntime 2>/dev/null; \
+    pip install --no-cache-dir --force-reinstall onnxruntime-gpu || true
+
+# 5. modelscope 패치
+RUN sed -i 's/fix_transformers_upgrade()/pass  # fix_transformers_upgrade()/' \
+    /usr/local/lib/python3.12/dist-packages/modelscope/__init__.py && \
+    echo "[PATCH] modelscope patched"
+
+# 6. transformers 4.51.3 + torchao 스텁 (순서 중요!)
+RUN pip install --no-cache-dir --force-reinstall --no-deps \
+        "transformers==4.51.3" \
+        "tokenizers==0.21.4" && \
+    pip install --no-cache-dir --no-deps "huggingface-hub==0.36.2" && \
+    echo 'TorchAoHfQuantizer = None' > \
+        /usr/local/lib/python3.12/dist-packages/transformers/quantizers/quantizer_torchao.py && \
+    echo "[PATCH] transformers 4.51.3 + quantizer_torchao stub"
+
+# 7. matplotlib 최신 재설치
+RUN pip install --no-cache-dir --force-reinstall matplotlib
+
+# onnxruntime GPU 재설치
+RUN pip uninstall -y onnxruntime 2>/dev/null; \
+    pip install --no-cache-dir --force-reinstall onnxruntime-gpu || true
+
+# 8. numpy 재고정 (반드시 마지막!)
+RUN pip install --no-cache-dir --force-reinstall "numpy==2.3.5"
+
+# 9. ASR 전용 venv (시스템 패키지 공유로 flash-attn 상속)
+RUN python3 -m venv /opt/venv_asr --system-site-packages && \
+    /opt/venv_asr/bin/pip install --no-cache-dir packaging ninja && \
+    sed -i 's/.*raise RuntimeError(CUDA_MISMATCH_MESSAGE.*/            pass/g' /usr/local/lib/python3.12/dist-packages/torch/utils/cpp_extension.py && \
+    MAX_JOBS=2 TORCH_CUDA_ARCH_LIST="12.0" /opt/venv_asr/bin/pip install --no-cache-dir flash-attn --no-build-isolation && \
+    /opt/venv_asr/bin/pip install --no-cache-dir --no-deps \
+        "transformers==4.57.6" \
+        "tokenizers>=0.22.0,<=0.23.0" && \
+    /opt/venv_asr/bin/pip install --no-cache-dir --no-deps \
+        "huggingface-hub==0.36.2" && \
+    /opt/venv_asr/bin/pip install --no-cache-dir --no-deps qwen-asr && \
+    /opt/venv_asr/bin/pip install --no-cache-dir \
+        nagisa==0.2.11 qwen-omni-utils flask sox soynlp==0.0.493 accelerate && \
+    echo 'TorchAoHfQuantizer = None' > \
+        /opt/venv_asr/lib/python3.12/site-packages/transformers/quantizers/quantizer_torchao.py && \
+    echo "[OK] venv_asr complete with Flash Attention 2!"
+
+# ============================================================
+# 🎬 10. LatentSync 1.6 립싱크 venv 의존성 (격리)
+# ============================================================
+# - 메인 venv와 의존성 충돌 방지 (diffusers/torch 버전 다름)
+# - GPU 16GB 환경에서 추론 + 학습 가능
+# - 학습 시 LoRA + LoRA+ + 8-bit AdamW로 4M params만 업데이트
+
+# 10-A. venv 생성 (시스템 패키지 공유 → torch 상속, 단 numpy는 자체 설치)
+RUN python3 -m venv /opt/venv_lipsync --system-site-packages && \
+    /opt/venv_lipsync/bin/pip install --no-cache-dir --upgrade pip
+
+# 10-A-1. numpy를 venv 자체로 1.26.4 설치 (LatentSync 호환)
+#         메인의 numpy 2.3.5와 격리됨. venv 자체 site-packages가 우선순위 높음.
+RUN /opt/venv_lipsync/bin/pip install --no-cache-dir --ignore-installed "numpy==1.26.4"
+
+# 10-B-1. 핵심 ML 라이브러리 (LatentSync 1.6 호환 버전)
+RUN /opt/venv_lipsync/bin/pip install --no-cache-dir \
+        diffusers==0.32.2 \
+        accelerate==0.28.0 \
+        einops==0.7.0 \
+        omegaconf==2.3.0 \
+        huggingface-hub==0.30.2 \
+        safetensors
+
+# 10-B-2. 비디오/이미지 처리
+RUN /opt/venv_lipsync/bin/pip install --no-cache-dir \
+        decord==0.6.0 \
+        opencv-python==4.9.0.80 \
+        imageio==2.31.1 \
+        imageio-ffmpeg==0.5.1 \
+        ffmpeg-python==0.2.0 \
+        pillow \
+        scipy
+
+# 10-B-3. 오디오 처리
+RUN /opt/venv_lipsync/bin/pip install --no-cache-dir \
+        librosa==0.10.1 \
+        soundfile \
+        python_speech_features==0.6
+
+# 10-B-4. 얼굴 감지/정렬 + LatentSync 학습 보조
+RUN /opt/venv_lipsync/bin/pip install --no-cache-dir \
+        "mediapipe>=0.10.13,<0.11" \
+        face-alignment==1.4.1 \
+        "insightface==0.7.3"
+
+# 10-B-5. LatentSync 자체 transformers (메인 venv는 4.51.3 고정 → 충돌, 격리)
+RUN /opt/venv_lipsync/bin/pip install --no-cache-dir --no-deps \
+        "transformers==4.48.0" \
+        "tokenizers>=0.20,<0.22"
+
+# 10-B-6. PyYAML + 유틸
+RUN /opt/venv_lipsync/bin/pip install --no-cache-dir \
+        PyYAML tqdm gdown
+
+# ============================================================
+# 🎓 11. LatentSync 학습/추론 + GFPGAN 후처리 의존성 (모두 venv_lipsync에)
+# ============================================================
+# - LatentSync 추론: 기본 의존성은 이미 위에 있음 (decord, opencv, mediapipe 등)
+# - LatentSync 학습 추가: kornia, lpips, DeepCache, scenedetect, lmdb
+# - GFPGAN 후처리: gfpgan, basicsr, facexlib + boilerplate
+# - 학습 메모리 최적화: bitsandbytes (8-bit AdamW)
+RUN /opt/venv_lipsync/bin/pip install --no-cache-dir \
+        "kornia==0.8.0" \
+        "lpips==0.1.4" \
+        "DeepCache==0.1.1" \
+        "scenedetect==0.6.1" \
+        "lmdb" "scikit-image" "filterpy" "addict" "tb-nightly" \
+        "insightface==0.7.3" \
+        "bitsandbytes>=0.49.0" && \
+    /opt/venv_lipsync/bin/pip install --no-cache-dir --no-deps \
+        "gfpgan==1.3.8" "basicsr==1.4.2" "facexlib==0.3.0" && \
+    echo "[OK] LatentSync 학습 + GFPGAN 의존성 설치 완료"
+
+# 11-A. basicsr PyTorch 2.x 호환 패치 (rgb_to_grayscale import 경로 변경)
+RUN DEG_FILE=$(find /opt/venv_lipsync -name "degradations.py" -path "*basicsr/data*" | head -1) && \
+    if [ -n "$DEG_FILE" ]; then \
+        sed -i 's|from torchvision.transforms.functional_tensor import rgb_to_grayscale|from torchvision.transforms.functional import rgb_to_grayscale|' "$DEG_FILE" && \
+        echo "[PATCH] basicsr degradations.py PyTorch 2.x 호환"; \
+    fi
+
+# 11-B. LoRA 학습 라이브러리 — PEFT (LatentSync UNet3D 호환 버전)
+#       PEFT 0.10이 accelerate 0.28과 호환. 0.19+는 더 새 accelerate 필요.
+RUN /opt/venv_lipsync/bin/pip install --no-cache-dir "peft==0.10.0" && \
+    echo "[OK] PEFT 0.10 설치 (LoRA 학습용)"
+
+# ============================================================
+# 🎓 12. LatentSync 학습 코드 + 모든 패치 (LoRA + 8-bit AdamW + LoRA+)
+# ============================================================
+# 학습 코드 clone
+RUN git clone --depth=1 https://github.com/bytedance/LatentSync.git /opt/LatentSync && \
+    rm -rf /opt/LatentSync/.git && \
+    echo "[OK] LatentSync 레포 clone 완료"
+
+# 12-A. 학습 코드 + 추론 마스킹 개선 패치들 — 빌드 시 자동 적용
+#   patches/latentsync_train_patch.py — 8-bit AdamW + gc/empty_cache 5 step마다
+#   patches/lora_patch.py             — use_lora 옵션 (PEFT 부착)
+#   patches/lora_save_patch.py        — LoRA-only 저장 분기
+#   patches/lora_plus_patch.py        — LoRA+ (A/B 분리 lr)
+#   patches/soft_mask_patch.py        — mask.png Gaussian feather (마스킹 경계 ↓)
+COPY patches/ /tmp/patches/
+RUN cd /opt/LatentSync && \
+    /opt/venv_lipsync/bin/python /tmp/patches/latentsync_train_patch.py && \
+    /opt/venv_lipsync/bin/python /tmp/patches/lora_patch.py && \
+    /opt/venv_lipsync/bin/python /tmp/patches/lora_save_patch.py && \
+    (/opt/venv_lipsync/bin/python /tmp/patches/lora_plus_patch.py || echo "[WARN] LoRA+ patch 스킵 (LatentSync 코드 패턴 차이, use_lora_plus: false로 우회 가능)") && \
+    /opt/venv_lipsync/bin/python /tmp/patches/soft_mask_patch.py && \
+    rm -rf /tmp/patches && \
+    echo "[OK] LatentSync 학습 + 추론 마스킹 패치 모두 적용"
+
+# 12-B. checkpoints 심볼릭 링크 (호스트 캐시 → 컨테이너)
+#       사용자가 latentsync_unet.pt 있으면 그대로 사용
+RUN rm -rf /opt/LatentSync/checkpoints && \
+    ln -s /workspace/media/model_cache/latentsync/checkpoints /opt/LatentSync/checkpoints && \
+    echo "[OK] /opt/LatentSync/checkpoints → /workspace/media/model_cache/latentsync/checkpoints"
+# ============================================================
+
+# 11. 최종 검증
+RUN python -c "import torch; print(f'torch={torch.__version__}')" && \
+    python -c "import torchaudio; print(f'torchaudio={torchaudio.__version__}')" && \
+    python -c "\
+import transformers; print(f'[OK] transformers: {transformers.__version__}'); \
+import numpy; print(f'[OK] numpy: {numpy.__version__}'); \
+"
+
+WORKDIR /workspace
+COPY orchestrator.py asr_worker.py mos_evaluator.py train_mos.py ./
+
+ENV PYTHONWARNINGS="ignore"
+ENV TRANSFORMERS_VERBOSITY="error"
+ENV TOKENIZERS_PARALLELISM="false"
+ENV FUNASR_LOG_LEVEL="ERROR"
+ENV ORT_LOG_LEVEL="ERROR"
+
+# 🎬 PyTorch의 CUDA 라이브러리(cublasLt 등) 경로 PATH 추가
+#    LatentSync/face_alignment(PyTorch 기반) 사용 — onnxruntime CUDA 12 설정 불필요
+ENV LD_LIBRARY_PATH="/usr/local/lib/python3.12/dist-packages/nvidia/cublas/lib:/usr/local/lib/python3.12/dist-packages/nvidia/cudnn/lib:/usr/local/lib/python3.12/dist-packages/nvidia/cuda_runtime/lib:$LD_LIBRARY_PATH"
+
+ENTRYPOINT ["python", "orchestrator.py"]
+CMD ["--help"]

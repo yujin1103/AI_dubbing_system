@@ -1,0 +1,206 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<style>
+  /* A4 landscape: 297×210mm. CSS 1754×1240 @ 150dpi → screenshot ×2 = 3508×2480 (300dpi) */
+  @page { size: A4 landscape; margin: 0; }
+  body {
+    font-family: 'Malgun Gothic', 'Apple SD Gothic Neo', sans-serif;
+    margin: 0;
+    background: #fafafa;
+  }
+  .page {
+    width: 1754px;
+    height: 1240px;
+    padding: 36px 44px;
+    box-sizing: border-box;
+    background: #ffffff;
+    position: relative;
+    overflow: hidden;
+  }
+  /* 헤더 */
+  .header { display: flex; align-items: flex-end; justify-content: space-between; border-bottom: 3px solid #1E2761; padding-bottom: 14px; margin-bottom: 24px; }
+  .title-block .title { font-size: 36px; font-weight: 800; color: #1E2761; letter-spacing: -0.5px; }
+  .title-block .sub { font-size: 16px; color: #555; margin-top: 6px; }
+  .header .label { font-size: 28px; font-weight: 700; color: #F96167; letter-spacing: 1px; }
+
+  /* 메인 그리드: 좌측 텍스트 + 우측 다이어그램 */
+  .body { display: grid; grid-template-columns: 1fr 1.45fr; gap: 28px; height: calc(100% - 100px); }
+
+  /* 좌측 패널 */
+  .left { display: flex; flex-direction: column; gap: 20px; }
+  .card { border: 1.5px solid #1E2761; border-radius: 8px; padding: 16px 20px; background: #ffffff; }
+  .card .h { font-size: 16px; font-weight: 700; color: #1E2761; margin-bottom: 10px; padding-bottom: 6px; border-bottom: 1.5px solid #CADCFC; display: flex; align-items: center; gap: 8px; }
+  .card .h .num { background: #1E2761; color: #fff; width: 22px; height: 22px; border-radius: 50%; display: inline-flex; align-items: center; justify-content: center; font-size: 13px; }
+  .card .desc { font-size: 13.5px; color: #222; line-height: 1.62; }
+
+  .tech-table { width: 100%; border-collapse: collapse; font-size: 12.5px; }
+  .tech-table td { padding: 6px 4px; vertical-align: top; line-height: 1.55; }
+  .tech-table td.lab { font-weight: 700; color: #1E2761; width: 95px; white-space: nowrap; }
+  .tech-table tr { border-bottom: 1px dashed #d6d6d6; }
+  .tech-table tr:last-child { border-bottom: 0; }
+  code { background: #F0F0F0; padding: 1px 5px; border-radius: 3px; font-family: Consolas, monospace; font-size: 11.5px; color: #1E2761; }
+
+  /* 우측 다이어그램 */
+  .diagram-card { border: 1.5px solid #1E2761; border-radius: 8px; padding: 18px 20px; background: #ffffff; height: 100%; box-sizing: border-box; display: flex; flex-direction: column; }
+  .diagram-card .h { font-size: 16px; font-weight: 700; color: #1E2761; margin-bottom: 12px; padding-bottom: 6px; border-bottom: 1.5px solid #CADCFC; }
+  .mermaid { flex: 1; display: flex; align-items: center; justify-content: center; }
+  .mermaid svg { max-width: 100%; max-height: 100%; height: auto !important; }
+
+  /* footer */
+  .footer { position: absolute; bottom: 14px; left: 44px; right: 44px; font-size: 10px; color: #888; display: flex; justify-content: space-between; }
+</style>
+<script src="https://cdn.jsdelivr.net/npm/mermaid@10.9.0/dist/mermaid.min.js"></script>
+</head>
+<body>
+
+<div class="page">
+
+  <div class="header">
+    <div class="title-block">
+      <div class="title">다국어 자동 더빙 시스템</div>
+      <div class="sub">영어 영상을 한국어로 자동 더빙하고 입모양까지 동기화하는 AI 파이프라인</div>
+    </div>
+    <div class="label">Pipeline</div>
+  </div>
+
+  <div class="body">
+
+    <!-- 좌측 -->
+    <div class="left">
+      <div class="card">
+        <div class="h"><span class="num">1</span> 작품명</div>
+        <div class="desc"><b>다국어 자동 더빙 시스템 — 한국어 Voice Cloning + Lip-sync</b></div>
+      </div>
+
+      <div class="card">
+        <div class="h"><span class="num">2</span> 작품 개요</div>
+        <div class="desc">영어 영상을 입력받아 한국어 더빙 영상을 자동 생성한다. <b>ffmpeg</b>과 <b>BS-Roformer</b>로 vocal과 BGM을 분리하고, <b>Silero VAD</b>로 silence를 제거한 뒤, <b>Qwen3-ASR</b>로 받아쓰기, <b>DiariZen + ECAPA-TDNN</b>으로 화자를 분리한다. <b>LightASD</b>와 <b>emotion2vec+</b>로 영상 속 화자·감정을 인식하고 <b>GPT 5.4</b>가 lip-sync syllable 가이드에 맞춰 한국어로 번역한다. <b>CosyVoice3</b>의 zero-shot voice cloning으로 화자별 한국어를 합성한 뒤, <b>LatentSync 1.6 + Korean LoRA</b>로 입모양을 맞추고 <b>GFPGAN</b>으로 화질을 복원한다. Docker 멀티 venv 4개 + daemon 3개 구조로 의존성 격리와 메모리 상주를 동시에 달성했다.</div>
+      </div>
+
+      <div class="card" style="flex:1;">
+        <div class="h"><span class="num">3</span> 주요 적용 기술 및 구조</div>
+        <table class="tech-table">
+          <tr><td class="lab">개발 도구</td><td>Docker Desktop · WSL2 · VS Code · Git / GitHub · npm (mermaid-cli, pptxgenjs, puppeteer)</td></tr>
+          <tr><td class="lab">개발 언어</td><td>Python 3.12 · Bash · JavaScript (Node.js) · CUDA 13.0</td></tr>
+          <tr><td class="lab">개발 환경</td><td>RTX 5080 16GB sm_120 (Blackwell) · Docker container 56GB · 멀티 venv 4개 · daemon 3개 (port 8901/8902/8903)</td></tr>
+          <tr><td class="lab">주요 기술</td><td>PyTorch 2.11+cu130 · PEFT 0.10 LoRA r=32 · 8-bit AdamW (bitsandbytes) · ECAPA-TDNN 임베딩 · ffmpeg loudnorm EBU R128 · DDIM 20-step · GFPGAN async I/O · ECAPA sliding window split</td></tr>
+          <tr><td class="lab">사용 모델</td><td>CosyVoice3 (Fun-CosyVoice3-0.5B) · Qwen3-ASR-1.7B · DiariZen · LightASD · emotion2vec+ Large · LatentSync 1.6 + Korean LoRA · GFPGAN v1.4 · UTMOS-style MOS · GPT 5.4</td></tr>
+          <tr><td class="lab">표준·데이터</td><td>AIHub 538 (립리딩 588영상 50k step) · EBU R128 (-23 LUFS) · 24kHz audio · 25fps video</td></tr>
+          <tr><td class="lab">출력</td><td>한국어 더빙 mp4 + JSON 리포트 (segment별 화자/감정/번역/MOS)</td></tr>
+        </table>
+      </div>
+    </div>
+
+    <!-- 우측 다이어그램 -->
+    <div class="diagram-card">
+      <div class="h">전체 파이프라인 구조</div>
+      <div class="mermaid">
+flowchart LR
+    %% ─────────── 입력 ───────────
+    video["▶ 영상<br/>video.mp4"]:::input
+
+    %% ─────────── Stage 1: 분리 ───────────
+    ffmpeg(["ffmpeg"]):::tool
+    imageFrame["Image Frame<br/>(25fps)"]:::asset
+    audio["Sound<br/>(44.1kHz)"]:::asset
+    bsr["<b>BS-Roformer</b><br/>vocal 분리"]:::model
+    bgm["Background<br/>Sound"]:::asset
+    voice["Character<br/>Voice"]:::asset
+    vad["<b>Silero VAD</b><br/>silence 제거"]:::model
+    cleanVoice["Clean<br/>Vocals"]:::asset
+
+    %% ─────────── Stage 2: 텍스트 + 화자 + 감정 ───────────
+    asr["<b>Qwen3-ASR</b><br/>받아쓰기"]:::model
+    textEng["Text Script<br/>(ENG)"]:::asset
+    diar["<b>DiariZen + ECAPA</b><br/>화자 분리"]:::model
+    spkInfo["Speaker<br/>Turns"]:::asset
+    emo["<b>emotion2vec+</b><br/>감정 인식"]:::model
+    emoList["Emotion List<br/>Sad / Angry / ..."]:::asset
+    asd["<b>LightASD</b><br/>active speaker"]:::model
+
+    %% ─────────── Stage 3: 번역 + reference ───────────
+    gpt["<b>GPT 5.4</b><br/>영-한 번역 + syllable"]:::api
+    textKor["Text Script<br/>(KOR)"]:::asset
+    mos["<b>MOS Evaluator</b><br/>품질 평가"]:::model
+    refWav["Reference<br/>Wav"]:::asset
+
+    %% ─────────── Stage 4: 합성 ───────────
+    cosy["<b>CosyVoice3</b><br/>Zero-shot<br/>Voice Cloning"]:::tts
+    voiceKor["Character<br/>Voice (KOR)"]:::asset
+
+    %% ─────────── Stage 5: 영상 결합 + 립싱크 ───────────
+    lsync["<b>LatentSync 1.6</b><br/>+ Korean LoRA"]:::model
+    gfpgan["<b>GFPGAN</b><br/>화질 복원"]:::model
+    output["▶ 한국어 더빙 영상<br/>(mp4)"]:::output
+
+    %% ─────────── 연결 ───────────
+    video --> ffmpeg
+    ffmpeg --> imageFrame
+    ffmpeg --> audio
+    audio --> bsr
+    bsr --> bgm
+    bsr --> voice
+    voice --> vad
+    vad --> cleanVoice
+
+    cleanVoice --> asr
+    asr --> textEng
+    cleanVoice --> diar
+    diar --> spkInfo
+    cleanVoice --> emo
+    emo --> emoList
+    video --> asd
+    asd --> diar
+
+    textEng --> gpt
+    emoList --> gpt
+    gpt --> textKor
+
+    spkInfo --> mos
+    cleanVoice --> mos
+    mos --> refWav
+
+    textKor --> cosy
+    refWav --> cosy
+    emoList --> cosy
+    cosy --> voiceKor
+
+    imageFrame --> lsync
+    voiceKor --> lsync
+    lsync --> gfpgan
+    gfpgan --> output
+    bgm --> output
+
+    %% ─────────── 스타일 ───────────
+    classDef input fill:#FFCDD2,stroke:#C62828,stroke-width:2px,color:#3E1010,font-weight:700
+    classDef output fill:#FFCDD2,stroke:#C62828,stroke-width:2px,color:#3E1010,font-weight:700
+    classDef tool fill:#FFF59D,stroke:#F9A825,stroke-width:1.5px,color:#3F3210
+    classDef asset fill:#FFF3E0,stroke:#FB8C00,stroke-width:1px,color:#3E2723
+    classDef model fill:#C8E6C9,stroke:#2E7D32,stroke-width:1.5px,color:#1B3D1F
+    classDef api fill:#FFF59D,stroke:#F9A825,stroke-width:2px,color:#3F3210
+    classDef tts fill:#B3E5FC,stroke:#0277BD,stroke-width:2px,color:#0D2A3F
+      </div>
+    </div>
+
+  </div>
+
+  <div class="footer">
+    <span>다국어 자동 더빙 시스템 · TTS Capstone</span>
+    <span>5 Stage · 12 Model · 1 Pipeline</span>
+  </div>
+
+</div>
+
+<script>
+mermaid.initialize({
+  startOnLoad: true,
+  theme: 'neutral',
+  flowchart: { htmlLabels: true, curve: 'basis', padding: 8, nodeSpacing: 25, rankSpacing: 35 },
+  themeVariables: { fontFamily: 'Malgun Gothic, Apple SD Gothic Neo, sans-serif', fontSize: '12px' }
+});
+</script>
+
+</body>
+</html>

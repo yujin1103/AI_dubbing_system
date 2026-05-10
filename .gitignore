@@ -1,0 +1,137 @@
+# ========================
+# 1. AI 모델 캐시 및 데이터셋 (대용량)
+# ========================
+media/model_cache/
+media/datasets/
+media/aihub_extracted/
+media/aihub_processed/
+media/training_data/
+media/training_outputs/
+media/lora/
+media/audio_cache/
+media/cache/
+
+# ========================
+# 2. 영상 / 오디오 입출력
+# ========================
+media/input/
+media/output/
+media/chunks/
+media/vocals/
+media/bgm/
+media/dubbed/
+media/reference/
+media/reports/
+media/runs/
+
+# ========================
+# 3. 로그
+# ========================
+logs/
+*.log
+*.out
+media/logs/
+
+# ========================
+# 4. 보안 / 환경 변수
+# ========================
+.env
+.env.local
+*.key
+*.pem
+secrets.yaml
+
+# ========================
+# 5. 파이썬 캐시
+# ========================
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.Python
+*.egg-info/
+.pytest_cache/
+.mypy_cache/
+
+# ========================
+# 6. Node 캐시 (이미지 생성용)
+# ========================
+node_modules/
+package-lock.json
+
+# ========================
+# 7. IDE / 시스템
+# ========================
+.DS_Store
+.vscode/
+.idea/
+*.swp
+Thumbs.db
+
+# ========================
+# 8. 임시·실험 파일 (Repo에 안 올리는 것)
+# ========================
+*_test.py
+_smoke_*
+diag_*.py
+compare_runs.py
+count.py
+
+# ========================
+# 9. 큰 PNG 산출물 (필요 시 주석)
+# ========================
+# 다음 PNG는 README에 사용되니 커밋 OK:
+#   pipeline_v3.png, system_overview.png, model_io_matrix.png, poster_a4.png
+# 임시 PNG / 디버그 frame은 빼기:
+*_frame*.png
+patches/*.png
+patches/deprecated/
+
+# ========================
+# 11. 모델 weights (큰 파일)
+# ========================
+weights/
+
+# ========================
+# 12. archive/ 폴더 (사용자 보관용 — repo에 안 올림)
+# ========================
+archive/
+
+# ========================
+# 10. 한국어/일본어 한자 임시 파일
+# ========================
+*.tmp
+*.bak
+~$*
+
+# ========================
+# 13. Claude Code 작업 디렉토리
+# ========================
+.claude/
+
+# ========================
+# 14. TensorRT 작업 결과물 (대용량 + 환경 의존)
+# ========================
+trt_work/
+*.trt
+*.engine
+
+# ========================
+# 15. 테스트 출력 영상 (각 36MB)
+# ========================
+test_*.mp4
+*_baseline.mp4
+*_dpm*.mp4
+*_trt*.mp4
+
+# ========================
+# 16. SageAttention 점검 스크립트 (transient)
+# ========================
+check_sage*.py
+video_extraction.py
+
+# ========================
+# 17. Word XML / 임시 스크립트 원본
+# ========================
+media/old_script_raw.xml
+media/*.xml
