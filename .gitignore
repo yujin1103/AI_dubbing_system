@@ -135,3 +135,10 @@ video_extraction.py
 # ========================
 media/old_script_raw.xml
 media/*.xml
+
+# ========================
+# 18. spawn task / 작업용 임시 파일
+# ========================
+_tmp_*.md
+_tmp_*.txt
+count_chars.py
