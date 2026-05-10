@@ -1,0 +1,101 @@
+---
+config:
+  theme: base
+  themeVariables:
+    primaryColor: '#FFFFFF'
+    primaryTextColor: '#1A1A1A'
+    primaryBorderColor: '#BBB'
+    lineColor: '#888'
+    fontFamily: 'Pretendard, Inter, sans-serif'
+    fontSize: '15px'
+  flowchart:
+    nodeSpacing: 38
+    rankSpacing: 95
+    htmlLabels: true
+    curve: basis
+    padding: 16
+    defaultRenderer: 'elk'
+---
+flowchart TD
+    INPUT(["입력 영상  input/{stem}.mp4<br/><span style='color:#888;font-size:12px'>원본 비디오 · 44.1kHz / 2ch</span>"]):::input
+
+    subgraph S1["① 오디오 분리  (extract · separate · vad)"]
+        direction LR
+        FFM(["<b>ffmpeg</b><br/>오디오 추출"]):::tool
+        BSR(["<b>BS-RoFormer + MDX23C</b><br/>보컬 / 배경 음원 분리"]):::model
+        WAV1(["dialogue.wav · bgm.wav<br/><span style='color:#888;font-size:12px'>분리된 오디오</span>"]):::artifact
+        VAD(["<b>Silero-VAD</b><br/>비발화 → bgm 재배치"]):::tool
+        WAV2(["dialogue.wav (clean)<br/><span style='color:#888;font-size:12px'>발화 영역만 남음</span>"]):::artifact
+        FFM --> BSR --> WAV1 --> VAD --> WAV2
+    end
+
+    subgraph S2["② 화자 분리 + 청크화  (diarize · stabilize · merge · cut)"]
+        direction LR
+        DIAR(["<b>DiariZen + WeSpeaker</b><br/>화자 분리 + 임베딩"]):::model
+        STAB(["<b>stabilize_diarization</b><br/>5-pass 안정화"]):::tool
+        MERGE(["<b>merge_speaker_chunks</b><br/>연속 발화 병합"]):::tool
+        CUT(["<b>cut_chunks (ffmpeg)</b><br/>청크 wav 분할"]):::tool
+        OUT2(["speaker_chunks.json + chunks/*.wav<br/><span style='color:#888;font-size:12px'>청크 메타 + 오디오</span>"]):::artifact
+        DIAR --> STAB --> MERGE --> CUT --> OUT2
+    end
+
+    subgraph S3["③ 음성 분석  (병렬: 감정 + ASR)"]
+        direction LR
+        EMO(["<b>emotion2vec_plus_large</b><br/>감정 분석 (FunASR)<br/><span style='color:#888;font-size:12px'>7-class label</span>"]):::model
+        EMOJ(["emotion.json<br/><span style='color:#888;font-size:12px'>label · probs · tts_emotion_hint</span>"]):::artifact
+        ASR(["<b>Qwen3-ASR-1.7B</b><br/>음성 인식 (float16)<br/><span style='color:#888;font-size:12px'>+ audio_features 피처 추출</span>"]):::model
+        ASRJ(["asr.json<br/><span style='color:#888;font-size:12px'>text_src · features · gates</span>"]):::artifact
+        EMO --> EMOJ
+        ASR --> ASRJ
+    end
+
+    subgraph S4["④ 번역 + 타임라인 + TTS 디렉티브"]
+        direction LR
+        TR(["<b>GPT 5.4</b><br/>EN → KO 번역<br/><span style='color:#888;font-size:12px'>context_refine + budget rewrite x2</span>"]):::api
+        TRJ(["translated.json<br/><span style='color:#888;font-size:12px'>text_translated · text_tts</span>"]):::artifact
+        BLD(["<b>build_master_timeline</b><br/>ASR · 번역 · 감정 통합"]):::tool
+        INST(["<b>GPT 5.4</b><br/>TTS instruct 생성<br/><span style='color:#888;font-size:12px'>batch 6 · style instruct</span>"]):::api
+        MTJ(["master_timeline_{engine}.json<br/><span style='color:#888;font-size:12px'>통합 타임라인</span>"]):::artifact
+        TR --> TRJ --> BLD --> INST --> MTJ
+    end
+
+    subgraph S5["⑤ 한국어 음성 합성  (Voice Cloning)"]
+        direction LR
+        TTS(["<b>Fun-CosyVoice3-0.5B</b><br/>Zero-shot Voice Cloning<br/><span style='color:#888;font-size:12px'>cross-lingual · tempo 0.8–1.25</span>"]):::tts
+        DUB(["dub/{stem}_{engine}/*_dub.wav<br/><span style='color:#888;font-size:12px'>청크별 더빙 오디오 · 44.1kHz / 1ch</span>"]):::artifact
+        VAL(["<b>Qwen3-ASR validate</b><br/>재인식 검증 (옵션)<br/><span style='color:#888;font-size:12px'>기본 off · mark_stale_on_fail</span>"]):::model
+        TTS --> DUB --> VAL
+    end
+
+    subgraph S6["⑥ 최종 합성 + 영상 출력  (compose · mux)"]
+        direction LR
+        COMP(["<b>compose_audio</b><br/>더빙 + 배경 믹싱<br/><span style='color:#888;font-size:12px'>background 0.8 · peak −1 dBFS</span>"]):::tool
+        FINAL(["final_dub_{engine}.wav<br/><span style='color:#888;font-size:12px'>최종 오디오 · 44.1kHz / 2ch</span>"]):::artifact
+        MUX(["<b>ffmpeg mux</b><br/>영상 + 오디오 결합<br/><span style='color:#888;font-size:12px'>AAC 192k · video copy</span>"]):::tool
+        COMP --> FINAL --> MUX
+    end
+
+    OUTPUT(["더빙 영상  output/{stem}/output_{engine}.mp4<br/><span style='color:#888;font-size:12px'>한국어 더빙 영상 · AAC 192k · 44.1kHz / 2ch</span>"]):::output
+
+    INPUT --> S1
+    S1 --> S2
+    S2 --> S3
+    S3 --> S4
+    S4 --> S5
+    S5 --> S6
+    S6 --> OUTPUT
+
+    classDef input fill:#FFE4EC,stroke:#E8A0BB,stroke-width:1.5px,color:#1A1A1A,rx:14,ry:14
+    classDef output fill:#FFE4EC,stroke:#E8A0BB,stroke-width:1.5px,color:#1A1A1A,rx:14,ry:14
+    classDef model fill:#DAF1E2,stroke:#7DC498,stroke-width:1.2px,color:#1A1A1A,rx:14,ry:14
+    classDef tool fill:#FFF1CD,stroke:#E8C16E,stroke-width:1.2px,color:#1A1A1A,rx:14,ry:14
+    classDef api fill:#DCE6F8,stroke:#86A8DD,stroke-width:1.2px,color:#1A1A1A,rx:14,ry:14
+    classDef tts fill:#FFD7E5,stroke:#E296B6,stroke-width:1.2px,color:#1A1A1A,rx:14,ry:14
+    classDef artifact fill:#FBF8E4,stroke:#D9CB91,stroke-width:1px,color:#1A1A1A,rx:14,ry:14
+
+    style S1 fill:#FCFCFC,stroke:#D5D5D5,stroke-width:1px,stroke-dasharray:5 4
+    style S2 fill:#FCFCFC,stroke:#D5D5D5,stroke-width:1px,stroke-dasharray:5 4
+    style S3 fill:#FCFCFC,stroke:#D5D5D5,stroke-width:1px,stroke-dasharray:5 4
+    style S4 fill:#FCFCFC,stroke:#D5D5D5,stroke-width:1px,stroke-dasharray:5 4
+    style S5 fill:#FCFCFC,stroke:#D5D5D5,stroke-width:1px,stroke-dasharray:5 4
+    style S6 fill:#FCFCFC,stroke:#D5D5D5,stroke-width:1px,stroke-dasharray:5 4
