@@ -4,7 +4,7 @@
 >
 > 4 Stage · 10 Model · Docker 멀티 venv · 3 Daemon
 
-![Pipeline](./pipeline_v3.png)
+![Pipeline](./pipeline_diagram.png)
 
 ---
 
@@ -137,7 +137,7 @@ AI_dubbing_system/
 ├── docs/                       # 추가 문서
 │
 ├── PIPELINE_OVERVIEW.md        # 시스템 가이드 문서
-├── pipeline_v3.png             # 메인 다이어그램
+├── pipeline_diagram.png        # 메인 다이어그램 (6 stage)
 │
 └── media/                      # .gitignore 처리 (대용량)
     ├── input/                  # 입력 영상
