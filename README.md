@@ -214,6 +214,53 @@ LATENTSYNC_TEACACHE=0.1                                 # TeaCache rel_l1 thresh
 
 ---
 
+## 🎬 Optional: 입모양 동기화 단계 (실험적)
+
+기본 더빙 파이프라인 (① 분리 ~ ④ 합성)으로도 한국어 더빙 mp4가 생성된다. 이후 **입모양 동기화 + 화질 복원 단계는 선택 사항**이며 별도 가중치·환경변수로 활성화한다.
+
+### 활성화 방법
+
+```bash
+# 환경변수 (가속 옵션)
+export LATENTSYNC_USE_TRT=1
+export LATENTSYNC_TRT_ENGINE=/workspace/trt_work/engines/unet_fp16.trt
+export LATENTSYNC_SCHEDULER=dpm
+export LATENTSYNC_TEACACHE=0.1
+
+# orchestrator 플래그
+docker exec dubbing_pipeline /opt/venv_lipsync/bin/python /workspace/orchestrator.py \
+  --input /workspace/media/input/video.mp4 \
+  --lang ko \
+  --enable-lipsync --use-lora \
+  --enable-postprocess --postprocess-upscale 2 \
+  --smart-daemon
+```
+
+### 비활성화 (기본값)
+
+`--enable-lipsync` 플래그 없이 실행 → ④ CosyVoice TTS 단계에서 종료, 한국어 음성으로 BGM 재믹스한 mp4만 생성. 환경변수도 모두 무시.
+
+### 추가 의존성
+
+| 항목 | 비고 |
+|---|---|
+| **LatentSync 1.6** 가중치 | HuggingFace 자동 다운로드 (4.8 GB) |
+| **Korean LoRA** | `media/lora/latentsync_ko.pt` 별도 학습 또는 제공 |
+| **TensorRT FP16 엔진** | `unet_fp16.trt` (2.55 GB) — 별도 빌드 필요 |
+| **GFPGAN v1.4** | `/opt/gfpgan_models/GFPGANv1.4.pth` (333 MB) |
+
+### 단계 비활성화 시 효과
+
+| 단계 | 활성화 (full) | 비활성화 (default) |
+|---|---|---|
+| 결과 mp4 | 한국어 음성 + 입모양 동기화 + 얼굴 화질 복원 | 한국어 음성만 (영상 그대로) |
+| 64초 영상 처리 시간 | ~33분 (LatentSync 9분 + GFPGAN 22분) | ~10분 (TTS·믹싱까지만) |
+| 추가 디스크 | ~8 GB (가중치·엔진) | 0 |
+
+> 기본 사용 사례 (TED·강연·인터뷰 자막 대체)는 비활성화로 충분. 드라마·영화처럼 시각적 이질감을 최소화해야 할 때만 활성화 권장.
+
+---
+
 ## ⚠️ 알려진 한계
 
 | 항목 | 영향 | 회피 방법 |
