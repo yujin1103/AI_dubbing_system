@@ -36,7 +36,12 @@ RESOLUTIONS = [
 
 
 def _engine_path(engine_dir: str, name: str) -> str:
-    return os.path.join(engine_dir, f"retinaface_r50_{name}_fp16.trt")
+    """BF16 우선 (conf precision 안전), 없으면 FP16 fallback."""
+    bf16_path = os.path.join(engine_dir, f"retinaface_r50_{name}_bf16.trt")
+    fp16_path = os.path.join(engine_dir, f"retinaface_r50_{name}_fp16.trt")
+    if os.path.isfile(bf16_path):
+        return bf16_path
+    return fp16_path
 
 
 def _pick_resolution(h: int, w: int):

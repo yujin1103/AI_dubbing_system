@@ -256,3 +256,61 @@ total:               484.2 s
   --output /workspace/media/output/OUTPUT.mp4 \
   --upscale 1 [--retinaface-trt] [--detail-timing]
 ```
+
+---
+
+## 2026-05-11 (오후) — v3 + downscale-detect (Phase 3)
+
+### 측정 결과 (1080p 64초 영상, clean GPU 상태)
+
+| Run | 설정 | 시간 | enhance loop |
+|---|---|---|---|
+| v2 baseline | PT detect + GPU paste | 10:07 (607s) | 532s |
+| **v3 + downscale=2** | **detect at 540p**, paste at 1080p | **4:14** (254s) | 181s |
+
+v2 vs v3 품질 (n=40 sampled frames):
+- PSNR median: **44.83 dB** (목표 45 살짝 미달, p5 42.49)
+- SSIM mean: **0.9907** ✓ (목표 0.99)
+- 시각적 구분 불가
+
+### 시간 절감 원인
+
+| 단계 | v2 | v3 downscale=2 | 단축 |
+|---|---|---|---|
+| detect | 156.8s (97.9 ms/frame) | 48.6s (30.3 ms/frame) | **−69%** ⭐ |
+| gfpgan | 144.7s (90.4 ms/frame) | 30.3s (18.9 ms/frame) | −79% |
+| paste | 109.7s (68.5 ms/frame) | 98.1s (61.3 ms/frame) | −11% |
+
+→ detection은 540p input (RetinaFace anchors 4× 감소)이라 −69%.
+   gfpgan/paste도 감소는 GPU 캐시 효과 + face count 약간 변동 (1407 → 1454).
+
+### 시도했지만 사용 불가능한 최적화
+
+| 옵션 | 결과 |
+|---|---|
+| **BF16 RetinaFace TRT** | engine smoke test 동작 (conf 1.0) but full pipeline에서 cuDNN sublibrary loading 실패 |
+| **NMS GPU patch** | 동일한 cuDNN 충돌 (BF16 TRT 와 같은 원인 추정) |
+
+→ TRT 컨텍스트 + PyTorch face_parse cuDNN 충돌 가능성. 별도 환경 분리 필요.
+
+### 권장 사용
+
+```bash
+# 빠름 (4:14, 살짝 미세 품질 감소)
+/opt/venv_gfpgan/bin/python /workspace/patches/gfpgan_async_postprocess_trt_v3.py \
+  --input  INPUT.mp4 --output OUTPUT.mp4 \
+  --upscale 1 --downscale-detect 2 [--detail-timing]
+
+# 정밀 (10:07, 품질 최우선)
+/opt/venv_gfpgan/bin/python /workspace/patches/gfpgan_async_postprocess_trt_v2.py \
+  --input  INPUT.mp4 --output OUTPUT.mp4 --upscale 1
+```
+
+### 전체 64초 영상 파이프라인 누적 단축
+
+| 구성 | 시간 |
+|---|---|
+| 더빙 단계 (변동 없음) | ~10:00 |
+| LatentSync I (TRT + DPM + TeaCache) | 9:15 |
+| GFPGAN v3 + downscale=2 | 4:14 |
+| **TOTAL** | **23:29** (1차 baseline 61:30 대비 −62%, 38분 절감) |
