@@ -3106,12 +3106,19 @@ def mix_audio(
 def apply_latent_sync(
     dubbed_video_path: str,
     output_path: str,
-    inference_steps: int = 20,   # 5/7 revert: 15→20 (한국어 phoneme 정확도 우선, v42 검증)
+    inference_steps: int = 10,   # 5/11 update: DPM++ 10-step (TRT + TeaCache 와 함께)
     guidance_scale: float = 1.5,
     seed: int = 1247,
     config_name: str = "stage2_512_nf16.yaml",  # v27 default: 16 frames @ 512
     ckpt_path: Optional[str] = None,        # None이면 베이스 (LoRA 안 씀)
     enable_deepcache: bool = False,         # 5/7 sm_120 CUDA stream issue — OFF default
+    # 5/11 update: 새 가속·품질 옵션 (env var 로 inference.py 에 전달)
+    use_trt: bool = True,                   # TRT FP16 엔진 (2.55GB) 사용 — 3.18× 가속
+    scheduler: str = "dpm",                 # DPMSolver++ (10 step = DDIM 20 동등)
+    teacache_threshold: float = 0.1,        # TeaCache (timestep skip) — 추가 33% 가속
+    profile_threshold: float = 0.35,        # 측면 face skip (yaw_ratio > 0.35 시 원본 유지)
+    face_diag_min_ratio: float = 0.10,      # 작은 face skip (멀리 있는 face 원본 유지)
+    chunk_seconds: int = 0,                 # >0 시 chunked inference (장편 영상 메모리 절약)
 ) -> Optional[str]:
     """
     LatentSync 1.6으로 립싱크 적용 (diffusion 기반, 512x512 추론).
@@ -3146,6 +3153,46 @@ def apply_latent_sync(
     print(f"[Lipsync] 출력: {output_path}")
     print(f"[Lipsync] 가중치: {ckpt}")
     print(f"[Lipsync] config: {config_name}, steps={inference_steps}, guidance={guidance_scale}")
+
+    # === 5/11 update: 가속·품질 옵션 env var 로 inference.py 에 전달 ===
+    if use_trt:
+        os.environ["LATENTSYNC_USE_TRT"] = "1"
+        trt_engine = "/workspace/trt_work/engines/unet_fp16.trt"
+        if os.path.isfile(trt_engine):
+            os.environ["LATENTSYNC_TRT_ENGINE"] = trt_engine
+            print(f"[Lipsync] TRT engine: {trt_engine}")
+        else:
+            print(f"[Lipsync] ⚠️  TRT engine not found, falling back to PyTorch UNet")
+            os.environ["LATENTSYNC_USE_TRT"] = "0"
+    else:
+        os.environ.pop("LATENTSYNC_USE_TRT", None)
+
+    os.environ["LATENTSYNC_SCHEDULER"] = scheduler  # "dpm" or "ddim"
+    if teacache_threshold > 0:
+        os.environ["LATENTSYNC_TEACACHE"] = str(teacache_threshold)
+        print(f"[Lipsync] TeaCache rel_l1={teacache_threshold}")
+    else:
+        os.environ.pop("LATENTSYNC_TEACACHE", None)
+
+    if profile_threshold > 0:
+        os.environ["LATENTSYNC_PROFILE_THRESHOLD"] = str(profile_threshold)
+        print(f"[Lipsync] Profile skip threshold={profile_threshold} (yaw)")
+    else:
+        os.environ.pop("LATENTSYNC_PROFILE_THRESHOLD", None)
+
+    if face_diag_min_ratio > 0:
+        os.environ["LATENTSYNC_FACE_DIAG_MIN_RATIO"] = str(face_diag_min_ratio)
+        print(f"[Lipsync] Face distance min ratio={face_diag_min_ratio}")
+    else:
+        os.environ.pop("LATENTSYNC_FACE_DIAG_MIN_RATIO", None)
+
+    if chunk_seconds > 0:
+        os.environ["LATENTSYNC_CHUNK_SECONDS"] = str(chunk_seconds)
+        print(f"[Lipsync] Chunked inference: {chunk_seconds}s per chunk")
+    else:
+        os.environ.pop("LATENTSYNC_CHUNK_SECONDS", None)
+
+    print(f"[Lipsync] Scheduler: {scheduler}")
 
     # === DAEMON CLEANUP (defense-in-depth): direct call에서도 안전 ===
     # run_pipeline에서 이미 호출되지만, apply_lipsync()를 단독 사용 시 보호
@@ -3244,7 +3291,10 @@ def apply_lipsync(
       inference_steps, guidance_scale, seed, config_name, ckpt_path, enable_deepcache
     """
     ls_keys = {"inference_steps", "guidance_scale", "seed",
-               "config_name", "ckpt_path", "enable_deepcache"}
+               "config_name", "ckpt_path", "enable_deepcache",
+               # 5/11: 새 가속·품질 옵션
+               "use_trt", "scheduler", "teacache_threshold",
+               "profile_threshold", "face_diag_min_ratio", "chunk_seconds"}
     ls_kwargs = {k: v for k, v in kwargs.items() if k in ls_keys}
 
     # 🌐 lang별 가중치 자동 선택 (latentsync_<lang>.pt 자동 인식)
@@ -3258,14 +3308,20 @@ def apply_lipsync(
 # === GFPGAN 후처리 (face quality 향상) ===
 # 5/7 update: async I/O 버전 default (sequential 대비 -22% 시간, 동일 품질)
 GFPGAN_PYTHON = "/opt/venv_gfpgan/bin/python"
-GFPGAN_SCRIPT = "/opt/LatentSync/scripts/gfpgan_async_postprocess.py"
-GFPGAN_SCRIPT_FALLBACK = "/opt/LatentSync/scripts/gfpgan_postprocess.py"  # async 미존재 시 폴백
+# 5/11 priority: v3 (TRT + GPU paste + optional downscale-detect)
+#                → v2 (TRT + GPU paste)
+#                → original async (PyTorch)
+GFPGAN_SCRIPT_V3 = "/workspace/patches/gfpgan_async_postprocess_trt_v3.py"
+GFPGAN_SCRIPT_V2 = "/workspace/patches/gfpgan_async_postprocess_trt_v2.py"
+GFPGAN_SCRIPT_LEGACY = "/opt/LatentSync/scripts/gfpgan_async_postprocess.py"
+GFPGAN_SCRIPT_FALLBACK = "/opt/LatentSync/scripts/gfpgan_postprocess.py"
 GFPGAN_MODEL  = "/opt/gfpgan_models/GFPGANv1.4.pth"
 
 def apply_gfpgan_postprocess(
     lipsync_video_path: str,
     output_path: str,
     upscale: int = 1,
+    downscale_detect: int = 0,  # 5/11: v3 only, detection input 다운스케일 (2=540p detect)
 ) -> Optional[str]:
     """GFPGAN 후처리 — lipsync 결과의 face quality 향상.
 
@@ -3280,12 +3336,25 @@ def apply_gfpgan_postprocess(
     if not os.path.isfile(GFPGAN_PYTHON):
         print(f"[GFPGAN] venv 없음: {GFPGAN_PYTHON}")
         return None
-    # 5/7: async script 우선, 없으면 fallback
-    gfpgan_script = GFPGAN_SCRIPT if os.path.isfile(GFPGAN_SCRIPT) else GFPGAN_SCRIPT_FALLBACK
-    if not os.path.isfile(gfpgan_script):
-        print(f"[GFPGAN] script 없음: {GFPGAN_SCRIPT} 및 {GFPGAN_SCRIPT_FALLBACK}")
+    # 5/11: v3 (TRT + GPU paste + optional downscale-detect) 우선
+    #       → v2 (TRT + GPU paste)
+    #       → legacy async (PyTorch)
+    if os.path.isfile(GFPGAN_SCRIPT_V3):
+        gfpgan_script = GFPGAN_SCRIPT_V3
+        gfpgan_variant = "v3"
+    elif os.path.isfile(GFPGAN_SCRIPT_V2):
+        gfpgan_script = GFPGAN_SCRIPT_V2
+        gfpgan_variant = "v2"
+    elif os.path.isfile(GFPGAN_SCRIPT_LEGACY):
+        gfpgan_script = GFPGAN_SCRIPT_LEGACY
+        gfpgan_variant = "legacy"
+    elif os.path.isfile(GFPGAN_SCRIPT_FALLBACK):
+        gfpgan_script = GFPGAN_SCRIPT_FALLBACK
+        gfpgan_variant = "fallback"
+    else:
+        print(f"[GFPGAN] script 없음")
         return None
-    print(f"[GFPGAN] using: {os.path.basename(gfpgan_script)}")
+    print(f"[GFPGAN] using: {os.path.basename(gfpgan_script)} ({gfpgan_variant})")
     if not os.path.isfile(GFPGAN_MODEL):
         print(f"[GFPGAN] model 없음: {GFPGAN_MODEL}")
         return None
@@ -3304,6 +3373,10 @@ def apply_gfpgan_postprocess(
         "--output", os.path.abspath(output_path),
         "--upscale", str(upscale),
     ]
+    # 5/11: v3 만 --downscale-detect 지원
+    if gfpgan_variant == "v3" and downscale_detect > 1:
+        cmd += ["--downscale-detect", str(downscale_detect)]
+        print(f"[GFPGAN] downscale-detect: {downscale_detect} (detection 만 1/{downscale_detect} 해상도)")
     import time as _time
     start = _time.time()
     try:
@@ -3595,7 +3668,7 @@ def run_pipeline(
     content_type: str = "auto",
     enable_lipsync: bool = False,
     # LatentSync 옵션
-    lipsync_steps: int = 20,             # 5/7 revert: v42 ema_FINAL 품질이 한국어에 최적, 15는 phoneme 정확도 ↓
+    lipsync_steps: int = 10,             # 5/11: DPM++ 10-step default (TRT+TeaCache 와 조합)
     lipsync_guidance: float = 1.5,       # guidance scale
     lipsync_seed: int = 1247,
     lipsync_config: str = "stage2_512_nf16.yaml",   # v27 default: 16 frames @ 512
@@ -3603,8 +3676,16 @@ def run_pipeline(
     use_lora: bool = False,                    # True면 LoRA 자동 인식
     lipsync_deepcache: bool = False,           # 5/7 sm_120 호환성 issue — OFF default
     lipsync_vae_chunk: int = 2,                # 5/7 final: chunk=2 (v42 정확 매칭, chunk=4는 quality 미세 저하 가능)
+    # 5/11 new: 가속·품질 옵션 (apply_lipsync 로 통과)
+    lipsync_use_trt: bool = True,              # TRT FP16 engine (3.18× 가속)
+    lipsync_scheduler: str = "dpm",            # DPMSolver++ (default)
+    lipsync_teacache: float = 0.1,             # TeaCache rel_l1 threshold (0=off)
+    lipsync_profile_threshold: float = 0.35,   # 측면 face skip (yaw_ratio)
+    lipsync_face_diag_min_ratio: float = 0.10, # 작은 face skip (멀리 있는 face)
+    lipsync_chunk_seconds: int = 0,            # >0 시 chunked inference (long video memory)
     enable_postprocess: bool = False,          # GFPGAN 후처리 (face quality, v42 setup)
-    postprocess_upscale: int = 2,              # 5/7: 2x default (v42 검증 quality)
+    postprocess_upscale: int = 1,              # 5/11: 1x default (v3 + GPU paste 안전)
+    postprocess_downscale_detect: int = 0,     # 5/11: detection 만 다운스케일 (0=off, 2=540p detect)
     smart_daemon: bool = False,                # 더빙 단계만 daemon 사용, lipsync 전 stop
 ):
     """
@@ -3988,6 +4069,13 @@ def run_pipeline(
             config_name=lipsync_config,
             ckpt_path=lipsync_ckpt,
             enable_deepcache=lipsync_deepcache,
+            # 5/11 new: 가속·품질 옵션
+            use_trt=lipsync_use_trt,
+            scheduler=lipsync_scheduler,
+            teacache_threshold=lipsync_teacache,
+            profile_threshold=lipsync_profile_threshold,
+            face_diag_min_ratio=lipsync_face_diag_min_ratio,
+            chunk_seconds=lipsync_chunk_seconds,
         )
         if result:
             print(f"[Pipeline] 립싱크 적용된 영상: {result}")
@@ -4006,6 +4094,7 @@ def run_pipeline(
             lipsync_video_path=output_path,
             output_path=gfpgan_out,
             upscale=postprocess_upscale,
+            downscale_detect=postprocess_downscale_detect,  # 5/11: v3 only
         )
         if gfp_result:
             print(f"[Pipeline] GFPGAN 후처리 완료: {gfp_result}")
@@ -4050,8 +4139,8 @@ if __name__ == "__main__":
     # 🎬 LatentSync 1.6 립싱크 옵션
     parser.add_argument("--enable-lipsync", action="store_true", dest="enable_lipsync",
                         help="립싱크 적용 (concat 후). 출력은 _lipsync.mp4 별도 파일")
-    parser.add_argument("--lipsync-steps", default=20, type=int, dest="lipsync_steps",
-                        help="diffusion inference steps (기본 20, 한국어 phoneme 정확도 우선. 영어/단순 영상엔 15도 OK)")
+    parser.add_argument("--lipsync-steps", default=10, type=int, dest="lipsync_steps",
+                        help="diffusion inference steps (기본 10 with DPMSolver++ 5/11. DDIM 사용 시 20 권장)")
     parser.add_argument("--lipsync-guidance", default=1.5, type=float, dest="lipsync_guidance",
                         help="guidance scale (기본 1.5, 1.0~3.0)")
     parser.add_argument("--lipsync-seed", default=1247, type=int, dest="lipsync_seed",
@@ -4068,9 +4157,33 @@ if __name__ == "__main__":
     parser.add_argument("--lipsync-vae-chunk", default=2, type=int, dest="lipsync_vae_chunk",
                         help="VAE chunk_size (기본 2, v42 정확 매칭. 4=10%% 빠름but 미세 quality 저하 가능)")
     parser.add_argument("--enable-postprocess", action="store_true", dest="enable_postprocess",
-                        help="GFPGAN 후처리 활성화 (face quality 향상, 입술 sharpen, ~2분 추가)")
-    parser.add_argument("--postprocess-upscale", default=2, type=int, dest="postprocess_upscale",
-                        help="GFPGAN upscale (1=유지, 2=2x SR default. 5/7 v42 검증 quality)")
+                        help="GFPGAN 후처리 활성화 (face quality 향상, 입술 sharpen)")
+    parser.add_argument("--postprocess-upscale", default=1, type=int, dest="postprocess_upscale",
+                        help="GFPGAN upscale (1=유지 default 5/11, 2=2x SR)")
+    parser.add_argument("--postprocess-downscale-detect", default=0, type=int,
+                        dest="postprocess_downscale_detect",
+                        help="GFPGAN v3 only: detection 만 N배 다운스케일 (0=off, 2=540p detect — 시간 -58%%)")
+    # 5/11 new: lipsync 가속·품질 옵션
+    parser.add_argument("--lipsync-use-trt", action="store_true", dest="lipsync_use_trt",
+                        default=True,
+                        help="LatentSync TRT FP16 엔진 사용 (기본 ON, 3.18× 가속)")
+    parser.add_argument("--no-lipsync-trt", action="store_false", dest="lipsync_use_trt",
+                        help="TRT 비활성화 (PyTorch UNet fallback)")
+    parser.add_argument("--lipsync-scheduler", default="dpm", choices=["dpm", "ddim"],
+                        dest="lipsync_scheduler",
+                        help="DPMSolver++ (default) 또는 DDIM. DPM 사용 시 steps=10 권장")
+    parser.add_argument("--lipsync-teacache", default=0.1, type=float,
+                        dest="lipsync_teacache",
+                        help="TeaCache rel_l1 threshold (기본 0.1, 0=off). UNet step 50%% skip")
+    parser.add_argument("--lipsync-profile-threshold", default=0.35, type=float,
+                        dest="lipsync_profile_threshold",
+                        help="측면 face skip yaw threshold (기본 0.35, 약 45도. 0=off)")
+    parser.add_argument("--lipsync-face-min-ratio", default=0.10, type=float,
+                        dest="lipsync_face_diag_min_ratio",
+                        help="작은 face skip threshold (face diag / frame diag, 기본 0.10. 0=off)")
+    parser.add_argument("--lipsync-chunk-seconds", default=0, type=int,
+                        dest="lipsync_chunk_seconds",
+                        help=">0 시 chunked inference (장편 영상 메모리 절약, 권장 10)")
     parser.add_argument("--fast-separate", action="store_true", dest="fast_separate",
                         help="Vocal sep htdemucs로 (-60초, drama/movie 빼고 추천. SDR 9.5)")
     parser.add_argument("--smart-daemon", action="store_true", dest="smart_daemon",
@@ -4103,5 +4216,13 @@ if __name__ == "__main__":
         lipsync_vae_chunk=args.lipsync_vae_chunk,
         enable_postprocess=args.enable_postprocess,
         postprocess_upscale=args.postprocess_upscale,
+        postprocess_downscale_detect=args.postprocess_downscale_detect,  # 5/11
+        # 5/11 new: 가속·품질 옵션
+        lipsync_use_trt=args.lipsync_use_trt,
+        lipsync_scheduler=args.lipsync_scheduler,
+        lipsync_teacache=args.lipsync_teacache,
+        lipsync_profile_threshold=args.lipsync_profile_threshold,
+        lipsync_face_diag_min_ratio=args.lipsync_face_diag_min_ratio,
+        lipsync_chunk_seconds=args.lipsync_chunk_seconds,
         smart_daemon=args.smart_daemon,
     )
