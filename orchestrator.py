@@ -3116,8 +3116,8 @@ def apply_latent_sync(
     use_trt: bool = True,                   # TRT FP16 엔진 (2.55GB) 사용 — 3.18× 가속
     scheduler: str = "dpm",                 # DPMSolver++ (10 step = DDIM 20 동등)
     teacache_threshold: float = 0.1,        # TeaCache (timestep skip) — 추가 33% 가속
-    profile_threshold: float = 0.35,        # 측면 face skip (yaw_ratio > 0.35 시 원본 유지)
-    face_diag_min_ratio: float = 0.10,      # 작은 face skip (멀리 있는 face 원본 유지)
+    profile_threshold: float = 0.0,         # 5/11: ASD 통합 후 비활성화 (frame 100% skip 방지)
+    face_diag_min_ratio: float = 0.0,       # 5/11: ASD 통합 후 비활성화 (drama medium-shot 살리기)
     chunk_seconds: int = 0,                 # >0 시 chunked inference (장편 영상 메모리 절약)
     face_strict: bool = False,              # 5/11: face_detector strict mode (드라마 안전)
 ) -> Optional[str]:
@@ -3689,8 +3689,8 @@ def run_pipeline(
     lipsync_use_trt: bool = True,              # TRT FP16 engine (3.18× 가속)
     lipsync_scheduler: str = "dpm",            # DPMSolver++ (default)
     lipsync_teacache: float = 0.1,             # TeaCache rel_l1 threshold (0=off)
-    lipsync_profile_threshold: float = 0.35,   # 측면 face skip (yaw_ratio)
-    lipsync_face_diag_min_ratio: float = 0.10, # 작은 face skip (멀리 있는 face)
+    lipsync_profile_threshold: float = 0.0,    # 5/11: ASD 통합 후 default off (drama medium-shot 살리기)
+    lipsync_face_diag_min_ratio: float = 0.0,  # 5/11: ASD 통합 후 default off (face miss → mask artifact 방지)
     lipsync_chunk_seconds: int = 0,            # >0 시 chunked inference (long video memory)
     lipsync_face_strict: bool = False,         # 5/11: 드라마 artifact 방지 (det_score 0.85, roll 체크)
     enable_postprocess: bool = False,          # GFPGAN 후처리 (face quality, v42 setup)

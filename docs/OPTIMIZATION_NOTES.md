@@ -419,3 +419,126 @@ LatentSync 1.6 은 정면 close-up face 학습. 드라마는 본질적으로:
 - ❌ 빠른 컷, 다인 빠른 dialog, 작은 face: 본질적 한계
 
 → 영화 narration 이나 단인 인터뷰 형식의 영상이 최선. 본격 드라마/영화는 부분 적용만 권장.
+
+---
+
+## 2026-05-11 (밤) — 드라마 안전 패치 (face_strict + passthrough)
+
+### 추가된 패치 2개
+
+1. **fix_face_detector_strict.py** — face_detector 강화 (drama 안전)
+   - LATENTSYNC_FACE_STRICT=1 ON 시:
+     - det_score 0.5 → **0.85** (낮은 신뢰도 face skip)
+     - w/h ratio 0.2 → **0.4** (측면 face 추가 skip)
+     - **roll 30°** 초과 시 skip (얼굴 기울기 체크)
+
+2. **fix_passthrough_v2.py** — chunk 전체 face 없을 때 passthrough
+   - 기존: RuntimeError "FACE_KEEP_ORIG_PATCH: 영상 전체에서 face 미감지"
+   - 신규: 모든 frame 원본 유지하고 placeholder 반환 → 영상 정상 마무리
+   - 드라마의 어두운 chunk / 풍경 chunk 에 필수
+
+### test4 strict mode 측정 (108초 drama)
+
+| 패치 단계 | 시간 | lipsync 적용 frame 비율 |
+|---|---|---|
+| 기본 (Default) | 14:58 | ~57% (1500/2656) |
+| + profile + distance | 15:35 | ~50% |
+| **+ FACE_STRICT (det 0.85, w/h 0.4, roll±30°)** | **13:57** | **~12% (304/2656)** |
+
+→ Strict mode 는 LatentSync 가 적용되는 frame 을 매우 보수적으로 제한 → 측면/저신뢰 face artifact 제거.
+→ 드라마의 88%+ frame 은 원본 그대로 (BGM + 한국어 음성만 더빙).
+
+### 권장 사용
+
+```bash
+# 일반 (TED/인터뷰): 기본 설정
+./orchestrator.py --input ... --lang ko --enable-lipsync
+
+# 드라마: strict mode + tighter thresholds
+./orchestrator.py --input ... --lang ko --enable-lipsync \
+    --lipsync-face-strict \
+    --lipsync-profile-threshold 0.30 \
+    --lipsync-chunk-seconds 10
+```
+
+---
+
+## 2026-05-11 (자정 이후) — ASD 통합 + 공격적 필터 비활성화
+
+### 배경
+
+`fix_face_detector_strict` + `face_diag_min_ratio=0.10` + `profile_threshold=0.35`
+조합이 드라마에서 **너무 공격적**이었음 — chunk 1 (frame 0–250) 의 face
+50 frame sample 측정:
+
+| 필터 조합 | detect / 50 |
+|---|---|
+| 모두 OFF | **27** (54%) |
+| strict only | 10 (20%) |
+| profile only | 23 (46%) |
+| distance only | **2** (4%) |
+| 세 가지 모두 ON | **0** (0%) |
+
+→ `LATENTSYNC_FACE_DIAG_MIN_RATIO=0.10` 단독으로 96% frame 을 reject. 세 필터를 동시에 ON 시 100% reject → lipsync 적용 자체가 안 됨. 결과 영상에 mask 흔적만 보임 (placeholder face 가 잘못된 위치로 paste).
+
+### 해결책: ASD 우선, 공격적 필터 default OFF
+
+1. **`patches/asd_filter.py`** 신규 — LightASD 결과를 LatentSync subprocess
+   에서 frame 단위 lookup. `LATENTSYNC_ASD_FILTER_RUN_DIR` 가 가리키는 run
+   디렉터리의 `meta/asd_filter_index.json` 을 읽어 `should_skip(g)` 제공.
+   - threshold 0 = LightASD score 가 0 미만이면 listener → skip.
+   - test4 측정: 2732 frame 중 2011 (74%) 발화 / 721 (26%) listener → 26% skip.
+
+2. **`patches/fix_lipsync_asd_filter.py`** 신규 — `lipsync_pipeline.py` 의
+   `affine_transform_video` lazy-init + per-frame `should_skip` + chunk
+   offset 패치. 마커: `ASD_FILTER_PATCH:lazy-init`.
+
+3. **orchestrator.py 자동 통합** — Step 4-3 (AV-Fusion / LightASD) 직후에
+   `meta/asd_filter_index.json` 작성 + `LATENTSYNC_ASD_FILTER_RUN_DIR` 환경
+   변수 설정 → lipsync subprocess 가 자동 감지.
+
+4. **공격적 필터 default 변경** (orchestrator.py 5/11):
+   - `lipsync_profile_threshold`: 0.35 → **0.0** (off)
+   - `lipsync_face_diag_min_ratio`: 0.10 → **0.0** (off)
+   - `lipsync_face_strict`: False (그대로)
+   - 이전 default 가 drama 의 ~50% frame 을 강제 skip 했음. ASD 가 그 역할을
+     훨씬 정확히 수행하므로 위 셋은 OFF 가 새 default.
+
+### 활성화 흐름
+
+```
+orchestrator.py
+  ├─ Step 4-3 AV-Fusion
+  │    └─ LightASD per-chunk pickle → media/cache/lightasd/<hash>.pkl
+  │    └─ ASD_INDEX_PATCH:capture → chunk_data[chunk]["_asd_index_entry"]
+  ├─ Step 5 segment refinement
+  ├─ ASD_INDEX_PATCH:dump → runs/<run>/meta/asd_filter_index.json
+  │    └─ os.environ["LATENTSYNC_ASD_FILTER_RUN_DIR"] = <run_dir>/
+  └─ apply_lipsync (subprocess)
+        └─ LatentSync affine_transform_video
+              └─ ASD_FILTER_PATCH:lazy-init → maybe_load_filter() (env)
+              └─ per frame: should_skip(global_idx) → skip if listener
+              └─ summary: "[ASD-Filter] N/M frames non-speaker face skipped"
+```
+
+### 결과 (예상)
+
+| 패치 단계 | lipsync 적용 frame | mask 흔적 | 비-발화자 입 |
+|---|---|---|---|
+| Default (5/11 낮) | ~57% | 종종 보임 | 종종 잘못 적용 |
+| + strict + profile + distance | ~12% | 적지만 잘림 | 적지만 여전 |
+| **+ ASD (5/11 밤)** | **~74%** | 거의 없음 | 거의 없음 |
+
+→ ASD 가 화자 식별을 정확히 함 → 비-발화자 입 변경 문제 해결. + 공격적 필터를
+끄면 frame skip 도 줄어들어 lipsync 적용 비율이 회복됨.
+
+### 권장 사용
+
+```bash
+# 통합 파이프라인 (ASD 자동)
+./orchestrator.py --input ... --lang ko --enable-lipsync
+# → LightASD 실행 + asd_filter_index.json 자동 생성 + lipsync 자동 활성
+
+# ASD 끄고 싶을 때
+LATENTSYNC_ASD_FILTER_DISABLE=1 ./orchestrator.py ...
+```
