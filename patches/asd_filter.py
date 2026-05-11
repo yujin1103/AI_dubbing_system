@@ -258,29 +258,45 @@ class LipsyncASDFilter:
         self,
         global_frame_idx: int,
         detected_bbox: List[float],
-        iou_match: float = 0.3,
+        iou_match: float = 0.2,
     ) -> Optional[bool]:
         """Per-FACE speaker check (not per-scene like should_skip).
 
-        Given a face detected by LatentSync at frame g with bbox in original-
-        frame coords, find the ASD track at g with the best IoU overlap and
-        return whether that track is a speaker:
+        Policy (STRICT by default, 5/11 update):
+          - If the chunk has NO ASD data at all → return None (allow).
+          - If the chunk has ASD data but the *frame* has no active tracks
+            and `should_skip(g)` says no speaker either → return False (skip).
+            Most "listener-only / no-face" frames hit this path.
+          - If tracks are active at this frame:
+              * Match detected_bbox to the best-IoU track.
+              * IoU < iou_match → detected face is an *untracked* face in a
+                tracked scene → wrong person → return False (skip).
+              * IoU >= iou_match → return (best_track.score >= threshold).
+                True = speaker, False = listener.
 
-          True   matched track score >= threshold  (detected face IS speaker)
-          False  matched track score <  threshold  (detected face is listener)
-          None   no track at frame g, or no track overlaps  (no opinion → caller defaults to allow)
-
-        Use this AFTER `should_skip()` is False — i.e. ASD says the scene has
-        a speaker, but we still need to confirm the LatentSync-picked face is
-        actually that speaker, not the listener sitting next to them.
+        Why strict by default: drama screenshots showed lipsync still being
+        applied to listener / far-away non-speaker faces when ASD had no
+        opinion on a specific bbox. With STRICT default, those frames keep
+        the original.
         """
         chunk_idx = self._which_chunk(global_frame_idx)
         if chunk_idx is None:
-            return None
+            return None  # no ASD chunk here → caller may default-allow
         self._load_chunk(chunk_idx)
+        # Chunk has no usable ASD pickle?  → no opinion (allow).
+        spec = self.chunk_specs[chunk_idx]
+        if not spec.get("asd_path"):
+            return None
         tracks = self._tracks_at[global_frame_idx]
         if not tracks:
-            return None  # no ASD track at this frame -> no opinion
+            # Chunk has ASD data but no track at this exact frame.
+            # If the per-scene check said "skip" (no speaker visible in
+            # this scene anyway), confirm skip. Otherwise be conservative
+            # and still skip — the detected face is untracked, meaning
+            # ASD didn't think it was a real face worth tracking (too
+            # small / too profile / blurred). Apply lipsync to it would
+            # mostly fall on listeners/extras.
+            return False
         best = None
         best_iou = 0.0
         for t in tracks:
@@ -289,10 +305,9 @@ class LipsyncASDFilter:
                 best_iou = iou
                 best = t
         if best is None or best_iou < iou_match:
-            # Detected face is at a position no ASD track is tracking → can't
-            # decide. Default to None (allow), since this is also how we
-            # handle "no ASD info at all".
-            return None
+            # Detected face at a position no ASD track covers (in a frame
+            # where other faces ARE tracked) → unknown face → skip.
+            return False
         return float(best["score"]) >= self.score_threshold
 
     # ─── stats helpers (smoke test / report) ───
