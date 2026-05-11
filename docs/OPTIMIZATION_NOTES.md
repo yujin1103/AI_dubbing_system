@@ -314,3 +314,59 @@ v2 vs v3 품질 (n=40 sampled frames):
 | LatentSync I (TRT + DPM + TeaCache) | 9:15 |
 | GFPGAN v3 + downscale=2 | 4:14 |
 | **TOTAL** | **23:29** (1차 baseline 61:30 대비 −62%, 38분 절감) |
+
+---
+
+## 2026-05-11 (저녁) — Quality 패치: profile skip + chunked DPM reset
+
+### 새 패치 2개
+
+1. **fix_face_profile_skip.py** — LatentSync 가 측면 얼굴 (90도 가까이 회전)에서
+   입 위치 landmark 부정확 → "입이 떠다니는" artifact. 106-point landmark 로 yaw
+   추정 후 threshold 이상이면 face=None 반환 (원본 frame 유지).
+
+   ```bash
+   export LATENTSYNC_PROFILE_THRESHOLD=0.35  # 약 yaw 45도 이상 skip
+   ```
+
+   판정 공식:
+   ```
+   yaw_ratio = |nose_x - eye_midpoint_x| / eye_distance
+   ```
+   정면 face: 0.05~0.15 / 측면 30도: ~0.25 / 측면 60도: ~0.5 / 측면 90도: 1+
+
+2. **fix_dpm_chunked_call_reset.py** — `_chunked_call` 경로에 chunk 마다
+   `set_timesteps()` + `reset_cache()` 호출. 기존 `fix_dpm_chunk_reset.py` 가
+   메인 `__call__` 만 처리했던 빈자리.
+
+   `LATENTSYNC_CHUNK_SECONDS>0` 사용 시 (장편 영상 메모리 절약) DPMSolver
+   `step_index` 누적 → IndexError 방지.
+
+### test4 측정 (108초 영상, 2656 frames, drama)
+
+기존 test4 lipsync 가 안 됐던 이유:
+- 메모리 부족 → OOM kill (chunked 비활성화 시)
+- DPMSolver chunked 경로 IndexError (chunked 활성화 시)
+- 측면 face 가 많아서 lipsync 가 적용되어도 부정확
+
+새 패치 적용 후:
+- `LATENTSYNC_CHUNK_SECONDS=10` (250 frames/chunk, 11 chunks) → 메모리 OK
+- `fix_dpm_chunked_call_reset.py` → IndexError 해결
+- `LATENTSYNC_PROFILE_THRESHOLD=0.35` → 측면 face skip
+
+결과: **14:58 완료**, 76 MB mp4 출력
+- Brightness skip 300 frames (어두운 장면)
+- Face skip 합계 약 800+ frames (face 미감지 + profile skip)
+- Lipsync 적용된 frame 약 1500 frames
+
+### 환경변수 정리
+
+```bash
+# 최종 권장 (Quality + Speed)
+export LATENTSYNC_USE_TRT=1
+export LATENTSYNC_TRT_ENGINE=/workspace/trt_work/engines/unet_fp16.trt
+export LATENTSYNC_SCHEDULER=dpm
+export LATENTSYNC_TEACACHE=0.1
+export LATENTSYNC_PROFILE_THRESHOLD=0.35    # 측면 face 안전 처리
+export LATENTSYNC_CHUNK_SECONDS=10          # 장편 영상 (1분+) 메모리 절약
+```
