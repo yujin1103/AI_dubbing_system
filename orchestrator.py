@@ -3119,6 +3119,7 @@ def apply_latent_sync(
     profile_threshold: float = 0.35,        # 측면 face skip (yaw_ratio > 0.35 시 원본 유지)
     face_diag_min_ratio: float = 0.10,      # 작은 face skip (멀리 있는 face 원본 유지)
     chunk_seconds: int = 0,                 # >0 시 chunked inference (장편 영상 메모리 절약)
+    face_strict: bool = False,              # 5/11: face_detector strict mode (드라마 안전)
 ) -> Optional[str]:
     """
     LatentSync 1.6으로 립싱크 적용 (diffusion 기반, 512x512 추론).
@@ -3191,6 +3192,13 @@ def apply_latent_sync(
         print(f"[Lipsync] Chunked inference: {chunk_seconds}s per chunk")
     else:
         os.environ.pop("LATENTSYNC_CHUNK_SECONDS", None)
+
+    # 5/11 update: face detector strict mode (드라마 artifact 방지)
+    if face_strict:
+        os.environ["LATENTSYNC_FACE_STRICT"] = "1"
+        print(f"[Lipsync] Face detector strict (det_score≥0.85, w/h≥0.55, roll±30°)")
+    else:
+        os.environ.pop("LATENTSYNC_FACE_STRICT", None)
 
     print(f"[Lipsync] Scheduler: {scheduler}")
 
@@ -3294,7 +3302,8 @@ def apply_lipsync(
                "config_name", "ckpt_path", "enable_deepcache",
                # 5/11: 새 가속·품질 옵션
                "use_trt", "scheduler", "teacache_threshold",
-               "profile_threshold", "face_diag_min_ratio", "chunk_seconds"}
+               "profile_threshold", "face_diag_min_ratio", "chunk_seconds",
+               "face_strict"}
     ls_kwargs = {k: v for k, v in kwargs.items() if k in ls_keys}
 
     # 🌐 lang별 가중치 자동 선택 (latentsync_<lang>.pt 자동 인식)
@@ -3683,6 +3692,7 @@ def run_pipeline(
     lipsync_profile_threshold: float = 0.35,   # 측면 face skip (yaw_ratio)
     lipsync_face_diag_min_ratio: float = 0.10, # 작은 face skip (멀리 있는 face)
     lipsync_chunk_seconds: int = 0,            # >0 시 chunked inference (long video memory)
+    lipsync_face_strict: bool = False,         # 5/11: 드라마 artifact 방지 (det_score 0.85, roll 체크)
     enable_postprocess: bool = False,          # GFPGAN 후처리 (face quality, v42 setup)
     postprocess_upscale: int = 1,              # 5/11: 1x default (v3 + GPU paste 안전)
     postprocess_downscale_detect: int = 0,     # 5/11: detection 만 다운스케일 (0=off, 2=540p detect)
@@ -3912,6 +3922,15 @@ def run_pipeline(
                 # 결과 저장 (lipsync 단계에서 활용 가능)
                 data["av_fusion"] = fusion
                 data["asd_result"] = asd_result
+                # === ASD_INDEX_PATCH:capture ===
+                # Record this chunk's ASD pickle location + frame count for the
+                # lipsync-side filter (asd_filter_runtime.LipsyncASDFilter).
+                data["_asd_index_entry"] = {
+                    "stem": chunk_name,
+                    "asd_path": asd_cache_path if os.path.isfile(asd_cache_path) else None,
+                    "n_frames": int(asd_result.get("n_frames", 0)),
+                }
+                # === ASD_INDEX_PATCH:capture end ===
                 print(f"[AV-Fusion] face tracks={len(asd_result['tracks'])}, "
                       f"lipsync target frames={sum(1 for t in fusion['per_frame_target'] if t is not None)}/"
                       f"{fusion['n_frames']}")
@@ -4059,6 +4078,51 @@ def run_pipeline(
         os.environ["LATENTSYNC_VAE_CHUNK"] = str(lipsync_vae_chunk)
         # 5/7: EMA VAE default (v42 한국어 검증 — mse 대비 부드러움, GFPGAN과 궁합 ↑)
         os.environ.setdefault("LATENTSYNC_VAE_VARIANT", "ema")
+        # === ASD_INDEX_PATCH:dump ===
+        # Materialize per-chunk ASD info as
+        #   runs/<run_id>/meta/asd_filter_index.json
+        # so the LatentSync subprocess can map global frame indices back to
+        # the right ASD pickle. Order matches concat_chunks() (sorted name).
+        try:
+            import json as _json_asd
+            run_root = os.path.join(RUNS_DIR, CURRENT_RUN_ID) if CURRENT_RUN_ID else None
+            if run_root and os.path.isdir(run_root):
+                _entries = []
+                for _ck, _cd in sorted(chunk_data.items()):
+                    _e = _cd.get("_asd_index_entry")
+                    if _e and _e.get("n_frames"):
+                        _entries.append(_e)
+                if _entries:
+                    _meta_dir = os.path.join(run_root, "meta")
+                    os.makedirs(_meta_dir, exist_ok=True)
+                    _idx_path = os.path.join(_meta_dir, "asd_filter_index.json")
+                    with open(_idx_path, "w", encoding="utf-8") as _f:
+                        _json_asd.dump({
+                            "version": 1,
+                            "fps": 25.0,
+                            "score_threshold": float(
+                                os.environ.get("LATENTSYNC_ASD_THRESHOLD", "0.0")
+                            ),
+                            "chunks": _entries,
+                        }, _f, indent=2)
+                    print(f"[ASD-Filter] index dumped: {_idx_path} "
+                          f"(chunks={len(_entries)}, total_frames="
+                          f"{sum(e['n_frames'] for e in _entries)})")
+                    if os.environ.get("LATENTSYNC_ASD_FILTER_DISABLE", "0") != "1":
+                        os.environ["LATENTSYNC_ASD_FILTER_RUN_DIR"] = run_root + "/"
+                        print(f"[ASD-Filter] ENABLED for lipsync subprocess "
+                              f"(LATENTSYNC_ASD_FILTER_RUN_DIR={run_root}/)")
+                    else:
+                        print("[ASD-Filter] disabled by LATENTSYNC_ASD_FILTER_DISABLE=1")
+                else:
+                    print("[ASD-Filter] no chunks have ASD output, skipping index dump")
+            else:
+                print(f"[ASD-Filter] run_root unavailable, skipping index dump")
+        except Exception as _e_asd:
+            import traceback as _tb_asd
+            print(f"[ASD-Filter] index dump failed (continuing without filter): {_e_asd}")
+            _tb_asd.print_exc()
+        # === ASD_INDEX_PATCH:dump end ===
         result = apply_lipsync(
             dubbed_video_path=output_path,
             output_path=lipsync_out,
@@ -4076,6 +4140,7 @@ def run_pipeline(
             profile_threshold=lipsync_profile_threshold,
             face_diag_min_ratio=lipsync_face_diag_min_ratio,
             chunk_seconds=lipsync_chunk_seconds,
+            face_strict=lipsync_face_strict,
         )
         if result:
             print(f"[Pipeline] 립싱크 적용된 영상: {result}")
@@ -4184,6 +4249,9 @@ if __name__ == "__main__":
     parser.add_argument("--lipsync-chunk-seconds", default=0, type=int,
                         dest="lipsync_chunk_seconds",
                         help=">0 시 chunked inference (장편 영상 메모리 절약, 권장 10)")
+    parser.add_argument("--lipsync-face-strict", action="store_true",
+                        dest="lipsync_face_strict",
+                        help="face detector strict mode (드라마용). det_score≥0.85, w/h≥0.55 (측면 더 강하게 skip), roll±30° 이상 skip")
     parser.add_argument("--fast-separate", action="store_true", dest="fast_separate",
                         help="Vocal sep htdemucs로 (-60초, drama/movie 빼고 추천. SDR 9.5)")
     parser.add_argument("--smart-daemon", action="store_true", dest="smart_daemon",
@@ -4224,5 +4292,6 @@ if __name__ == "__main__":
         lipsync_profile_threshold=args.lipsync_profile_threshold,
         lipsync_face_diag_min_ratio=args.lipsync_face_diag_min_ratio,
         lipsync_chunk_seconds=args.lipsync_chunk_seconds,
+        lipsync_face_strict=args.lipsync_face_strict,
         smart_daemon=args.smart_daemon,
     )
