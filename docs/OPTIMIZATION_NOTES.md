@@ -370,3 +370,52 @@ export LATENTSYNC_TEACACHE=0.1
 export LATENTSYNC_PROFILE_THRESHOLD=0.35    # 측면 face 안전 처리
 export LATENTSYNC_CHUNK_SECONDS=10          # 장편 영상 (1분+) 메모리 절약
 ```
+
+---
+
+## Drama-specific 패치: distance skip + BGM re-mux 가이드
+
+### test4 (drama) 문제 분석
+
+| 문제 | 원인 | 해결 |
+|---|---|---|
+| **BGM 사라짐** | LatentSync 가 `audio_path` 로 받은 dubbed.wav (보컬만) 가 출력에 들어감 | 후속 ffmpeg mux 단계 필요 |
+| **거리 멀면 입 따로** | LatentSync 가 작은 face 를 512×512 로 over-zoom | `LATENTSYNC_FACE_DIAG_MIN_RATIO=0.10` |
+| **마스킹 자국** | 부정확한 face 위치에서 paste-back | distance + profile skip 으로 해당 frame 자체 skip |
+| **발언 안 한 인물 입 변경** | 카메라 향한 face 가 항상 lipsync 대상 (다인 dialog 인식 안 함) | **ASD 통합 필요** (별도 task spawn) |
+| **장면 전환 빠름** | LatentSync 는 frame-independent (temporal context 없음) | **본질적 한계** |
+
+### 신규 패치
+
+- `fix_face_distance_skip.py`:
+    ```
+    distance_ratio = face_bbox_diagonal / frame_diagonal
+    if distance_ratio < LATENTSYNC_FACE_DIAG_MIN_RATIO: skip
+    ```
+    환경변수 default 0 = 비활성. 권장 0.10~0.15 (작은 face skip).
+
+### BGM 복구 (필수)
+
+LatentSync 의 `--audio_path` 는 모델이 듣는 오디오 (보컬). 출력 mp4 에 들어가는 오디오도 같은 파일. → 원래 chunked 더빙 pipeline 이 만든 `_final.mp4` 의 오디오 (한국어 + BGM 섞인 것)로 재mux 해야 함:
+
+```bash
+ffmpeg -y \
+  -i test4_lipsync.mp4 \
+  -i chunks/test4_chunk_000_final.mp4 \
+  -map 0:v -map 1:a -c:v copy -c:a aac -shortest \
+  test4_lipsync_with_bgm.mp4
+```
+
+### test4 재측정 (profile + distance 둘 다)
+
+- 시간: 15:35 (기존 14:58 와 거의 동일 — skip 추가 비용 미미)
+- Skip count: brightness 300 + face/profile/distance ~800+ → lipsync 적용 frame ~1500
+
+### 드라마 적합도
+
+LatentSync 1.6 은 정면 close-up face 학습. 드라마는 본질적으로:
+- ✅ 단인 정면 dialog: 잘 작동
+- ⚠️ Over-the-shoulder shot: ASD 통합 필요 (별도 task spawn 진행 중)
+- ❌ 빠른 컷, 다인 빠른 dialog, 작은 face: 본질적 한계
+
+→ 영화 narration 이나 단인 인터뷰 형식의 영상이 최선. 본격 드라마/영화는 부분 적용만 권장.
