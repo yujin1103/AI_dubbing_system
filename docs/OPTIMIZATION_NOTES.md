@@ -182,3 +182,77 @@ export LATENTSYNC_TEACACHE=0.1
 - `patches/retinaface_postprocess_gpu.py` — facexlib NMS → torchvision.ops.nms (GPU)
   - 동일 IoU 알고리즘, 결과 비트단위 동일
   - face 검출 후처리 ~30ms → ~3ms
+
+---
+
+## 2026-05-11 — GPU alignment + paste-back (Phase 3)
+
+### 측정 결과 (1080p 64초 영상)
+
+| 단계 | 시간 | 누적 절감 |
+|---|---|---|
+| baseline (PyTorch FP32) | 18:00 (1080s) | – |
+| TRT BF16 GFPGAN (v1) | 15:24 (924s) | −14% |
+| **+ GPU alignment + paste (v2)** | **8:04 (484s)** | **−55%** |
+
+### 핵심: v1 → v2 단축의 본질
+
+**paste-back이 진짜 병목이었음** (예상은 face detection이었지만):
+- v1 cv2.warpAffine paste = **113 ms/face** (1080p frame, 1 face)
+- v2 grid_sample paste = **24 ms/face** (4.66× 가속)
+- 평균 5 faces/frame 였으므로: 5 × (113-24) = **445 ms/frame 절약**
+- 1602 frames × 445 ms = **713 s 절약** (예상 단축 −17% 훨씬 초과)
+
+### v2 per-stage 분석 (1602 frames)
+
+```
+extract (ffmpeg):     79.0 s   (concurrent libx264 영향 큰 편)
+enhance loop:        365.6 s   (228 ms/frame)
+  detect (PT):       137.3 s
+  upload (H2D):        1.2 s
+  align (GPU):         2.3 s   (1.4 ms/frame — cv2 0.6 ms 대비 살짝 늦음, N=1 오버헤드)
+  GFPGAN forward:     57.8 s   (36 ms/frame, ~5 faces avg)
+  paste (GPU):       135.3 s   (84 ms/frame, ~5 faces avg) ⭐
+  download (D2H):      1.2 s
+assemble:             39.6 s
+─────────────────────────────
+total:               484.2 s
+```
+
+### 품질 검증 (목표 통과)
+
+- PSNR median: **45.62 dB** (목표 ≥45)
+- SSIM mean: **0.9922** (목표 ≥0.99)
+- p99 픽셀 차이: 6 LSB 이내 (시각 구분 불가)
+- diff 가 큰 frame 도 parse-mask 경계의 cv2 Gaussian rounding 차이일 뿐
+
+### 발견된 추가 이슈
+
+⚠️ **build_retinaface_multires.py 가 `strict=False` 로 silently no-op**:
+- 체크포인트의 `module.` prefix 처리 안 함
+- 결과 ONNX/TRT 가 random init weights
+- 우리가 측정한 "5.7× speedup" 은 빈 모델 forward 였음
+
+→ `rebuild_retinaface_fhd.py` 로 수정 빌드 완료. bbox 차이 mean 5.8 px (FP16 양자화 영향, 화질엔 영향 없음).
+
+### 파일
+
+| 파일 | 역할 |
+|----|----|
+| `patches/gpu_face_aligner.py` | GPU align/paste 모듈 |
+| `patches/gfpgan_async_postprocess_trt_v2.py` | v2 메인 스크립트 |
+| `patches/test_gpu_aligner_sanity.py` | cv2 vs GPU 동등성 검증 |
+| `patches/bench_align_paste_microbench.py` | per-stage 마이크로 벤치 |
+| `patches/compare_v1_v2_quality.py` | PSNR/SSIM 비교 |
+| `patches/rebuild_retinaface_fhd.py` | RetinaFace 가중치 strict 로드 + 재빌드 |
+| `patches/BENCH_GPU_ALIGN.md` | 상세 보고서 |
+| `patches/retinaface_postprocess_gpu.py` | NMS GPU 패치 |
+
+### 사용
+
+```bash
+/opt/venv_gfpgan/bin/python /workspace/patches/gfpgan_async_postprocess_trt_v2.py \
+  --input  /workspace/media/output/INPUT.mp4 \
+  --output /workspace/media/output/OUTPUT.mp4 \
+  --upscale 1 [--retinaface-trt] [--detail-timing]
+```
