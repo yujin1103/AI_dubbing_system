@@ -1,6 +1,34 @@
 # Progress Log (English)
 
 > Development progress journal — newest first. Records code changes, decisions, and verification results.
+
+## 2026-05-13 (Wed) — AIHub validation dataset prepared
+
+### ✅ Completed
+- **AIHub Lipreading VS11 dataset extracted** (E:/download → /workspace/media/aihub_validation)
+  - 60 mp4 videos (1920×1080 @ 30fps, ~5min avg)
+  - 60 JSON labels (sentence-level timestamps + Korean text)
+  - 18GB total, tar concatenation + extraction complete
+  - Speaker: Male M_2, environment: Noise level 2
+- **lora_validation.py written** (`/workspace/patches/`)
+  - Extracts sentence-level chunks (6-12s) from JSON labels
+  - Compares LoRA scales (base / 0.5 / 0.7 / 1.0)
+  - Auto-generates 2×2 grid comparison videos
+  - Integrates mouth_only_enhance v3 (TRT)
+
+### 🎯 Validation procedure (after LoRA completes)
+1. Auto-detects checkpoint-50000.pt
+2. Run: `python /workspace/patches/lora_validation.py --n-samples 5 --n-sentences 2`
+3. Generates 10 sentence chunks × 4 variants = 40 videos + 10 comparison grids
+4. Output: `/workspace/media/aihub_validation/results/<video>/sentence_<id>/comparison.mp4`
+
+### Current status
+- LoRA: step 18,020/50,000 (36%) — on track
+- Validation data: ready (waiting for LoRA to finish)
+
+
+---
+
 >
 > Korean version: [PROGRESS.md](./PROGRESS.md)
 

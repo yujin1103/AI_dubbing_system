@@ -2,6 +2,34 @@
 
 > 진행사항 / 작업 일지 — 최신순. 코드 변경 + 결정 + 검증 결과 기록.
 
+## 2026-05-13 (수) — AIHub 검증 데이터 준비
+
+### ✅ 완료
+- **AIHub 립리딩 VS11 데이터셋 추출** (E:/download → /workspace/media/aihub_validation)
+  - 60개 mp4 영상 (1920×1080 @ 30fps, 평균 5분)
+  - 60개 JSON 라벨 (sentence-level timestamp + 한국어 텍스트)
+  - 총 18GB → tar concatenation + extraction 완료
+  - 화자: 남성 M(남성)_2, 환경: 소음환경2
+- **lora_validation.py 작성** (`/workspace/patches/`)
+  - JSON label에서 sentence 단위로 chunk 추출 (6-12초)
+  - LoRA scale별 비교 (base / 0.5 / 0.7 / 1.0)
+  - 2×2 grid comparison video 자동 생성
+  - mouth_only_enhance v3 (TRT) 통합
+
+### 🎯 LoRA 학습 완료 후 검증 절차
+1. checkpoint-50000.pt 자동 사용
+2. `python /workspace/patches/lora_validation.py --n-samples 5 --n-sentences 2`
+3. 10개 sentence chunk × 4 variant = 40개 비디오 + 10개 grid 비교 영상
+4. 결과: `/workspace/media/aihub_validation/results/<video>/sentence_<id>/comparison.mp4`
+
+### 진행 상황
+- LoRA: step 18,020/50,000 (36%) — 정상 진행
+- 검증 데이터: 준비 완료 (대기 중)
+
+
+---
+
+
 ---
 
 ## 2026-05-13 (수) — TRT 후처리 가속 + LoRA 학습
