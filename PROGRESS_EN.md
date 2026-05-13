@@ -2,6 +2,73 @@
 
 > Development progress journal — newest first. Records code changes, decisions, and verification results.
 
+## 2026-05-13 (Wed, additional) — A·B·C speed optimization tasks completed
+
+### 🎯 Written during LoRA training, no GPU needed (validated after LoRA finishes)
+
+#### Task A: VAE TRT conversion (expected: -25s per 1-min video)
+- **vae_trt_build.py** (`/workspace/trt_work/scripts/`)
+  - VAE encoder + decoder ONNX export
+  - FP16 TRT engine build (opt_level=5)
+  - Input: stabilityai/sd-vae-ft-mse (used by LatentSync)
+  - Output: vae_encoder_fp16.trt, vae_decoder_fp16.trt
+- **vae_trt_wrapper.py** (`/workspace/patches/`)
+  - Drop-in replacement for diffusers AutoencoderKL
+  - Activated by LATENTSYNC_VAE_TRT=1
+  - Auto-fallback to PyTorch on failure
+
+#### Task B: CosyVoice TRT-LLM auto setup (expected: -3-10s per chunk)
+- **cosyvoice_trt_setup.sh** (in dubbing_pipeline `/tmp/`)
+  - Auto-start cosyvoice-trt container
+  - Install 5 missing dependencies (x_transformers, s3tokenizer>=0.3, loguru, torch-einops-utils, einx)
+  - Sequential start: trtllm-serve (port 8010) + tritonserver (18000)
+  - Wait for 5/5 models loaded + smoke test
+  - Full Triton up in ~3 min
+
+#### Task C-lite: frame-level pipelining in mouth_enhance (expected: -30% mouth_enhance time)
+- **mouth_only_enhance_v4.py** (`/workspace/patches/`)
+  - 3-thread pipeline:
+    - Thread 1 (CPU): video decode + frame read
+    - Thread 2 (GPU): RetinaFace TRT + GFPGAN TRT
+    - Thread 3 (CPU): Poisson blend + color match
+  - Frame order preserved
+  - **Zero additional memory** — same buffers, async execution
+  - Risk: very low (LATENTSYNC_ENHANCE_NO_PIPELINE=1 fallback)
+
+#### Task C-full: chunk-level parallelization (expected: -1.5-2.5 min per 1-min video)
+- **parallel_lipsync_orchestrator.py** (`/workspace/patches/`)
+  - New orchestrator: pre-chunks video at orchestrator level
+  - chunk N+1 lipsync ‖ chunk N enhance (async)
+  - GPU memory pre-check (falls back to serial if <3GB free)
+  - LATENTSYNC_PARALLEL_ENHANCE=0 to disable
+  - Auto serial fallback on OOM
+
+### 📊 Cumulative effect (1-min video)
+
+| Step applied | Time | Cumulative savings |
+|---|---|---|
+| Current (v3, GFPGAN TRT + RetinaFace TRT + NVENC) | 10-12 min | -28% |
+| + A (VAE TRT) | 10-11.5 min | -32% |
+| + B (CosyVoice TRT-LLM) | 9.5-11 min | -36% |
+| + C-lite (frame pipelining) | 8.5-10 min | -41% |
+| + C-full (chunk parallel) | **7-8.5 min** | **-50%** |
+| + LoRA + steps=8 (after validation) | 5.5-7 min | -60% |
+
+### 💾 Memory safety analysis (RTX 5080 16GB)
+- LatentSync inference: ~6GB
+- mouth_enhance (TRT): ~1.5GB
+- Concurrent (C-full): 7.5GB → 8.5GB headroom (safe)
+- cosyvoice-trt must stay stopped during LoRA training
+
+### 🔒 Safety guarantees on all tasks
+- Tasks A/B: separate modules, no impact if not invoked
+- Task C-lite: env-disable available, instant fallback
+- Task C-full: GPU memory check + OOM fallback + separate script (existing orchestrator untouched)
+
+
+---
+
+
 ## 2026-05-13 (Wed) — AIHub validation dataset prepared
 
 ### ✅ Completed

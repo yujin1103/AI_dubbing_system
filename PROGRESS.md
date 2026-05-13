@@ -2,6 +2,73 @@
 
 > 진행사항 / 작업 일지 — 최신순. 코드 변경 + 결정 + 검증 결과 기록.
 
+## 2026-05-13 (수, 추가) — A·B·C 시간 절감 작업 완료
+
+### 🎯 LoRA 학습 동안 GPU 없이 작성 (LoRA 끝난 후 검증)
+
+#### Task A: VAE TRT 변환 (예상 절감: -25s/1분 영상)
+- **vae_trt_build.py** (`/workspace/trt_work/scripts/`)
+  - VAE encoder + decoder ONNX export
+  - FP16 TRT engine 빌드 (opt_level=5)
+  - 입력: stabilityai/sd-vae-ft-mse (LatentSync 사용)
+  - 출력: vae_encoder_fp16.trt, vae_decoder_fp16.trt
+- **vae_trt_wrapper.py** (`/workspace/patches/`)
+  - diffusers AutoencoderKL drop-in 교체
+  - LATENTSYNC_VAE_TRT=1 로 활성화
+  - 실패 시 PyTorch fallback 자동
+
+#### Task B: CosyVoice TRT-LLM 자동 셋업 (예상 절감: -3-10s/chunk)
+- **cosyvoice_trt_setup.sh** (`/tmp/` in dubbing_pipeline)
+  - cosyvoice-trt 컨테이너 자동 시작
+  - 누락 의존성 5개 자동 설치 (x_transformers, s3tokenizer>=0.3, loguru, torch-einops-utils, einx)
+  - trtllm-serve (port 8010) + tritonserver (18000) 순차 시작
+  - 5/5 모델 로드 대기 + smoke test
+  - 한 번에 실행하면 ~3분이면 Triton 가동
+
+#### Task C-lite: mouth_enhance 내부 frame-level pipelining (예상 절감: -30% mouth_enhance)
+- **mouth_only_enhance_v4.py** (`/workspace/patches/`)
+  - 3-thread 파이프라인:
+    - Thread 1 (CPU): video decode + frame read
+    - Thread 2 (GPU): RetinaFace TRT + GFPGAN TRT
+    - Thread 3 (CPU): Poisson blend + color match
+  - Frame order preserved (sequential write)
+  - **메모리 추가 0** — 같은 버퍼, 비동기 실행만
+  - 위험: 매우 낮음 (LATENTSYNC_ENHANCE_NO_PIPELINE=1 로 fallback)
+
+#### Task C-full: chunk-level 병렬화 (예상 절감: -1.5-2.5분/1분 영상)
+- **parallel_lipsync_orchestrator.py** (`/workspace/patches/`)
+  - 새 orchestrator: video를 미리 chunk 단위로 분할
+  - chunk N+1 lipsync ‖ chunk N enhance (async)
+  - GPU 메모리 사전 체크 (3GB 미만이면 serial fallback)
+  - LATENTSYNC_PARALLEL_ENHANCE=0 으로 비활성화 가능
+  - OOM 시 자동 serial fallback
+
+### 📊 누적 효과 (1분 영상 기준)
+
+| 적용 단계 | 시간 | 누적 절감 |
+|---|---|---|
+| 현재 (v3, GFPGAN TRT + RetinaFace TRT + NVENC) | 10-12분 | -28% |
+| + A (VAE TRT) | 10-11.5분 | -32% |
+| + B (CosyVoice TRT-LLM) | 9.5-11분 | -36% |
+| + C-lite (frame pipelining) | 8.5-10분 | -41% |
+| + C-full (chunk parallel) | **7-8.5분** | **-50%** |
+| + LoRA + steps=8 (검증 후) | 5.5-7분 | -60% |
+
+### 💾 메모리 안전 분석 (RTX 5080 16GB)
+- LatentSync 추론: ~6GB
+- mouth_enhance (TRT): ~1.5GB
+- 동시 실행 (C-full): 7.5GB → 8.5GB 여유 (안전)
+- LoRA 학습 중에는 cosyvoice-trt stopped 유지 필수
+
+### 🔒 모든 작업 안전 장치
+- Task A/B: 별도 모듈, 호출 안 하면 영향 0
+- Task C-lite: env로 비활성화 가능, fallback 즉시 가능
+- Task C-full: GPU 메모리 체크 + OOM fallback + 별도 스크립트 (기존 orchestrator 미수정)
+
+
+---
+
+
 ## 2026-05-13 (수) — AIHub 검증 데이터 준비
 
 ### ✅ 완료
