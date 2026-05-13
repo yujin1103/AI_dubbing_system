@@ -2,6 +2,74 @@
 
 > 진행사항 / 작업 일지 — 최신순. 코드 변경 + 결정 + 검증 결과 기록.
 
+## 2026-05-13 (수, 검증 완료) — Full Pipeline 시간 측정 + TED 검증
+
+### 🎯 Full Pipeline 시간 측정 (test1 TED, 64초)
+
+**입력**: `test.mp4` (TED talk, 64s, 1080p)
+**LoRA**: `merged_scale_0.7.pt` (effective scale 0.35)
+**설정**: PyTorch UNet + LATENTSYNC_USE_TRT=0 + interview content type
+
+#### 단계별 timing
+```
+16:47:19  시작
+   ├─ Stage 1 (vocals/bgm 분리, VAD)        ~8분
+   ├─ Stage 2 (ASR + Diarization)
+   ├─ Stage 3 (Translation + Reference)     ~5분
+   ├─ Stage 4 (TTS CosyVoice3, 8 segments)  ~1분
+   ├─ Stage 5 (LipSync, PyTorch + LoRA)     ~10분
+   └─ Stage 6 (Mouth-Enhance: SKIP)
+17:11:05  완료
+─────────────────────────
+TOTAL: 1428s = 23분 48초 (22.3× realtime)
+```
+
+#### 결과 출력
+- `test_fullpipe_lora07_ko_*.mp4` — 더빙만 (23MB)
+- `test_fullpipe_lora07_ko_*_lipsync.mp4` — 더빙+립싱크 (55MB)
+- 8 segment 한국어 번역 + emotion 메타데이터 (JSON 리포트)
+
+### 🐛 발견된 이슈
+
+1. **Mouth-Enhance skip 발생**: orchestrator 조건에서 `_lipsync.mp4` 출력 파일명 매칭 실패
+   - 결과: raw LatentSync 출력 그대로 (mouth_enhance 안 적용)
+   - 추후 fix 필요 (orchestrator 출력 경로 검출 로직)
+
+### 📊 TED test (8.7초 chunk × 4 variants) 검증 완료
+
+| Variant | 처리 시간 | 출력 |
+|---|---|---|
+| base | 8분 (cold cache) | base_enhanced.mp4 5.4M |
+| lora_0.5 | 3분 | lora_0.5_enhanced.mp4 5.4M |
+| lora_0.7 | 2분 | lora_0.7_enhanced.mp4 5.4M |
+| lora_1.0 | 3분 | lora_1.0_enhanced.mp4 5.4M |
+| **comparison.mp4** | 2x2 grid | 4.8MB |
+
+### 📈 시간 분석
+
+```
+22-25분/분 영상   ← 현재 (PyTorch + LoRA merged + mouth_enhance skip)
+~28-32분/분      ← 예상 (PyTorch + LoRA + enhance 적용)
+~18-20분/분      ← 예상 (TRT UNet LoRA 재빌드 후)
+~15분/분         ← 예상 (TRT + 모든 최적화 다 적용)
+```
+
+### 보존된 데이터
+- TED variants: `/workspace/media/aihub_validation/ted_test/results/`
+- AIHub variants (이전): `/workspace/media/aihub_validation/quick_test/`
+- Full pipeline run: `/workspace/media/runs/test_fullpipe_20260513_164719/`
+- 최종 출력: `/workspace/media/output/test_fullpipe_lora07_ko_*.mp4`
+- 리포트 JSON: `/workspace/media/reports/test_fullpipe_lora07_ko_*.json`
+
+### 🐛 미해결 이슈 (낮은 우선순위)
+- VAE TRT CUDA driver error (LatentSync 통합 시) — 단독 smoke test는 통과
+- RetinaFace TRT 해상도 mismatch (priors 충돌) — facexlib 우회 필요
+- NVENC 불가 (`NVIDIA_DRIVER_CAPABILITIES` 에 `video` 누락) — libx264 폴백 사용 중
+
+
+---
+
+
 ## 2026-05-13 (수, 재부팅 전) — 검증 진행 중간 정리
 
 ### ✅ 완료된 작업 (모두 디스크에 보존됨, 재부팅 안전)

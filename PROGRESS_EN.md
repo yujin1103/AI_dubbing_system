@@ -2,6 +2,74 @@
 
 > Development progress journal — newest first. Records code changes, decisions, and verification results.
 
+## 2026-05-13 (Wed, validation complete) — Full Pipeline timing + TED validation
+
+### 🎯 Full Pipeline timing measurement (test1 TED, 64s)
+
+**Input**: `test.mp4` (TED talk, 64s, 1080p)
+**LoRA**: `merged_scale_0.7.pt` (effective scale 0.35)
+**Settings**: PyTorch UNet + LATENTSYNC_USE_TRT=0 + interview content type
+
+#### Per-stage timing
+```
+16:47:19  Start
+   ├─ Stage 1 (vocals/bgm separation, VAD)     ~8min
+   ├─ Stage 2 (ASR + Diarization)
+   ├─ Stage 3 (Translation + Reference)        ~5min
+   ├─ Stage 4 (TTS CosyVoice3, 8 segments)     ~1min
+   ├─ Stage 5 (LipSync, PyTorch + LoRA)        ~10min
+   └─ Stage 6 (Mouth-Enhance: SKIPPED)
+17:11:05  Done
+─────────────────────────
+TOTAL: 1428s = 23min 48s (22.3× realtime)
+```
+
+#### Output files
+- `test_fullpipe_lora07_ko_*.mp4` — dubbed only (23MB)
+- `test_fullpipe_lora07_ko_*_lipsync.mp4` — dubbed + lipsync (55MB)
+- 8 segment Korean translation + emotion metadata (JSON report)
+
+### 🐛 Discovered issues
+
+1. **Mouth-Enhance skipped**: orchestrator failed to match `_lipsync.mp4` output filename
+   - Result: raw LatentSync output (mouth_enhance NOT applied)
+   - TODO: fix orchestrator output path detection
+
+### 📊 TED test (8.7s chunk × 4 variants) validation complete
+
+| Variant | Time | Output |
+|---|---|---|
+| base | 8min (cold cache) | base_enhanced.mp4 5.4M |
+| lora_0.5 | 3min | lora_0.5_enhanced.mp4 5.4M |
+| lora_0.7 | 2min | lora_0.7_enhanced.mp4 5.4M |
+| lora_1.0 | 3min | lora_1.0_enhanced.mp4 5.4M |
+| **comparison.mp4** | 2x2 grid | 4.8MB |
+
+### 📈 Time analysis
+
+```
+22-25 min/min video  ← Current (PyTorch + LoRA merged + mouth_enhance skip)
+~28-32 min/min       ← Expected (PyTorch + LoRA + enhance applied)
+~18-20 min/min       ← Expected (TRT UNet rebuilt with LoRA)
+~15 min/min          ← Expected (TRT + all optimizations applied)
+```
+
+### Preserved data
+- TED variants: `/workspace/media/aihub_validation/ted_test/results/`
+- AIHub variants (prior): `/workspace/media/aihub_validation/quick_test/`
+- Full pipeline run: `/workspace/media/runs/test_fullpipe_20260513_164719/`
+- Final outputs: `/workspace/media/output/test_fullpipe_lora07_ko_*.mp4`
+- JSON report: `/workspace/media/reports/test_fullpipe_lora07_ko_*.json`
+
+### 🐛 Open issues (low priority)
+- VAE TRT CUDA driver error (LatentSync integration) — standalone smoke test passes
+- RetinaFace TRT resolution mismatch (priors conflict) — facexlib bypass needed
+- NVENC unavailable (`NVIDIA_DRIVER_CAPABILITIES` missing `video`) — libx264 fallback in use
+
+
+---
+
+
 ## 2026-05-13 (Wed, pre-reboot) — Validation in-progress checkpoint
 
 ### ✅ Completed (all preserved on disk, reboot-safe)
