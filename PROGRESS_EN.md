@@ -2,6 +2,52 @@
 
 > Development progress journal — newest first. Records code changes, decisions, and verification results.
 
+## 2026-05-13 (Wed, validation infra) — Phased speaker-matching improvement plan
+
+### 🎯 Key insight
+- TRT conversion has no quality impact (FP16/BF16 safe)
+- Real quality issue is **speaker-matching accuracy** + Korean cross-lingual gap
+- LoRA solves the latter, the former needs separate patches
+
+### 📋 Phased validation plan (after LoRA finishes)
+
+**Phase 0**: Current baseline (v3 + LoRA + strict envs)
+**Phase 1**: + Track-level person ID locking (per-frame → per-track decision)
+**Phase 2**: + SyncNet post-validation (auto-reject low-score frames)
+**Phase 3**: + Overlap detection + skip (lipsync off in DiariZen overlap regions)
+**Phase 4**: + Multi-frame voting (N=5 frame averaged embedding)
+
+### 🛠️ Validation automation infrastructure
+- **validation_report_generator.py**: consistent phase comparison reports
+- Per video: timing.json + metrics.json + report.md + thumbnails
+- Auto summary.md per phase
+- 4 category videos for diversity:
+  - A. AIHub clean Korean (60 owned)
+  - B. Drama frontal 1-speaker
+  - C. Drama multi-speaker + overlap
+  - D. Profile/motion (LoRA edge cases)
+
+### 📊 ROI comparison (model swap vs logic improvement)
+
+| Task | Effect | Cost | ROI |
+|---|---|---|---|
+| Track-level locking | -70% wrong matches | 0.5d | ⭐⭐⭐⭐⭐ |
+| SyncNet validation | -50% wrong matches | 0.5d | ⭐⭐⭐⭐⭐ |
+| Overlap skip | -100% (overlap only) | 0.3d | ⭐⭐⭐⭐ |
+| LoCoNet ASD swap | +8% accuracy | 2-3d | ⭐⭐ |
+| Sortformer diarization | -33% DER | 3-5d | ⭐⭐ |
+
+→ **Smart logic beats model swap on ROI**
+
+### Status
+- LoRA: step 44,032/50,000 (88%) — ~1h 40min remaining
+- All A·B·C scripts complete, awaiting validation
+- Validation report system ready
+
+
+---
+
+
 ## 2026-05-13 (Wed, additional) — A·B·C speed optimization tasks completed
 
 ### 🎯 Written during LoRA training, no GPU needed (validated after LoRA finishes)

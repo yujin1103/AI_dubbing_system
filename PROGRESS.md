@@ -2,6 +2,52 @@
 
 > 진행사항 / 작업 일지 — 최신순. 코드 변경 + 결정 + 검증 결과 기록.
 
+## 2026-05-13 (수, 검증 인프라) — 단계별 화자 매칭 개선 계획
+
+### 🎯 핵심 인식
+- TRT 변환은 품질 영향 없음 (FP16/BF16 안전)
+- 진짜 품질 문제는 **화자 매칭 정확도** + 한국어 cross-lingual gap
+- LoRA가 후자 해결, 전자는 별도 패치 필요
+
+### 📋 Phase별 검증 계획 (LoRA 완료 후)
+
+**Phase 0**: 현재 baseline (v3 + LoRA + strict envs)
+**Phase 1**: + Track-level person ID locking (per-frame → per-track 결정)
+**Phase 2**: + SyncNet post-validation (잘못 매칭된 frame 자동 거부)
+**Phase 3**: + Overlap detection + skip (DiariZen overlap 구간 lipsync off)
+**Phase 4**: + Multi-frame voting (N=5 frame 평균 임베딩)
+
+### 🛠️ 검증 자동화 인프라
+- **validation_report_generator.py**: phase별 일관된 비교 report 생성
+- 각 영상마다: timing.json + metrics.json + report.md + thumbnails
+- Phase별 summary.md 자동 생성
+- 4개 카테고리 영상으로 다양성 확보:
+  - A. AIHub 깨끗 한국어 (60개 보유)
+  - B. 드라마 정면 1인
+  - C. 드라마 다인 + overlap
+  - D. 측면/움직임 (LoRA 한계 케이스)
+
+### 📊 ROI 비교 (모델 교체 vs 로직 개선)
+
+| 작업 | 효과 | 비용 | ROI |
+|---|---|---|---|
+| Track-level locking | -70% | 0.5d | ⭐⭐⭐⭐⭐ |
+| SyncNet validation | -50% | 0.5d | ⭐⭐⭐⭐⭐ |
+| Overlap skip | -100% (overlap만) | 0.3d | ⭐⭐⭐⭐ |
+| LoCoNet ASD 교체 | +8% | 2-3d | ⭐⭐ |
+| Sortformer diarization | -33% DER | 3-5d | ⭐⭐ |
+
+→ **새 모델 통합보다 똑똑한 로직이 훨씬 가성비 좋음**
+
+### 진행 상황
+- LoRA: step 44,032/50,000 (88%) — ~1h 40min 남음
+- 모든 A·B·C 스크립트 작성 완료, 검증 대기
+- 검증 리포트 시스템 준비 완료
+
+
+---
+
+
 ## 2026-05-13 (수, 추가) — A·B·C 시간 절감 작업 완료
 
 ### 🎯 LoRA 학습 동안 GPU 없이 작성 (LoRA 끝난 후 검증)
