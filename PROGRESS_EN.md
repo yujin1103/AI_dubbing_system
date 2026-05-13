@@ -2,6 +2,36 @@
 
 > Development progress journal — newest first. Records code changes, decisions, and verification results.
 
+## 2026-05-13 (Wed, 13:00 update) — VAE TRT bug + validation in progress
+
+### ⚠️ VAE TRT integration issue
+- Smoke test passed but actual LatentSync inference fails with `CUDA driver error: device not ready`
+- Cause: suspected TRT engine context vs PyTorch inference stream conflict
+- Temporary fix: `LATENTSYNC_VAE_TRT=0` (PyTorch VAE)
+- TODO: debug separately (CUDA stream management review)
+
+### 🔄 LoRA scale validation restarted
+- 4 variants (base / lora_0.5 / lora_0.7 / lora_1.0)
+- PyTorch UNet (LoRA-merged checkpoint doesn't fit current TRT engine)
+- VAE also PyTorch (temporary)
+- 8.7s chunk × 4 variants ≈ 30-50 min
+- After completion: mouth_enhance v3 (TRT) + 2×2 grid
+
+### Triton temporarily stopped
+- Prevent GPU memory conflict during validation
+- Will restart after validation for full pipeline test
+
+### Next steps
+1. 4 variants complete
+2. mouth_enhance applied to 4 (~2 min)
+3. 2×2 grid comparison.mp4 generated
+4. User visual comparison → best LoRA scale selected
+5. Phase 0 baseline (8-12 videos with selected scale)
+
+
+---
+
+
 ## 2026-05-13 (Wed, validation begin) — VAE TRT integration + LoRA scale comparison
 
 ### ✅ Completed integrations (12:00-12:10)

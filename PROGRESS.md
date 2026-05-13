@@ -2,6 +2,36 @@
 
 > 진행사항 / 작업 일지 — 최신순. 코드 변경 + 결정 + 검증 결과 기록.
 
+## 2026-05-13 (수, 13:00 업데이트) — VAE TRT 버그 + 검증 진행
+
+### ⚠️ VAE TRT 통합 이슈
+- Smoke test는 통과했지만 실제 LatentSync 추론 통합 시 `CUDA driver error: device not ready`
+- 원인: TRT engine 컨텍스트와 PyTorch 추론 stream 간 충돌 추정
+- 임시 해결: `LATENTSYNC_VAE_TRT=0` (PyTorch VAE 사용)
+- 추후 별도 디버깅 필요 (CUDA stream 관리 검토)
+
+### 🔄 LoRA scale 검증 재시작
+- 4 variants (base / lora_0.5 / lora_0.7 / lora_1.0)
+- PyTorch UNet (LoRA-merged 체크포인트는 TRT 미지원)
+- VAE도 PyTorch (임시)
+- 8.7초 chunk × 4 variant ≈ 30-50분
+- 완료 후 mouth_enhance v3 (TRT) 적용 + 2×2 grid 영상 생성
+
+### Triton 임시 중단
+- LoRA 검증 중 GPU 메모리 충돌 방지
+- 검증 완료 후 재시작 예정 (full pipeline 테스트용)
+
+### 다음 단계
+1. 4 variants 완료
+2. mouth_enhance 4개 적용 (~2분)
+3. 2×2 grid comparison.mp4 생성
+4. 사용자 시각 비교 → 최적 LoRA scale 결정
+5. Phase 0 baseline (선택된 scale로 영상 8-12개)
+
+
+---
+
+
 ## 2026-05-13 (수, 검증 시작) — VAE TRT 통합 + LoRA scale 비교
 
 ### ✅ 완료된 통합 (12:00-12:10)
