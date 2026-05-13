@@ -2,6 +2,77 @@
 
 > Development progress journal — newest first. Records code changes, decisions, and verification results.
 
+## 2026-05-13 (Wed, pre-reboot) — Validation in-progress checkpoint
+
+### ✅ Completed (all preserved on disk, reboot-safe)
+
+**LoRA training**:
+- Stopped at step 45,115 (90.2%)
+- 7 checkpoints preserved at `/workspace/media/training_outputs/lora_nf4_train/train-2026_05_13-01:59:54/checkpoints/`
+  - checkpoint-15000.pt ~ checkpoint-45000.pt (each 4.4GB)
+
+**Merged LoRA checkpoints** (`/workspace/media/lora/merged/`):
+- merged_scale_0.5.pt (4.4GB)
+- merged_scale_0.7.pt
+- merged_scale_1.0.pt
+
+**VAE TRT engines** (`/workspace/trt_work/engines/`):
+- vae_encoder_fp16.trt (67MB)
+- vae_decoder_fp16.trt (96MB)
+
+**Validation outputs** (`/workspace/media/aihub_validation/quick_test/`):
+- base.mp4 / lora_0.5.mp4 / lora_0.7.mp4 / lora_1.0.mp4 (each 6.8MB)
+- *_enhanced.mp4 (each 7.7MB)
+- **comparison.mp4** (2×2 grid, 4.3MB)
+
+### 🐛 Issues discovered
+
+1. **VAE TRT integration**: CUDA driver error → `LATENTSYNC_VAE_TRT=0` temporarily disabled
+2. **NVENC unavailable** (dubbing_pipeline): `NVIDIA_DRIVER_CAPABILITIES` missing `video` → libx264 used
+3. **GFPGAN unpacking bug** (FIXED): `_, _, restored` → `_, restored, _` ★
+   - All prior mouth_enhance runs likely silent-failed — one cause of visible mask artifacts
+4. **RetinaFace TRT resolution mismatch**: prior conflict when input res ≠ engine res
+5. **AIHub videos have small faces** → lipsync mask projects to chest area
+6. **All enhanced outputs show faint mask boundary** — mouth_enhance reuses LatentSync mask boundary
+
+### 🎯 Next steps after reboot
+
+1. **Re-validate with test1 TED video** (large face case):
+   - Input: `/workspace/media/input/test.mp4` (1080p, 64s, TED talk)
+   - Dubbed audio: existing or generate new
+   - 4 variants comparison
+
+2. **Mask size adjustment review**:
+   - Reduce LatentSync `mask.png` (mouth-only coverage)
+   - Or use face_diag_min_ratio more aggressively
+
+3. **VAE TRT debugging** (separate session):
+   - CUDA stream management review
+   - PyTorch fallback stabilization
+
+### 📦 Scripts ready (immediate use after reboot)
+- `patches/vae_trt_wrapper.py` (with .to/.cuda fix)
+- `patches/merge_lora_into_base.py`
+- `patches/lora_validation.py`
+- `patches/parallel_lipsync_orchestrator.py`
+- `patches/mouth_only_enhance.py` (v2 with GFPGAN fix)
+- `tmp/enhance_4_variants.sh` (in Docker /tmp)
+- `tmp/cosyvoice_trt_setup.sh` (in Docker /tmp)
+
+### 💡 First command after reboot
+
+```bash
+# 1. Start Docker Desktop, then
+docker start dubbing_pipeline cosyvoice-trt
+
+# 2. Re-validate with test1
+# (Prepare Korean dubbed audio → 4 variants comparison)
+```
+
+
+---
+
+
 ## 2026-05-13 (Wed, 13:00 update) — VAE TRT bug + validation in progress
 
 ### ⚠️ VAE TRT integration issue

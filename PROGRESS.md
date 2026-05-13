@@ -2,6 +2,77 @@
 
 > 진행사항 / 작업 일지 — 최신순. 코드 변경 + 결정 + 검증 결과 기록.
 
+## 2026-05-13 (수, 재부팅 전) — 검증 진행 중간 정리
+
+### ✅ 완료된 작업 (모두 디스크에 보존됨, 재부팅 안전)
+
+**LoRA 학습**:
+- step 45,115에서 중단 (90.2%)
+- 체크포인트 7개 보존: `/workspace/media/training_outputs/lora_nf4_train/train-2026_05_13-01:59:54/checkpoints/`
+  - checkpoint-15000.pt ~ checkpoint-45000.pt (각 4.4GB)
+
+**Merged LoRA 체크포인트** ():
+- merged_scale_0.5.pt (4.4GB)
+- merged_scale_0.7.pt
+- merged_scale_1.0.pt
+
+**VAE TRT 엔진** (`/workspace/trt_work/engines/`):
+- vae_encoder_fp16.trt (67MB)
+- vae_decoder_fp16.trt (96MB)
+
+**검증 영상** (`/workspace/media/aihub_validation/quick_test/`):
+- base.mp4 / lora_0.5.mp4 / lora_0.7.mp4 / lora_1.0.mp4 (각 6.8MB)
+- *_enhanced.mp4 (각 7.7MB)
+- **comparison.mp4** (2×2 grid, 4.3MB)
+
+### 🐛 발견된 이슈
+
+1. **VAE TRT integration**: CUDA driver error → `LATENTSYNC_VAE_TRT=0` 임시 비활성
+2. **NVENC 불가** (dubbing_pipeline): `NVIDIA_DRIVER_CAPABILITIES` 에 `video` 누락 → libx264 사용
+3. **GFPGAN unpacking bug**: `_, _, restored` → `_, restored, _` (수정 완료 ★)
+   - 이전 모든 mouth_enhance가 silent fail 했을 가능성 — 마스킹 자국 두드러진 한 원인
+4. **RetinaFace TRT 해상도 mismatch**: input 해상도 ≠ engine 해상도 시 prior 충돌
+5. **AIHub 영상은 얼굴이 작아** lipsync 마스크가 가슴까지 덮음 — face crop 비율 문제
+6. **모든 enhanced 영상에 마스크 경계 흐릿하게 보임** — mouth_enhance가 LatentSync 마스크 경계를 재사용
+
+### 🎯 재부팅 후 진행할 일
+
+1. **test1 TED 영상으로 재검증** (큰 얼굴 케이스):
+   - 입력: `/workspace/media/input/test.mp4` (1080p, 64s, TED 발표)
+   - 더빙 오디오: 기존 또는 새로 생성
+   - 4 variants 비교
+
+2. **마스크 크기 조정 검토**:
+   - LatentSync의 `mask.png` 크기 줄이기 (mouth만 cover)
+   - 또는 face_diag_min_ratio 적극 활용
+
+3. **VAE TRT 디버깅** (별도 시간):
+   - CUDA stream 관리 검토
+   - PyTorch fallback 안정화
+
+### 📦 모든 스크립트 위치 (재부팅 후 즉시 사용)
+- `patches/vae_trt_wrapper.py` (.to/.cuda fix 포함)
+- `patches/merge_lora_into_base.py`
+- `patches/lora_validation.py`
+- `patches/parallel_lipsync_orchestrator.py`
+- `patches/mouth_only_enhance.py` (v2, GFPGAN fix 포함)
+- `tmp/enhance_4_variants.sh` (Docker 안 /tmp)
+- `tmp/cosyvoice_trt_setup.sh` (Docker 안 /tmp)
+
+### 💡 재부팅 후 1차 명령
+
+```bash
+# 1. Docker Desktop 시작 후
+docker start dubbing_pipeline cosyvoice-trt
+
+# 2. test1로 재검증
+# (Korean dubbed audio 준비 → 4 variants 비교)
+```
+
+
+---
+
+
 ## 2026-05-13 (수, 13:00 업데이트) — VAE TRT 버그 + 검증 진행
 
 ### ⚠️ VAE TRT 통합 이슈
