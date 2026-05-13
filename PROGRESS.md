@@ -2,6 +2,57 @@
 
 > 진행사항 / 작업 일지 — 최신순. 코드 변경 + 결정 + 검증 결과 기록.
 
+## 2026-05-13 (수, 검증 시작) — VAE TRT 통합 + LoRA scale 비교
+
+### ✅ 완료된 통합 (12:00-12:10)
+
+#### VAE TRT (Task A)
+- VAE encoder TRT: 67MB (20.7s 빌드)
+- VAE decoder TRT: 96MB (23.4s 빌드)
+- 총 빌드 시간: **61초**
+- inference.py 패치 완료: `LATENTSYNC_VAE_TRT=1` 기본 활성
+- Smoke test 통과 (encode/decode forward 정상)
+
+#### CosyVoice TRT-LLM (Task B)
+- trtllm-serve port 8010: HTTP 200 ✅
+- tritonserver port 18000: HTTP 200 ✅
+- 5/5 모델 로드 완료 (speaker_embedding, cosyvoice3, audio_tokenizer, vocoder, token2wav)
+- 의존성 5개 자동 설치 검증
+
+#### LoRA Merge (3 scales)
+- merged_scale_0.5.pt (effective scale 0.25) — 4.4GB
+- merged_scale_0.7.pt (effective scale 0.35) — 4.4GB
+- merged_scale_1.0.pt (effective scale 0.50) — 4.4GB
+- 모두 224 LoRA pair + 336 motion_modules 정상 병합
+
+### 🔧 발견된 이슈
+
+#### NVENC 불가 (dubbing_pipeline)
+- `NVIDIA_DRIVER_CAPABILITIES=compute,utility` — `video` 누락
+- 해결: `LATENTSYNC_USE_NVENC=0` 으로 libx264 fallback
+- 영향: -5-10s/min 영상 (작은 손실)
+
+#### LoRA Runtime Loading
+- inference.py에 LoRA 환경변수 처리 없음
+- 해결: merge_lora_into_base.py로 미리 병합한 체크포인트 사용
+- 장점: vanilla state_dict → TRT 재export 시 호환
+
+### 🎬 현재 진행
+- AIHub VS11 lip_J_2_M_05_C221_A_001.mp4
+- Sentence ID 6: "은퇴를 빨리하고 창업을 하는 게 나을까?" (8.7s)
+- 4 variants 동시 비교 중 (PyTorch UNet, no TRT for LoRA):
+  - base / lora_0.5 / lora_0.7 / lora_1.0
+- 예상 시간: ~20-40분 (4 × 5-10min)
+
+### LoRA 학습 최종 상태
+- 중단 step: 45,115 / 50,000
+- 사용 체크포인트: **checkpoint-45000.pt**
+- 모든 다른 체크포인트 보존 (15k/20k/25k/30k/35k/40k/45k)
+
+
+---
+
+
 ## 2026-05-13 (수, 검증 인프라) — 단계별 화자 매칭 개선 계획
 
 ### 🎯 핵심 인식

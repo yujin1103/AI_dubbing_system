@@ -2,6 +2,57 @@
 
 > Development progress journal — newest first. Records code changes, decisions, and verification results.
 
+## 2026-05-13 (Wed, validation begin) — VAE TRT integration + LoRA scale comparison
+
+### ✅ Completed integrations (12:00-12:10)
+
+#### VAE TRT (Task A)
+- VAE encoder TRT: 67MB (20.7s build)
+- VAE decoder TRT: 96MB (23.4s build)
+- Total build time: **61s**
+- inference.py patched: `LATENTSYNC_VAE_TRT=1` enabled by default
+- Smoke test passed (encode/decode forward verified)
+
+#### CosyVoice TRT-LLM (Task B)
+- trtllm-serve port 8010: HTTP 200 ✅
+- tritonserver port 18000: HTTP 200 ✅
+- 5/5 models loaded (speaker_embedding, cosyvoice3, audio_tokenizer, vocoder, token2wav)
+- 5 dependencies auto-installed and verified
+
+#### LoRA Merge (3 scales)
+- merged_scale_0.5.pt (effective scale 0.25) — 4.4GB
+- merged_scale_0.7.pt (effective scale 0.35) — 4.4GB
+- merged_scale_1.0.pt (effective scale 0.50) — 4.4GB
+- All 224 LoRA pairs + 336 motion_modules properly merged
+
+### 🔧 Issues discovered
+
+#### NVENC not available (dubbing_pipeline)
+- `NVIDIA_DRIVER_CAPABILITIES=compute,utility` — missing `video`
+- Solution: `LATENTSYNC_USE_NVENC=0` falls back to libx264
+- Impact: -5-10s/min video (minor)
+
+#### LoRA Runtime Loading
+- inference.py has no LoRA env handling
+- Solution: pre-merged checkpoints via merge_lora_into_base.py
+- Benefit: vanilla state_dict → compatible with TRT re-export
+
+### 🎬 In progress
+- AIHub VS11 lip_J_2_M_05_C221_A_001.mp4
+- Sentence ID 6: 8.7s Korean clip
+- 4 variants in parallel comparison (PyTorch UNet, no TRT for LoRA):
+  - base / lora_0.5 / lora_0.7 / lora_1.0
+- ETA: ~20-40min (4 × 5-10min)
+
+### LoRA training final state
+- Stopped at step 45,115 / 50,000
+- Active checkpoint: **checkpoint-45000.pt**
+- All intermediate checkpoints preserved (15k/20k/25k/30k/35k/40k/45k)
+
+
+---
+
+
 ## 2026-05-13 (Wed, validation infra) — Phased speaker-matching improvement plan
 
 ### 🎯 Key insight
