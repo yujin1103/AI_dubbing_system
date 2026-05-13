@@ -1,8 +1,11 @@
-# 다국어 자동 더빙 시스템
+# 다국어 자동 더빙 시스템 / Multilingual Auto-Dubbing System
 
 > **영어 영상을 한국어로 자동 더빙하는 AI 파이프라인**
+> *AI pipeline that automatically dubs English videos into Korean*
 >
 > 4 Stage · 10 Model · Docker 멀티 venv · 3 Daemon
+
+📋 **Progress Log / 진행사항**: [한국어](./PROGRESS.md) · [English](./PROGRESS_EN.md)
 
 ![Pipeline](./pipeline_diagram.png)
 
