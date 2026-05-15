@@ -51,20 +51,25 @@ class SynthesizeResponse(BaseModel):
     error: Optional[str] = None
 
 
-def _build_prefix(text: str, tone: str, emotion: str) -> str:
-    """v13: 카테고리 fallback 강한 묘사 (drama 격렬한 감정 대응).
-    Sad/Angry/Happy 등이 평이하게 합성되던 v12 보완 — 학습 분포 안에서 더 강한 표현.
+def _build_instruct_text(text: str, tone: str, emotion: str) -> str:
+    """v22 (5/14): 팀원 master_timeline_cosyvoice.json 형식 적용.
+    검증된 ratio 정상 형식:
+      "Please say it close to the speaker's natural delivery, with [짧은 톤 묘사]"
     """
-    if emotion in {"Sad", "Angry", "Happy", "Surprised", "Scared"}:
-        cat_imperative = {
-            "Sad":       "with deep, anguished sadness, slow pacing, restrained voice",
-            "Angry":     "with sharp, raised, confrontational tone, intense urgency",
-            "Happy":     "in a bright, energetic tone with lively, exuberant pacing",
-            "Surprised": "with sudden, sharp surprise, raised intonation",
-            "Scared":    "with raw, tense fear, shaky breathy voice",
-        }[emotion]
-        return f'You are a helpful assistant. Please say this sentence {cat_imperative}.<|endofprompt|>'
-    return 'You are a helpful assistant.<|endofprompt|>'
+    cat_tone = {
+        "Sad":       "with a gentle note of sadness",
+        "Angry":     "with sharp confrontational intensity",
+        "Happy":     "with a bright energetic edge",
+        "Surprised": "with a subtle raised intonation",
+        "Scared":    "with a tense breathy quality",
+        "Neutral":   "",
+    }
+    tone_phrase = tone.strip().rstrip(".") if tone else cat_tone.get(emotion, "")
+    if tone_phrase:
+        instruct = f"Please say it close to the speaker's natural delivery, {tone_phrase}"
+    else:
+        instruct = "Please say it close to the speaker's natural delivery"
+    return f"You are a helpful assistant. {instruct}.<|endofprompt|>"
 
 
 @app.on_event("startup")
@@ -120,7 +125,7 @@ def synthesize(req: SynthesizeRequest):
         return SynthesizeResponse(audio_b64="", sample_rate=0, duration=0,
                                   success=False, error=f"ref not found: {req.ref_audio_path}")
     try:
-        prefix = _build_prefix(req.text, req.tone, req.emotion)
+        instruct_text = _build_instruct_text(req.text, req.tone, req.emotion)
         # ref 16kHz mono cast
         import tempfile, subprocess
         ref_16k = os.path.join(tempfile.gettempdir(), f"ref_16k_{os.getpid()}_{time.time_ns()}.wav")
@@ -129,8 +134,10 @@ def synthesize(req: SynthesizeRequest):
             "-ar", "16000", "-ac", "1", "-c:a", "pcm_s16le", ref_16k,
         ], check=True, capture_output=True)
         outputs = []
-        for result in _cosy_model.inference_cross_lingual(
-            tts_text=f"{prefix}{req.text}",
+        # v21: instruct2 + pace 명시 (ratio 자연화)
+        for result in _cosy_model.inference_instruct2(
+            tts_text=req.text,
+            instruct_text=instruct_text,
             prompt_wav=ref_16k,
             stream=False,
             speed=req.speed,
@@ -144,6 +151,17 @@ def synthesize(req: SynthesizeRequest):
         peak = np.max(np.abs(wav))
         if peak > 0:
             wav = wav * (0.9 / peak)
+        # cold-start click + abrupt cut 완화: 50ms fade-in / 30ms fade-out (orchestrator
+        # synthesize_segment_cosy의 inline 경로와 동일). 모든 segment 양 끝에 적용.
+        _native_sr = _cosy_model.sample_rate
+        _fade_n = int(0.05 * _native_sr)
+        _fade_out_n = int(0.03 * _native_sr)
+        if len(wav) > _fade_n * 2 and _fade_n > 0:
+            _ramp = np.linspace(0.0, 1.0, _fade_n, dtype=np.float32)
+            wav[:_fade_n] *= _ramp
+        if len(wav) > _fade_out_n * 2 and _fade_out_n > 0:
+            _ramp_out = np.linspace(1.0, 0.0, _fade_out_n, dtype=np.float32)
+            wav[-_fade_out_n:] *= _ramp_out
         # CosyVoice3 출력 24000Hz → 16000Hz resample
         if _cosy_model.sample_rate != TTS_SAMPLE_RATE:
             import librosa

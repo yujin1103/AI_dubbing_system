@@ -23,6 +23,7 @@ data:
 
 ckpt:
   resume_ckpt_path: /workspace/media/lora/latentsync_ko_50k.pt
+  lora_resume_path: /workspace/media/training_outputs/lora_nf4_train/train-2026_05_12-17:33:01/checkpoints/checkpoint-10000.pt
   save_ckpt_steps: 5000      # 5k마다 체크포인트 (50k = 10개 ckpt)
 
 run:

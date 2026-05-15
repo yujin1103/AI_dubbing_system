@@ -155,6 +155,7 @@ def fuse_av_diarization(
 
     return {
         "speaker_face_map": speaker_face_map,
+        "speaker_face_count": dict(speaker_face_count),  # v14: 외부 노출 (자동 화자 병합용)
         "spurious_speakers": spurious_speakers,
         "per_frame_target": per_frame_target,
         "frame_active_speaker": frame_active_speaker,
@@ -162,6 +163,57 @@ def fuse_av_diarization(
         "n_frames": n_frames,
         "report": report,
     }
+
+
+def detect_face_based_merges(
+    speaker_face_count: Dict[str, Dict[int, int]],
+    min_shared_frames: int = 10,
+    min_share_ratio: float = 0.30,
+) -> List[Tuple[str, str, int]]:
+    """같은 face track에 매핑된 speaker pair 검출 → 자동 병합 후보.
+
+    근거: 한 face = 한 사람. 두 audio speaker가 같은 face와 N frame 이상 매칭되면
+    DiariZen이 같은 사람을 over-detect한 것일 가능성 매우 높음.
+
+    PARAMETERS:
+      min_shared_frames: 공유 face track의 최소 frame 수 (노이즈 방지)
+      min_share_ratio: 작은 쪽 speaker의 face matching frame 중 공유 비율
+                       예: A가 face1에 100frame, face2에 5frame 매칭이고
+                            B도 face1에 50frame 매칭이면
+                            A의 face1은 105 / 110 ≈ 95% (강한 신호)
+                            B의 face1은 50 / 50 = 100% (확정)
+
+    OUTPUT:
+      [(speaker_a, speaker_b, shared_frames), ...] 병합 후보 list
+    """
+    pairs = []
+    speakers = list(speaker_face_count.keys())
+    for i in range(len(speakers)):
+        for j in range(i + 1, len(speakers)):
+            s1, s2 = speakers[i], speakers[j]
+            faces1 = speaker_face_count[s1]
+            faces2 = speaker_face_count[s2]
+            # 공유 face track + 합산 frame
+            shared_tracks = set(faces1.keys()) & set(faces2.keys())
+            if not shared_tracks:
+                continue
+            shared_frames = sum(min(faces1[t], faces2[t]) for t in shared_tracks)
+            if shared_frames < min_shared_frames:
+                continue
+            # 작은 쪽 기준 share_ratio 검증 (false merge 방지)
+            total1 = sum(faces1.values())
+            total2 = sum(faces2.values())
+            if total1 == 0 or total2 == 0:
+                continue
+            share1 = shared_frames / total1
+            share2 = shared_frames / total2
+            min_share = min(share1, share2)
+            if min_share < min_share_ratio:
+                continue
+            pairs.append((s1, s2, shared_frames))
+    # shared_frames 큰 순서로
+    pairs.sort(key=lambda x: -x[2])
+    return pairs
 
 
 def get_lipsync_bbox(asd_result: Dict, fusion: Dict, frame_idx: int) -> Optional[Tuple[int, int, int, int]]:
@@ -179,6 +231,189 @@ def get_lipsync_bbox(asd_result: Dict, fusion: Dict, frame_idx: int) -> Optional
         x1, y1, x2, y2 = track["bboxes"][i]
         return (int(x1), int(y1), int(x2), int(y2))
     return None
+
+
+# ─── v17 NEW: per-segment AV reassignment ────────────────────────────────
+def reassign_segments_by_face_owner(
+    audio_segments: List[Tuple[float, float, str]],
+    fusion: Dict,
+    asd_result: Dict,
+    min_dominant_ratio: float = 0.60,
+    min_seg_face_share: float = 0.50,
+    max_seg_duration: Optional[float] = None,
+    verbose: bool = True,
+) -> List[Tuple[float, float, str, str]]:
+    """face track 기반 audio segment 재할당.
+
+    근거: 한 face = 한 사람. face_track i 의 owner는 그 face와 가장 많이 매칭된
+    speaker. 어떤 audio segment의 dominant face track이 다른 speaker로 라벨링되어
+    있으면 → face owner로 재할당.
+
+    이는 (a) spurious 제거나 (b) 화자 병합과 *별개*인 *재할당* 작업.
+    SPEAKER_3 segments가 SPEAKER_5/0/1로 잘못 라벨링된 케이스 등을 잡는다.
+
+    Args:
+        audio_segments: [(start, end, speaker), ...] DiariZen 결과
+        fusion: fuse_av_diarization 반환 dict (speaker_face_count 포함)
+        asd_result: run_asd 반환 dict
+        min_dominant_ratio: face owner 결정 시 dominant speaker의 face 점유율 최소값
+                            (예: face1이 SPEAKER_5와 80%, SPEAKER_3와 20% 매칭이면
+                             owner=SPEAKER_5, share=80% — 0.60 이상이면 채택)
+        min_seg_face_share: segment 구간 frames 중 dominant face의 최소 점유율
+                            (face track이 잠깐만 보이면 신뢰 안 함)
+        max_seg_duration: None이면 무제한. 값이 있으면 그보다 긴 segment는 재할당 skip
+                          (긴 발화의 화자 라벨은 audio diarization을 신뢰한다는 의미.
+                          v18 회귀 fix: 짧은 segment만 보정해서 false positive 줄임)
+
+    Returns:
+        [(start, end, old_speaker, new_speaker), ...] 재할당된 segments.
+        diarization Annotation 자체는 호출자가 수정.
+    """
+    speaker_face_count = fusion.get("speaker_face_count", {})
+    if not speaker_face_count:
+        return []
+
+    n_frames = asd_result.get("n_frames", 0)
+    fps = asd_result.get("fps", 25.0)
+    tracks = asd_result.get("tracks", [])
+    if n_frames <= 0 or not tracks:
+        return []
+
+    # 1. face_track i 의 owner speaker 결정
+    # face_owner[face_idx] = (speaker, share_of_this_face_frames)
+    all_face_indices = set()
+    for s, faces in speaker_face_count.items():
+        all_face_indices.update(faces.keys())
+    face_owner: Dict[int, Tuple[str, float]] = {}
+    for face_idx in all_face_indices:
+        spk_counts = {s: speaker_face_count[s].get(face_idx, 0)
+                      for s in speaker_face_count}
+        total = sum(spk_counts.values())
+        if total == 0:
+            continue
+        best_spk, best_count = max(spk_counts.items(), key=lambda x: x[1])
+        share = best_count / total
+        if share >= min_dominant_ratio:
+            face_owner[face_idx] = (best_spk, share)
+
+    if not face_owner:
+        if verbose:
+            print(f"[AV-Reassign] face owner 결정 못함 (dominant<{min_dominant_ratio:.0%})")
+        return []
+
+    if verbose:
+        owner_str = ", ".join(f"f{i}→{spk}({sh:.0%})"
+                              for i, (spk, sh) in sorted(face_owner.items()))
+        print(f"[AV-Reassign] face owners: {owner_str}")
+
+    # 2. frame → face track 리스트 lookup
+    face_at_frame: List[List[int]] = [[] for _ in range(n_frames)]
+    for tidx, t in enumerate(tracks):
+        for f in t["frames"]:
+            if 0 <= f < n_frames:
+                face_at_frame[f].append(tidx)
+
+    # 3. per-segment dominant face → 재할당
+    reassignments: List[Tuple[float, float, str, str]] = []
+    for start, end, spk in audio_segments:
+        # v19: max_seg_duration보다 긴 segment는 신뢰 (재할당 skip)
+        if max_seg_duration is not None and (end - start) > max_seg_duration:
+            continue
+        f1 = max(0, int(start * fps))
+        f2 = min(n_frames, int(end * fps + 1))
+        seg_frames = max(1, f2 - f1)
+        if f2 <= f1:
+            continue
+
+        # 이 segment 구간에서 face track 별 frame 수
+        face_freq: Dict[int, int] = {}
+        for f in range(f1, f2):
+            for tidx in face_at_frame[f]:
+                face_freq[tidx] = face_freq.get(tidx, 0) + 1
+        if not face_freq:
+            continue
+        dom_face, dom_count = max(face_freq.items(), key=lambda x: x[1])
+        dom_share = dom_count / seg_frames
+        if dom_share < min_seg_face_share:
+            continue  # segment에서 face가 dominant 안 함 (얼굴 자주 가려짐 등)
+
+        owner = face_owner.get(dom_face)
+        if owner is None:
+            continue  # 이 face track은 owner 결정 안 됨
+        new_spk, owner_share = owner
+        if new_spk == spk:
+            continue  # 이미 맞게 라벨링됨
+
+        reassignments.append((start, end, spk, new_spk))
+        if verbose:
+            print(f"[AV-Reassign] {start:.2f}~{end:.2f}s "
+                  f"{spk} → {new_spk} "
+                  f"(face{dom_face} segshare={dom_share:.0%}, owner={owner_share:.0%})")
+
+    return reassignments
+
+
+def apply_reassignment_to_diarization(
+    diarization,
+    reassignments: List[Tuple[float, float, str, str]],
+    return_intervals: bool = True,
+):
+    """diarization Annotation에 재할당 적용 (v19 재구조).
+
+    Args:
+        diarization: pyannote.core.Annotation
+        reassignments: reassign_segments_by_face_owner 결과
+                       [(start, end, old_speaker, new_speaker), ...]
+        return_intervals: True면 변경된 (start, end, old_speaker) 리스트 같이 반환
+
+    Returns:
+        return_intervals=True: (new_diarization, [(start, end, old_spk), ...])
+        return_intervals=False: new_diarization
+    """
+    from pyannote.core import Annotation
+
+    if not reassignments:
+        empty: List[Tuple[float, float, str]] = []
+        return (diarization, empty) if return_intervals else diarization
+
+    # (start, end) → (new_spk, old_spk) map
+    reassign_map: Dict[Tuple[float, float], Tuple[str, str]] = {
+        (round(s, 3), round(e, 3)): (new, old)
+        for s, e, old, new in reassignments
+    }
+    new_diar = Annotation()
+    reassigned_intervals: List[Tuple[float, float, str]] = []
+    for turn, track, spk in diarization.itertracks(yield_label=True):
+        k = (round(turn.start, 3), round(turn.end, 3))
+        new_info = reassign_map.get(k)
+        if new_info is not None:
+            new_spk, old_spk = new_info
+            new_diar[turn, track] = new_spk
+            reassigned_intervals.append((turn.start, turn.end, old_spk))
+        else:
+            new_diar[turn, track] = spk
+
+    return (new_diar, reassigned_intervals) if return_intervals else new_diar
+
+
+def overlaps_excluded_intervals(
+    start: float,
+    end: float,
+    excluded: List[Tuple[float, float, str]],
+    min_overlap_ratio: float = 0.5,
+) -> bool:
+    """segment(start, end)가 excluded intervals 중 하나와 min_overlap_ratio 이상
+    겹치면 True. v19 ref bank 오염 방지용.
+
+    excluded: apply_reassignment_to_diarization이 반환하는 (start, end, old_spk).
+              old_spk는 여기서 무시 (구조 일관성용).
+    """
+    seg_dur = max(1e-3, end - start)
+    for ex_start, ex_end, _old in excluded:
+        overlap = max(0.0, min(end, ex_end) - max(start, ex_start))
+        if overlap / seg_dur >= min_overlap_ratio:
+            return True
+    return False
 
 
 if __name__ == "__main__":

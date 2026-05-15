@@ -20,7 +20,7 @@ if curl -s http://127.0.0.1:8901/health > /dev/null 2>&1; then
     echo "[Cosy] already running"
 else
     echo "[Cosy] starting on 8901..."
-    nohup /opt/venv_cosy/bin/python /workspace/patches/cosyvoice_daemon.py --port 8901 \
+    nohup /opt/venv_lipsync/bin/python /workspace/patches/cosyvoice_daemon.py --port 8901 \
         > "$LOG_DIR/cosy_daemon.log" 2>&1 &
     echo "[Cosy] PID $!"
 fi

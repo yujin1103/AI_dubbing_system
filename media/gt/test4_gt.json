@@ -1,0 +1,13 @@
+{
+  "_filename": "test4.mp4",
+  "expected_speaker_count": 6,
+  "speaker_constraints": {
+    "_comment_speaker_05": "사용자 명시: SPEAKER_05는 영상 중 1번만 발화 (단 segment split 고려 2까지 허용)",
+    "SPEAKER_05_max_groups": 2
+  },
+  "_history": [
+    "v19: SPEAKER_05=4 groups → 과검출",
+    "v18: SPEAKER_05=6 groups → 과검출 + ref 오염",
+    "v17: 측정 후 추가"
+  ]
+}

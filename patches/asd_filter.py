@@ -359,3 +359,226 @@ def maybe_load_filter() -> Optional[LipsyncASDFilter]:
             f"threshold={flt.score_threshold}"
         )
     return flt
+
+
+# ────────────────────────────────────────────────────────────────
+# Speaker face profiles  (per-VIDEO PERSON identity, vs per-frame
+# `LipsyncASDFilter` which is per-FRAME/per-FACE).  Built offline by
+# `patches/build_face_profiles.py` from ASD pickles + pyannote diarization,
+# read here at lipsync time to verify the detected face is the audio's
+# speaker.
+# ────────────────────────────────────────────────────────────────
+
+
+def _cosine_sim(a, b):
+    import numpy as _np
+    a = _np.asarray(a, dtype=_np.float32)
+    b = _np.asarray(b, dtype=_np.float32)
+    na = float(_np.linalg.norm(a))
+    nb = float(_np.linalg.norm(b))
+    if na <= 0 or nb <= 0:
+        return 0.0
+    return float((a @ b) / (na * nb))
+
+
+class SpeakerFaceProfiles:
+    """Maps diarization SPEAKER_XX → reference face embedding.
+
+    JSON schema (`speaker_face_profiles.json`):
+        {
+          "version": 1, "fps": 25.0, "embedding_dim": 512,
+          "match_threshold": 0.5,
+          "speakers": {
+              "SPEAKER_01": {
+                  "embedding": [...512 floats...],
+                  "face_cluster_id": "C0",
+                  "n_track_samples": 42,
+                  "associated_track_ids": [9, 22, 25, 31],
+                  "gender_hint": "male" | "female" | "unknown"
+              }
+          },
+          "speaker_timeline": [
+              {"start_sec": 0.0, "end_sec": 5.2, "speaker": "SPEAKER_01"}
+          ]
+        }
+    """
+
+    def __init__(self, fps: float, match_threshold: float,
+                 speakers: Dict, timeline: List[Dict]) -> None:
+        self.fps = fps
+        # === PROFILE_MATCH_THRESHOLD_PATCH (5/13) ===
+        # Env override for stricter matching on drama with similar faces.
+        import os as _os_pmt
+        _env_thr = _os_pmt.environ.get("LATENTSYNC_PROFILE_MATCH_THRESHOLD")
+        if _env_thr:
+            try:
+                match_threshold = float(_env_thr)
+                print(f"[PROFILE] match_threshold override -> {match_threshold}",
+                      flush=True)
+            except Exception:
+                pass
+        # === PROFILE_MATCH_THRESHOLD_PATCH end ===
+        self.match_threshold = match_threshold
+        self.speakers = speakers  # name -> {embedding, ...}
+        self.timeline = sorted(timeline, key=lambda e: float(e.get("start_sec", 0)))
+        # Precompute parallel arrays for O(log n) binary search by start time.
+        self._tl_starts = [float(e.get("start_sec", 0)) for e in self.timeline]
+        self._tl_ends = [float(e.get("end_sec", 0)) for e in self.timeline]
+        self._tl_speakers = [str(e.get("speaker", "")) for e in self.timeline]
+        # Pre-resolve expected embeddings as numpy arrays (avoid per-call asarray).
+        import numpy as _np
+        self._embedding_by_speaker = {}
+        for spk_name, info in self.speakers.items():
+            emb = info.get("embedding")
+            if emb is not None:
+                self._embedding_by_speaker[spk_name] = _np.asarray(emb, dtype=_np.float32)
+
+    @classmethod
+    def from_json(cls, path) -> Optional["SpeakerFaceProfiles"]:
+        try:
+            with open(str(path), "r", encoding="utf-8") as f:
+                data = json.load(f)
+        except Exception as e:
+            _log(f"speaker profiles load failed: {e}")
+            return None
+        speakers = data.get("speakers", {}) or {}
+        if not speakers:
+            _log("speaker profiles empty -> disabled")
+            return None
+        return cls(
+            fps=float(data.get("fps", 25.0)),
+            match_threshold=float(data.get("match_threshold", 0.5)),
+            speakers=speakers,
+            timeline=data.get("speaker_timeline", []) or [],
+        )
+
+    def speaker_at_frame(self, global_frame_idx: int) -> Optional[str]:
+        """Return the SPEAKER_XX label whose pyannote segment covers this frame,
+        or None if no segment covers it / no timeline data.
+
+        O(log n) via bisect on sorted start times, then validate against the
+        candidate segment's end time.
+        """
+        n = len(self._tl_starts)
+        if n == 0:
+            return None
+        t = global_frame_idx / max(self.fps, 1e-6)
+        import bisect
+        # Largest i such that starts[i] <= t. bisect_right gives the
+        # insertion point AFTER such i.
+        idx = bisect.bisect_right(self._tl_starts, t) - 1
+        if idx < 0:
+            return None
+        if t < self._tl_ends[idx]:
+            return self._tl_speakers[idx]
+        return None
+
+    def expected_embedding(self, speaker_label: str):
+        if not speaker_label:
+            return None
+        # Pre-resolved at init.
+        return self._embedding_by_speaker.get(speaker_label)
+
+    def gender_hint(self, speaker_label: Optional[str]) -> Optional[str]:
+        if not speaker_label:
+            return None
+        spk = self.speakers.get(speaker_label)
+        return spk.get("gender_hint") if spk else None
+
+    def is_detected_face_correct_speaker(
+        self,
+        global_frame_idx: int,
+        detected_embedding,
+    ) -> Optional[bool]:
+        """Per-PROFILE check.
+
+        Policy (5/11 strict-on-unmapped update):
+          True  -> detected face matches the expected speaker (apply lipsync)
+          False -> EITHER detected face is a different person from the
+                   expected speaker, OR the speaker is in the diarization
+                   timeline but we have no face profile mapped for them
+                   (e.g. over-split pyannote labels, short utterances with
+                   no clear face track). Either way -> skip.
+          None  -> only when there is NO diarization coverage at this frame
+                   (genuinely no opinion). Caller may default-allow.
+
+        Rationale: user explicitly said "wrong-face lipsync is worse than
+        no-lipsync". When we don't have a profile for the current diarized
+        speaker, we can't safely allow lipsync on any face.
+        """
+        # === PROFILE_STRICT_NONE_PATCH (5/13) ===
+        import os as _os_psn
+        _strict_none = _os_psn.environ.get("LATENTSYNC_PROFILE_STRICT_NONE", "0") == "1"
+        _none_result = False if _strict_none else None
+        # === PROFILE_STRICT_NONE_PATCH end ===
+        if detected_embedding is None:
+            return _none_result  # no embedding -> strict: skip, lenient: opinion
+        speaker = self.speaker_at_frame(global_frame_idx)
+        if speaker is None:
+            return _none_result  # no diarization -> strict: skip, lenient: opinion
+        target = self.expected_embedding(speaker)
+        if target is None:
+            # Speaker exists in diarization timeline but is NOT mapped to a
+            # face cluster (e.g. pyannote over-split, no good ASD track in
+            # their segments).  Without an expected embedding we cannot
+            # verify the detected face matches -> conservative: skip.
+            return False
+        sim = _cosine_sim(detected_embedding, target)
+        return sim >= self.match_threshold
+
+
+def maybe_load_speaker_profiles() -> Optional[SpeakerFaceProfiles]:
+    """Read env var, return loaded profiles or None."""
+    p = os.environ.get("LATENTSYNC_SPEAKER_PROFILES_PATH")
+    if not p:
+        return None
+    prof = SpeakerFaceProfiles.from_json(p)
+    if prof is not None:
+        _log(
+            f"speaker profiles loaded: {p} "
+            f"speakers={list(prof.speakers.keys())} "
+            f"timeline_segs={len(prof.timeline)} "
+            f"threshold={prof.match_threshold}"
+        )
+    return prof
+
+
+# ────────────────────────────────────────────────────────────────
+# Audio F0 gender lookup  (auxiliary check: face gender vs audio gender)
+# ────────────────────────────────────────────────────────────────
+
+
+class AudioGenderTimeline:
+    """Per-frame male/female/unknown lookup from F0 estimation."""
+
+    def __init__(self, fps: float, gender_per_frame: List[str]) -> None:
+        self.fps = fps
+        self.gender_per_frame = gender_per_frame
+
+    @classmethod
+    def from_json(cls, path) -> Optional["AudioGenderTimeline"]:
+        try:
+            with open(str(path), "r", encoding="utf-8") as f:
+                data = json.load(f)
+        except Exception as e:
+            _log(f"audio gender load failed: {e}")
+            return None
+        gpf = data.get("gender_per_frame")
+        if not gpf:
+            return None
+        return cls(fps=float(data.get("fps", 25.0)), gender_per_frame=list(gpf))
+
+    def gender_at_frame(self, global_frame_idx: int) -> str:
+        if 0 <= global_frame_idx < len(self.gender_per_frame):
+            return str(self.gender_per_frame[global_frame_idx])
+        return "unknown"
+
+
+def maybe_load_audio_gender() -> Optional[AudioGenderTimeline]:
+    p = os.environ.get("LATENTSYNC_AUDIO_F0_GENDER_PATH")
+    if not p:
+        return None
+    ag = AudioGenderTimeline.from_json(p)
+    if ag is not None:
+        _log(f"audio gender loaded: {p} (n={len(ag.gender_per_frame)})")
+    return ag

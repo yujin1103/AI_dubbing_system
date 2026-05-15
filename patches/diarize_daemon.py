@@ -59,6 +59,29 @@ async def load_model():
     try:
         from diarizen.pipelines.inference import DiariZenPipeline
         _pipe = DiariZenPipeline.from_pretrained("BUT-FIT/diarizen-wavlm-large-s80-md-v2")
+        # v38b (5/15): load 후 attribute 직접 override (config_parse 인자 API 없음)
+        # 환경변수가 있으면 적용 시도; 실패해도 정상 load 유지.
+        ahc_thr = os.environ.get("DIARIZEN_AHC_THRESHOLD")
+        if ahc_thr:
+            try:
+                ahc_thr_f = float(ahc_thr)
+                # DiariZenPipeline에 cluster_pipeline 또는 비슷한 attribute가 있을 가능성
+                applied = False
+                for attr_name in ["cluster_pipeline", "clustering", "_cluster"]:
+                    if hasattr(_pipe, attr_name):
+                        obj = getattr(_pipe, attr_name)
+                        if hasattr(obj, "ahc_threshold"):
+                            setattr(obj, "ahc_threshold", ahc_thr_f)
+                            print(f"[DiarizeDaemon] {attr_name}.ahc_threshold = {ahc_thr_f}", flush=True)
+                            applied = True
+                            break
+                if not applied:
+                    print(f"[DiarizeDaemon] ahc_threshold attribute 찾지 못함 (default 0.6 유지)", flush=True)
+                    # debug: 사용 가능한 attribute 출력
+                    pipe_attrs = [a for a in dir(_pipe) if not a.startswith('_')]
+                    print(f"[DiarizeDaemon] available attrs: {pipe_attrs[:20]}", flush=True)
+            except Exception as _se:
+                print(f"[DiarizeDaemon] ahc_threshold override 실패: {_se}", flush=True)
         print(f"[DiarizeDaemon] loaded ({time.time()-t0:.1f}s)", flush=True)
     except Exception as e:
         import traceback

@@ -2,6 +2,47 @@
 
 > 진행사항 / 작업 일지 — 최신순. 코드 변경 + 결정 + 검증 결과 기록.
 
+## 2026-05-15 (목, 오후) — v27 회귀 분석 + v28 실패 + v29 결정성 검증
+
+### v27 회귀 발견
+- v27이 count metric (SPK_05 5→4) 으론 좋았지만 라벨 정확도는 **회귀**.
+- 59-72s 영역: v26 [SPK_05/05/05] → v27 [SPK_05/**SPK_04**/**SPK_03**/SPK_05]
+- `eval_speaker_count.py`가 그룹 수만 보니까 라벨 오염 못 잡음 → metric 신뢰 불가
+- 신규 도구: `tmp/eval_diarization_auto.py` (GT-free auto metric — selfref rate, fragmented sentences, rapid transitions, per-speaker gaps)
+
+### v28 가설: `LATENTSYNC_POSTPROC_SAME_SPK_GAP` 언셋
+- 가설: 이 env가 ECAPA centroid 흔들어서 라벨 회귀 유발
+- 결과: **회복 실패**. v28 segments도 v27과 사실상 동일 (59-72s 그대로 SPK_04/03)
+- 원인 재추적: 코드 default가 1.0 (내가 0.3로 잘못 파악). v26/v27/v28 모두 effective 1.0이라 변경 효과 없었음.
+
+### Auto metric (v26/v27/v28 비교)
+| metric | v26 | v27 | v28 |
+|--------|-----|-----|-----|
+| n_groups | 32 | 31 | 29 |
+| SPK_05 groups | 5 | 4 | 4 |
+| SPK_01 groups | 9 | 8 | **6 ↓** (sentence merge 효과) |
+| selfref % | 37.5% | 22.6% | 24.1% |
+| fragmented sentences | 5 | 4 | 4 |
+
+### TTS 기계음 — 별도 버그 fix
+- `patches/cosyvoice_daemon.py`에 fade-in 50ms + fade-out 30ms 누락 → 추가
+- `synthesize_segment_cosy` (inline) 와 동일하게 native sr에서 ramp 적용
+- 모든 v* segment의 cold-start click 제거 (v29부터 적용됨)
+
+### v29 결정성 검증 (진행 중)
+- v28 env 100% 동일 + `LATENTSYNC_RESUME=1` (vocals 재사용 → BS-RoFormer 비결정성 배제)
+- v28 segments == v29 segments → pipeline deterministic, v26 회귀 원인은 다른 곳
+- v28 != v29 → CUDA non-determinism, 자동 시스템에 random seed 고정 필요
+
+### NOT-TODO (설계 확정)
+- 영상별 GT 라벨링 작업 (사용자가 영상 보며 누가 언제 발화하는지 입력) 절대 안 함.
+- 이유: 자동 다국어 더빙 시스템. 최종 사용자는 영상 안 보고 input.
+- 평가는 (a) GT-free auto metric, (b) 개발자 시각 비교, (c) standard benchmark dataset.
+
+---
+
+
+
 ## 2026-05-13 (수, 검증 완료) — Full Pipeline 시간 측정 + TED 검증
 
 ### 🎯 Full Pipeline 시간 측정 (test1 TED, 64초)

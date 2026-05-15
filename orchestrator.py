@@ -194,6 +194,8 @@ class Segment:
     # 🔥 콘텐츠 타입 정책: raw 감정은 항상 기록, 정책에 의해 emotion이 덮어써질 수 있음
     raw_emotion:       str = "Neutral"   # emotion2vec+ 원본 감지값
     raw_emotion_score: float = 0.0
+    # v29 (5/14): 팀원 master_timeline_cosyvoice.json 형식 — 9개 감정 점수 (UI 조정용)
+    raw_emotion_scores: Dict[str, float] = field(default_factory=dict)
     # 🔥 LLM 자연어 감정 묘사 (passthrough 정책에서만 채워짐, neutral_only면 빈 문자열)
     #   CosyVoice3는 6-key 카테고리가 아니라 자유로운 자연어 instruction을 받음.
     #   LLM이 텍스트+화자+emotion2vec+ 결과를 종합해 풍부한 묘사를 만듦.
@@ -215,7 +217,18 @@ class SpeakerProfile:
     #       "Sad": "/data/reference/SPEAKER_00_Sad.wav"}
 
     def get_ref(self, emotion: str) -> str:
-        """감정에 맞는 레퍼런스 반환. 없으면 Neutral 반환."""
+        """감정에 맞는 레퍼런스 반환. 없으면 Neutral 반환.
+        v29 (5/14): LATENTSYNC_REF_SINGLE_PER_SPEAKER=1 면 emotion 무관 best 1개만 사용
+        (음색 일관성 ↑, 기계음 ↓).
+        """
+        import os as _os_ref
+        if _os_ref.environ.get("LATENTSYNC_REF_SINGLE_PER_SPEAKER", "0") == "1":
+            # emotion 무관 — Neutral 우선, 없으면 첫 번째
+            if "Neutral" in self.references:
+                return self.references["Neutral"]
+            if self.references:
+                return next(iter(self.references.values()))
+            return ""
         return self.references.get(emotion) or self.references.get("Neutral", "")
 
 
@@ -655,61 +668,100 @@ def separate_audio(chunk_path: str) -> Tuple[str, str]:
     # === SEP_FAST_PATCH (v28): content_type별 분기 ===
     # 환경변수 SEP_FAST=1 또는 lecture/news/auto/단순 영상이면 htdemucs (-60초)
     # drama/movie 등 BGM 강한 영상은 BS-Roformer 유지 (default)
+    # v24 (5/14): LATENTSYNC_SEP_ENSEMBLE=1 → BS-RoFormer + MDX23C Subtractive Ensemble
+    #             팀원 PPT 검증된 형식, 음원 품질 향상 (vocal leak 감소)
     use_fast = os.environ.get("SEP_FAST", "0") == "1"
-    if use_fast:
-        # htdemucs_ft: SDR 9.5, 30초 (BS-Roformer 90초 대비 -60초)
+    use_ensemble = os.environ.get("LATENTSYNC_SEP_ENSEMBLE", "0") == "1"
+
+    def _run_separator(model_filename, out_subdir):
+        """단일 모델로 separation 실행, vocals/bgm 경로 반환."""
+        sub_dir = os.path.join(out_dir, out_subdir)
+        os.makedirs(sub_dir, exist_ok=True)
         sep_script = (
             "import os; "
             "from audio_separator.separator import Separator; "
             "sep = Separator(output_dir=os.environ['OUT_DIR'], "
             "model_file_dir='/workspace/media/model_cache/audio_separator', "
             "log_level=30, use_autocast=True); "
-            "sep.load_model(model_filename='htdemucs_ft.yaml'); "
+            f"sep.load_model(model_filename='{model_filename}'); "
             "sep.separate(os.environ['INPUT_PATH'])"
         )
-        print(f"[Separate] SEP_FAST=1 → htdemucs_ft (-60초)")
-    else:
-        # BS-Roformer: SDR 12.97, 90초 (default, drama/movie BGM 강한 영상)
-        sep_script = (
-            "import os; "
-            "from audio_separator.separator import Separator; "
-            "sep = Separator(output_dir=os.environ['OUT_DIR'], "
-            "model_file_dir='/workspace/media/model_cache/audio_separator', "
-            "log_level=30, use_autocast=True); "
-            "sep.load_model(model_filename='model_bs_roformer_ep_317_sdr_12.9755.ckpt'); "
-            "sep.separate(os.environ['INPUT_PATH'])"
+        r = subprocess.run(
+            ["/opt/venv_lipsync/bin/python", "-c", sep_script],
+            capture_output=True, text=True,
+            env={**os.environ, "OUT_DIR": sub_dir, "INPUT_PATH": chunk_path,
+                 "PYTORCH_CUDA_ALLOC_CONF": "max_split_size_mb:256"}
         )
-
-    result = subprocess.run(
-        ["/opt/venv_lipsync/bin/python", "-c", sep_script],
-        capture_output=True, text=True,
-        env={**os.environ,
-             "OUT_DIR": out_dir,
-             "INPUT_PATH": chunk_path,
-             "PYTORCH_CUDA_ALLOC_CONF": "max_split_size_mb:256"}
-    )
-    if result.returncode != 0:
-        raise RuntimeError(f"BS-Roformer 실패:\n{result.stderr}")
-
-    # BS-Roformer 출력: <name>_(Vocals)_<model>.wav, <name>_(Instrumental)_<model>.wav
-    vocals_src = None
-    bgm_src = None
-    for f in os.listdir(out_dir):
-        if "(Vocals)" in f:
-            vocals_src = os.path.join(out_dir, f)
-        elif "(Instrumental)" in f:
-            bgm_src = os.path.join(out_dir, f)
-
-    if not vocals_src or not bgm_src:
-        raise FileNotFoundError(f"BS-Roformer 출력 누락: {os.listdir(out_dir)}")
+        if r.returncode != 0:
+            raise RuntimeError(f"{model_filename} 실패:\n{r.stderr}")
+        v_src = b_src = None
+        for f in os.listdir(sub_dir):
+            if "(Vocals)" in f:
+                v_src = os.path.join(sub_dir, f)
+            elif "(Instrumental)" in f or "(Other)" in f:
+                b_src = os.path.join(sub_dir, f)
+        if not v_src:
+            raise FileNotFoundError(f"{model_filename} vocals 누락: {os.listdir(sub_dir)}")
+        return v_src, b_src
 
     vocals_dst = os.path.join(VOCALS_DIR, f"{chunk_name}_vocals.wav")
     bgm_dst    = os.path.join(BGM_DIR,    f"{chunk_name}_bgm.wav")
 
-    shutil.move(vocals_src, vocals_dst)
-    shutil.move(bgm_src,    bgm_dst)
-    shutil.rmtree(out_dir, ignore_errors=True)
+    if use_ensemble:
+        # v26 (5/14): BS-RoFormer vocals + subtractive bgm (사용자 선택 Option A)
+        # 이전 v25 max-magnitude ensemble 도 SPEAKER_05 약화 → 5명 detect 문제.
+        # 가장 안전한 조합:
+        #   - vocals: BS-RoFormer 단독 (v4 6명 detect 동일, 약한 화자 보존)
+        #   - bgm: 원본 - vocals_BSR (subtractive, vocal leak 제거)
+        # MDX23C 호출 안 함 → 시간 절감 (+3분 → ~5초)
+        print(f"[Separate-Ensemble] v26 시작: BSR vocals + subtractive bgm")
+        bsr_v, bsr_b = _run_separator(
+            "model_bs_roformer_ep_317_sdr_12.9755.ckpt", "bsr"
+        )
+        print(f"[Separate-Ensemble] BS-RoFormer 완료")
+        try:
+            import soundfile as sf
+            import numpy as np
+            # vocals = BSR (그대로)
+            shutil.move(bsr_v, vocals_dst)
+            print(f"[Separate-Ensemble] vocals = BSR (약한 화자 보존)")
+            # subtractive bgm: 원본 - BSR vocals
+            v_bsr, sr1 = sf.read(vocals_dst)
+            orig_wav = os.path.join(out_dir, f"{chunk_name}_orig.wav")
+            subprocess.run([
+                "ffmpeg", "-y", "-loglevel", "error", "-i", chunk_path,
+                "-ar", str(sr1), "-vn", orig_wav,
+            ], check=True, capture_output=True)
+            orig, sr_o = sf.read(orig_wav)
+            n = min(len(orig), len(v_bsr))
+            orig = orig[:n]
+            v_bsr = v_bsr[:n]
+            if orig.ndim != v_bsr.ndim:
+                if orig.ndim == 1:
+                    orig = np.stack([orig, orig], axis=-1)
+                elif v_bsr.ndim == 1:
+                    v_bsr = np.stack([v_bsr, v_bsr], axis=-1)
+            bgm_subtract = (orig - v_bsr).astype(np.float32)
+            sf.write(bgm_dst, bgm_subtract, sr1)
+            print(f"[Separate-Ensemble] subtractive bgm 생성 완료 (vocal leak 제거)")
+        except Exception as _e:
+            print(f"[Separate-Ensemble] subtractive 실패 ({_e}) → BSR bgm 사용")
+            shutil.move(bsr_b, bgm_dst)
+    elif use_fast:
+        # htdemucs_ft: SDR 9.5, 30초 (BS-Roformer 90초 대비 -60초)
+        print(f"[Separate] SEP_FAST=1 → htdemucs_ft (-60초)")
+        v_src, b_src = _run_separator("htdemucs_ft.yaml", "htdemucs")
+        shutil.move(v_src, vocals_dst)
+        shutil.move(b_src, bgm_dst)
+    else:
+        # BS-Roformer 단독 (default)
+        v_src, b_src = _run_separator(
+            "model_bs_roformer_ep_317_sdr_12.9755.ckpt", "bsr"
+        )
+        shutil.move(v_src, vocals_dst)
+        shutil.move(b_src, bgm_dst)
 
+    shutil.rmtree(out_dir, ignore_errors=True)
     print(f"[Separate-BSR] vocals: {vocals_dst}")
     print(f"[Separate-BSR] bgm:    {bgm_dst}")
     return vocals_dst, bgm_dst
@@ -851,7 +903,7 @@ def diarize(vocals_path: str, num_speakers: int = None) -> list:
 
     print(f"[Diarize] {os.path.basename(vocals_path)} 화자 분리 중...")
 
-    # === DIARIZE_DAEMON_CLIENT (v28): 데몬 우선 (모델 로딩 20-30초 절감) ===
+    # === DIARIZE_DAEMON_CLIENT (v28): DiariZen daemon 우선 (모델 로딩 20-30초 절감) ===
     diarize_daemon_url = os.environ.get("DIARIZE_DAEMON_URL", "http://127.0.0.1:8903")
     try:
         import requests as _rq
@@ -878,7 +930,8 @@ def diarize(vocals_path: str, num_speakers: int = None) -> list:
         # daemon 없거나 health 실패 → 조용히 fallback (정상 흐름)
         pass
 
-    # === DiariZen 우선 사용 (pyannote보다 DER ~30% 향상) ===
+    # === DiariZen 단독 사용 (v23 5/14: pyannote fallback 제거) ===
+    # 사용자 결정: DiariZen 이 더 정확. pyannote fallback 안 함.
     # subprocess로 venv_diarizen 호출 (sm_120 호환 환경변수 포함)
     diarizen_worker = "/workspace/scripts/diarize_worker_diarizen.py"
     diarizen_python = "/opt/venv_diarizen/bin/python"
@@ -889,7 +942,6 @@ def diarize(vocals_path: str, num_speakers: int = None) -> list:
                 cmd.extend(["--num-speakers", str(num_speakers)])
             r = subprocess.run(cmd, capture_output=True, text=True, timeout=600)
             if r.returncode == 0 and r.stdout.strip():
-                # 마지막 줄이 JSON
                 json_line = r.stdout.strip().split("\n")[-1]
                 data = json.loads(json_line)
                 if "segments" in data and data["segments"]:
@@ -901,23 +953,18 @@ def diarize(vocals_path: str, num_speakers: int = None) -> list:
                           f"({len(data['segments'])} turns)")
                     return diar
                 else:
-                    print(f"[Diarize] DiariZen 결과 비어있음: {data} → pyannote fallback")
+                    print(f"[Diarize] ⚠️ DiariZen 결과 비어있음: {data}")
             else:
-                err = (r.stderr or r.stdout)[:300]
-                print(f"[Diarize] DiariZen 실패 → pyannote fallback: {err}")
+                err = (r.stderr or r.stdout)[:500]
+                print(f"[Diarize] ❌ DiariZen 실패: {err}")
         except Exception as e:
-            print(f"[Diarize] DiariZen 호출 실패 → pyannote fallback: {e}")
+            print(f"[Diarize] ❌ DiariZen 호출 실패: {e}")
+    else:
+        print(f"[Diarize] ❌ DiariZen worker/venv 없음: {diarizen_worker}")
 
-    # === pyannote fallback ===
-    kwargs = {}
-    if num_speakers:
-        kwargs["num_speakers"] = num_speakers
-    result = _diarization_model(vocals_path, **kwargs)
-
-    # pyannote 4.x: DiarizeOutput 객체 → Annotation 추출
-    if hasattr(result, "speaker_diarization"):
-        return result.speaker_diarization
-    return result
+    # DiariZen 실패 시 → SPEAKER_00 단일 화자로 fallback (pyannote 사용 X)
+    print(f"[Diarize] DiariZen 실패 → SPEAKER_00 단일 화자 처리")
+    return None
 
 
 def _get_speaker_at(diarization, time: float) -> str:
@@ -1032,13 +1079,13 @@ def post_process_diarization(
       또는 None (실패시 원본 그대로 사용 권장)
     """
     if diarization is None:
-        print("[Diarize] pyannote 없음 → 후처리 스킵")
+        print("[Diarize] 화자 분리 결과 없음 → 후처리 스킵")
         return None, {}
 
-    n_pyannote_speakers = len(set(s for _, _, s in diarization.itertracks(yield_label=True)))
-    apply_merge = n_pyannote_speakers >= 3
+    n_speakers = len(set(s for _, _, s in diarization.itertracks(yield_label=True)))
+    apply_merge = n_speakers >= 3
     if not apply_merge:
-        print(f"[Diarize] pyannote {n_pyannote_speakers}명 detect → 병합 skip, outlier 감지만 적용")
+        print(f"[Diarize] DiariZen {n_speakers}명 detect → 병합 skip, outlier 감지만 적용")
 
     model = _load_ecapa()
     if model is None:
@@ -1164,10 +1211,14 @@ def post_process_diarization(
         new_turns.append((s, e, canonical))
 
     # 6) 인접 같은 화자 turn 병합
+    # v27 (5/15): 사용자 분석 — "분할 메커니즘이 같은 발화를 쪼갬"
+    # 0.3s 하드코딩 → 환경변수화. default 1.0s로 키워서 같은 화자 연속 발화 보호.
+    # 안전: 같은 화자만 병합하므로 다른 의미 발화 섞임 위험 없음.
+    same_spk_gap = float(os.environ.get("LATENTSYNC_POSTPROC_SAME_SPK_GAP", "1.0"))
     new_turns.sort(key=lambda t: t[0])
     merged_turns = []
     for s, e, spk in new_turns:
-        if merged_turns and merged_turns[-1][2] == spk and (s - merged_turns[-1][1]) < 0.3:
+        if merged_turns and merged_turns[-1][2] == spk and (s - merged_turns[-1][1]) < same_spk_gap:
             ps, pe, pspk = merged_turns.pop()
             merged_turns.append((ps, max(pe, e), pspk))
         else:
@@ -1188,32 +1239,36 @@ def post_process_diarization(
     print(f"[Diarize] turn 수: {n_turns} → {len(merged_turns)} (병합/정제)")
 
     # === OUTLIER DETECTION (짧은 다른 화자 발화 회수) ===
-    # 각 segment의 embedding이 모든 centroid에서 너무 멀면 새 화자로 분리
-    # (pyannote가 1.2s 같은 짧은 다른 화자 발화를 메인 화자에 잘못 합치는 경우 해결)
-    OUTLIER_FAR_THRESH = 0.40  # 이하 = 새 화자 (남자 톤 변화 false positive 더 줄이기, 여자(0.29) 유지)
-    OUTLIER_MIN_DUR = 0.5      # 이 이상 segment만 검사
-    new_speaker_idx = 99
-    outlier_count = 0
-    for i in range(len(merged_turns)):
-        s, e, spk = merged_turns[i]
-        if (e - s) < OUTLIER_MIN_DUR:
-            continue
-        s_idx, e_idx = int(s * sr), int(e * sr)
-        emb = _ecapa_embedding(audio[s_idx:e_idx], sr, model)
-        if emb is None or not final_centroids:
-            continue
-        # 모든 centroid에서의 거리 (cosine sim, 클수록 가까움)
-        max_sim = max(float(np.dot(emb, cv)) for cv in final_centroids.values())
-        if max_sim < OUTLIER_FAR_THRESH:
-            new_spk = f"SPEAKER_{new_speaker_idx:02d}"
-            print(f"  [Outlier] turn{i} [{s:.2f}~{e:.2f}] {spk}→{new_spk} (max_sim={max_sim:.2f} < {OUTLIER_FAR_THRESH})")
-            merged_turns[i] = (s, e, new_spk)
-            # outlier 화자도 centroid bank에 등록 (segment_refiner에서 재할당 가능)
-            final_centroids[new_spk] = emb
-            outlier_count += 1
-            new_speaker_idx -= 1
-    if outlier_count:
-        print(f"[Diarize] Outlier 재분류: {outlier_count}개 segment → 새 화자")
+    # v23 (5/14): LATENTSYNC_OUTLIER_FAR_THRESH env var 로 조정 가능
+    # 낮을수록 outlier 적게 (over-segmentation 회피)
+    # v21 (5/15): LATENTSYNC_OUTLIER_OFF=1 → 검출 자체 비활성 (가짜 SPEAKER_99/98/97 회귀 fix)
+    if os.environ.get("LATENTSYNC_OUTLIER_OFF", "0") == "1":
+        print("[Diarize] Outlier 검출 비활성화 (LATENTSYNC_OUTLIER_OFF=1)")
+    else:
+        OUTLIER_FAR_THRESH = float(os.environ.get("LATENTSYNC_OUTLIER_FAR_THRESH", "0.40"))
+        OUTLIER_MIN_DUR = 0.5      # 이 이상 segment만 검사
+        new_speaker_idx = 99
+        outlier_count = 0
+        for i in range(len(merged_turns)):
+            s, e, spk = merged_turns[i]
+            if (e - s) < OUTLIER_MIN_DUR:
+                continue
+            s_idx, e_idx = int(s * sr), int(e * sr)
+            emb = _ecapa_embedding(audio[s_idx:e_idx], sr, model)
+            if emb is None or not final_centroids:
+                continue
+            # 모든 centroid에서의 거리 (cosine sim, 클수록 가까움)
+            max_sim = max(float(np.dot(emb, cv)) for cv in final_centroids.values())
+            if max_sim < OUTLIER_FAR_THRESH:
+                new_spk = f"SPEAKER_{new_speaker_idx:02d}"
+                print(f"  [Outlier] turn{i} [{s:.2f}~{e:.2f}] {spk}→{new_spk} (max_sim={max_sim:.2f} < {OUTLIER_FAR_THRESH})")
+                merged_turns[i] = (s, e, new_spk)
+                # outlier 화자도 centroid bank에 등록 (segment_refiner에서 재할당 가능)
+                final_centroids[new_spk] = emb
+                outlier_count += 1
+                new_speaker_idx -= 1
+        if outlier_count:
+            print(f"[Diarize] Outlier 재분류: {outlier_count}개 segment → 새 화자")
 
     # 8) 새로운 Annotation 객체 구성 (pyannote 호환)
     try:
@@ -1529,8 +1584,24 @@ def _merge_short_sentences(
     words: List["WordTiming"],
     min_dur: float = SENT_MIN_DURATION,
     cap: float = SENT_MERGE_CAP,
+    diarization=None,
 ) -> List[List[int]]:
-    """짧은 문장(<min_dur)은 인접 문장과 병합. 총 길이 cap 초과 금지."""
+    """짧은 문장(<min_dur)은 인접 문장과 병합. 총 길이 cap 초과 금지.
+
+    v29 (5/14): env var 로 조정 가능 + 단어 수 기반 강제 병합 추가
+      LATENTSYNC_SENT_MIN_DURATION: 기본 1.5초 (이하 병합)
+      LATENTSYNC_SENT_MIN_WORDS: 기본 3 단어 (미만이면 강제 병합, 짧은 발화 보존)
+      LATENTSYNC_SENT_MERGE_CAP: 기본 SENT_MERGE_CAP 초 (총 길이 상한)
+    사용자 피드백: 'stop being a stupid rabbit' 같은 짧은 문장이 두 개로 잘려서
+    번역이 어색해지는 문제. 짧은 segment 적극 병합으로 해결.
+    """
+    import os as _os_ms
+    _env_min_dur = float(_os_ms.environ.get("LATENTSYNC_SENT_MIN_DURATION", str(min_dur)))
+    _env_min_words = int(_os_ms.environ.get("LATENTSYNC_SENT_MIN_WORDS", "3"))
+    _env_cap = float(_os_ms.environ.get("LATENTSYNC_SENT_MERGE_CAP", str(cap)))
+    min_dur = _env_min_dur
+    cap = _env_cap
+
     if not sentence_word_indices:
         return []
 
@@ -1541,13 +1612,131 @@ def _merge_short_sentences(
     for s in sentence_word_indices:
         if not s:
             continue
-        if merged and (dur(s) < min_dur or dur(merged[-1]) < min_dur):
+        # v29: 단어 수 < min_words 또는 duration < min_dur 면 병합 시도
+        should_merge = (len(s) < _env_min_words) or (dur(s) < min_dur)
+        if merged:
+            prev_should_merge = (len(merged[-1]) < _env_min_words) or (dur(merged[-1]) < min_dur)
+        else:
+            prev_should_merge = False
+        if merged and (should_merge or prev_should_merge):
             combined_end = words[s[-1]].end
             combined_start = words[merged[-1][0]].start
             if (combined_end - combined_start) <= cap:
                 merged[-1] = merged[-1] + s
                 continue
         merged.append(list(s))
+
+    # v22 (safe): 마지막 sentence 안전 병합
+    # 위험: 다른 화자/다른 의미를 무작정 병합하면 음색/맥락 회귀 발생 (사용자 피드백)
+    # 조건: 같은 화자 + gap < 1.0s + 이전 sentence와 자연 연결될 때만 병합
+    # diarization 없으면 보호 비활성 (안전 우선)
+    import os as _os_last
+    _protect_last_merge = _os_last.environ.get("LATENTSYNC_PROTECT_LAST_MERGE", "0") != "0"
+    if _protect_last_merge and len(merged) >= 2 and diarization is not None:
+        last = merged[-1]
+        prev = merged[-2]
+        last_dur = dur(last)
+        last_words = len(last)
+        if last_words <= 4 or last_dur < 2.0:
+            # 같은 화자 확인 — last와 prev의 중간 word 시점 기준
+            def _spk_at(grp_indices):
+                if not grp_indices:
+                    return None
+                mid = words[grp_indices[len(grp_indices) // 2]]
+                return _get_speaker_at(diarization, (mid.start + mid.end) / 2)
+            spk_last = _spk_at(last)
+            spk_prev = _spk_at(prev)
+            # gap = 이전 sentence 끝 ~ 마지막 sentence 시작
+            gap = words[last[0]].start - words[prev[-1]].end
+            same_speaker = (spk_last == spk_prev and spk_last is not None)
+            close_gap = (gap < 1.0)
+            combined_end = words[last[-1]].end
+            combined_start = words[prev[0]].start
+            if same_speaker and close_gap and (combined_end - combined_start) <= cap * 1.5:
+                merged[-2] = prev + last
+                merged.pop()
+                print(f"[Merge] 마지막 sentence 안전 병합 (same spk={spk_last}, gap={gap:.2f}s): {last_words} 단어")
+            else:
+                if not same_speaker:
+                    print(f"[Merge] 마지막 sentence 병합 skip (다른 화자: {spk_prev} vs {spk_last})")
+                elif not close_gap:
+                    print(f"[Merge] 마지막 sentence 병합 skip (gap {gap:.2f}s 큼)")
+    return merged
+
+
+def _merge_same_speaker_adjacent(
+    sentence_groups: List[List[int]],
+    words: List["WordTiming"],
+    diarization,
+    max_gap: float = 1.0,
+    max_merged_duration: float = 14.0,
+    verbose: bool = True,
+) -> List[List[int]]:
+    """같은 화자의 인접 sentence를 안전하게 병합.
+
+    v27 (5/15): 사용자 통찰 — "문장 길이 제한 때문에 SPEAKER_05가 5번으로 분할됨"
+    문제 진단:
+      - 우리 코드의 여러 분할 메커니즘 (post_process gap 0.3s, LLM punct, fallback
+        gap 0.4s)이 같은 화자의 *연속 발화*를 *gap 0.4~1.5s에서 분할*시킴.
+      - 예: SPEAKER_05 [59.20~59.84]+[60.48~69.36]+[69.92~72.00]가 한 발화인데
+        gap 0.64s, 0.56s에서 3 sentences로 분리됨. SENT_MERGE_CAP=10s 라서
+        합쳐도 12.8s가 cap 초과 → 다시 합쳐지지 않음.
+    해결:
+      - 같은 화자 + gap < max_gap + 합쳐도 max_merged_duration 이내면 무조건 병합
+      - 다른 화자 boundary는 절대 침범 안 함 (안전)
+      - "단어 길이 제한 때문에 다른 의미 발화 병합" 위험 회피 (화자 일치만 검사)
+
+    Args:
+        sentence_groups: 이전 단계 결과
+        words: WordTiming 리스트
+        diarization: pyannote Annotation (None이면 병합 안 함, 안전)
+        max_gap: 이 이하 gap만 병합 후보
+        max_merged_duration: 합쳐도 이 이내만
+
+    Returns:
+        병합된 sentence_groups 리스트
+    """
+    if diarization is None or not sentence_groups:
+        return sentence_groups
+
+    import os as _os_merge
+    max_gap = float(_os_merge.environ.get("LATENTSYNC_SAME_SPK_GAP", str(max_gap)))
+    max_merged_duration = float(_os_merge.environ.get("LATENTSYNC_SAME_SPK_MERGE_CAP", str(max_merged_duration)))
+
+    def _spk(grp):
+        if not grp:
+            return None
+        # 중간 word 시점 기준 화자
+        mid_idx = grp[len(grp) // 2]
+        mid_word = words[mid_idx]
+        return _get_speaker_at(diarization, (mid_word.start + mid_word.end) / 2)
+
+    merged: List[List[int]] = [list(sentence_groups[0])] if sentence_groups[0] else []
+    n_merges = 0
+    for grp in sentence_groups[1:]:
+        if not grp:
+            continue
+        if not merged:
+            merged.append(list(grp))
+            continue
+        prev = merged[-1]
+        prev_spk = _spk(prev)
+        cur_spk = _spk(grp)
+        gap = words[grp[0]].start - words[prev[-1]].end
+        combined_dur = words[grp[-1]].end - words[prev[0]].start
+
+        # 같은 화자 + 짧은 gap + 합쳐도 cap 이내 → 안전 병합
+        if (prev_spk == cur_spk and prev_spk is not None
+                and gap < max_gap
+                and combined_dur <= max_merged_duration):
+            merged[-1] = prev + grp
+            n_merges += 1
+        else:
+            merged.append(list(grp))
+
+    if verbose and n_merges > 0:
+        print(f"[Merge] 같은 화자 인접 sentence {n_merges}건 안전 병합 "
+              f"(gap<{max_gap}s, merged_dur<{max_merged_duration}s)")
     return merged
 
 
@@ -1560,14 +1749,41 @@ def _split_groups_by_speaker(
 
     LLM 구두점 복원이 두 화자 발화를 한 문장으로 묶어버린 경우를 보정.
     1-word 깜빡임(A B A 패턴)은 smoothing으로 무시 → false split 방지.
+
+    v30 (5/14): env var 옵션
+      LATENTSYNC_SPLIT_BY_SPEAKER_OFF=1 — split 완전 비활성화
+        (사용자 피드백: 짧은 단편 대량 발생, 모든 문제 근본)
+      LATENTSYNC_SPLIT_MIN_SUB_WORDS — split 결과 sub-group 최소 단어 수 (기본 3)
+        이 미만 sub-group 은 인접 sub-group 과 강제 병합
     """
+    import os as _os_split
+    if _os_split.environ.get("LATENTSYNC_SPLIT_BY_SPEAKER_OFF", "0") == "1":
+        print("[Segments] _split_groups_by_speaker 비활성화 (LATENTSYNC_SPLIT_BY_SPEAKER_OFF=1)")
+        return groups
     if diarization is None:
         return groups
+    # v20: 짧은 group은 split 비활성 (마지막 토끼 split 회귀 방지)
+    # LATENTSYNC_SPLIT_NO_SHORT_WORDS=N: N 단어 이하 group은 split 안 함
+    # majority 통일 임계 (LATENTSYNC_SPLIT_MAJORITY_TH): 한 화자가 이 비율 이상이면 전체 통일
+    _no_split_short = int(_os_split.environ.get("LATENTSYNC_SPLIT_NO_SHORT_WORDS", "6"))
+    _majority_th = float(_os_split.environ.get("LATENTSYNC_SPLIT_MAJORITY_TH", "0.80"))
     result = []
     n_split = 0
-    for grp in groups:
+    n_skipped_short = 0
+    # v22 (safe): "마지막 group 절대 보호" 제거 — 같은 group 안에 두 화자 word가
+    # 섞이면 절대 보호가 잘못된 화자 통합 회귀를 일으킴 (사용자 피드백).
+    # 단일 화자면 어차피 split 안 일어나므로 절대 보호는 효과 없고 위험만 있음.
+    # 대신 짧은 group 보호 (SPLIT_NO_SHORT_WORDS) + majority 통일 (SPLIT_MAJORITY_TH)
+    # + 1/2-word smoothing 으로 word-diarization noise는 처리.
+    for grp_idx, grp in enumerate(groups):
         if len(grp) < 2:
             result.append(grp)
+            continue
+        # v20: 짧은 group 보호 — "stop being a stupid rabbit" 같은 5-6 단어 짧은
+        # 문장이 word-level diarization noise로 split되는 회귀 방지.
+        if len(grp) <= _no_split_short:
+            result.append(grp)
+            n_skipped_short += 1
             continue
         # word별 speaker 매핑 (word 중간점 기준)
         word_spk = []
@@ -1580,6 +1796,20 @@ def _split_groups_by_speaker(
         for i in range(1, len(smoothed) - 1):
             if smoothed[i - 1] == smoothed[i + 1] and smoothed[i] != smoothed[i - 1]:
                 smoothed[i] = smoothed[i - 1]
+        # v20: 2-word 깜빡임 smoothing: A B B A → A A A A
+        for i in range(1, len(smoothed) - 2):
+            if (smoothed[i - 1] == smoothed[i + 2]
+                and smoothed[i] != smoothed[i - 1]
+                and smoothed[i + 1] != smoothed[i - 1]):
+                smoothed[i] = smoothed[i - 1]
+                smoothed[i + 1] = smoothed[i - 1]
+        # v20: majority 통일 — 한 화자가 80%+ 면 group 전체를 그 화자로 (split 안 함)
+        from collections import Counter as _Counter
+        _cnt = _Counter(smoothed)
+        if _cnt:
+            _top_spk, _top_n = _cnt.most_common(1)[0]
+            if _top_n / max(1, len(smoothed)) >= _majority_th:
+                smoothed = [_top_spk] * len(smoothed)
         # speaker 변화 지점에서 split
         sub_grps = []
         cur = [grp[0]]
@@ -1593,6 +1823,34 @@ def _split_groups_by_speaker(
             cur.append(grp[i])
         if cur:
             sub_grps.append(cur)
+
+        # v32 (5/14): split 후 같은 화자 인접 짧은 sub-group 만 병합 (다른 화자 절대 병합 X)
+        # v15 사용자 피드백: 다른 화자 강제 병합 → 음색 잘못 + 기계음.
+        # 같은 화자 짧은 sub 만 안전 병합 → 화자 매칭 유지.
+        _min_sub_words = int(_os_split.environ.get("LATENTSYNC_SPLIT_MIN_SUB_WORDS", "0"))
+        if _min_sub_words > 0 and len(sub_grps) > 1:
+            def _sub_speaker(sg):
+                # sub-group 의 대표 화자 = 중간 word 시점 화자
+                if not sg:
+                    return None
+                mid_word = words[sg[len(sg) // 2]]
+                t = (mid_word.start + mid_word.end) / 2
+                return _get_speaker_at(diarization, t)
+
+            merged_sub = [sub_grps[0]]
+            for sg in sub_grps[1:]:
+                if not sg:
+                    continue
+                # 같은 화자 + 어느 한쪽 짧으면 병합 (다른 화자는 절대 X)
+                prev_spk = _sub_speaker(merged_sub[-1])
+                cur_spk = _sub_speaker(sg)
+                same_speaker = (prev_spk == cur_spk)
+                if same_speaker and (len(sg) < _min_sub_words or len(merged_sub[-1]) < _min_sub_words):
+                    merged_sub[-1] = merged_sub[-1] + sg
+                else:
+                    merged_sub.append(sg)
+            sub_grps = merged_sub
+
         if len(sub_grps) > 1:
             n_split += 1
         result.extend(sub_grps)
@@ -1686,7 +1944,13 @@ def build_segments(
     expanded = []
     for grp in sentence_groups:
         expanded.extend(_split_long_sentence(grp, words, max_duration))
-    final_groups = _merge_short_sentences(expanded, words)
+    final_groups = _merge_short_sentences(expanded, words, diarization=diarization)
+
+    # ── v27: 같은 화자 인접 sentence 안전 병합 (분할 회복) ──
+    # 우리 코드의 다양한 분할 메커니즘 (post_process 0.3s gap, LLM punct, fallback 0.4s)
+    # 이 같은 화자의 연속 발화를 분할시킨 케이스를 복원.
+    # 다른 화자 boundary는 절대 침범 안 함.
+    final_groups = _merge_same_speaker_adjacent(final_groups, words, diarization)
 
     # ── sentence-내부 화자 변화 강제 split ──
     # LLM 구두점 복원이 두 화자 발화를 한 문장으로 묶은 경우 보정
@@ -1719,29 +1983,29 @@ def build_segments(
 
 # ─── Step 6: 감정 추출 ────────────────────────────────────────
 
-def extract_emotion(vocals_path: str, start: float, end: float) -> Tuple[str, float]:
+def extract_emotion(vocals_path: str, start: float, end: float) -> Tuple[str, float, Dict[str, float]]:
     """
     emotion2vec+로 오디오 구간의 감정 추출.
-
-    INPUT:
-      vocals_path : str   — /data/vocals/chunk_000_vocals.wav
-      start       : float — 구간 시작 (초)
-      end         : float — 구간 끝 (초)
+    v29 (5/14): 팀원 master_timeline_cosyvoice.json 형식 — 9개 감정 scores 모두 반환.
 
     OUTPUT:
       emotion       : str   — "Neutral" / "Angry" / "Sad" / "Happy" / ...
-      emotion_score : float — 신뢰도 (0.0 ~ 1.0)
+      emotion_score : float — 최고 점수 (0.0 ~ 1.0)
+      all_scores    : dict  — {label: score} 9개 감정 (angry/disgusted/fearful/happy/
+                              neutral/other/sad/surprised/unknown). UI 조정용
     """
+    empty_scores = {"angry": 0.0, "disgusted": 0.0, "fearful": 0.0,
+                    "happy": 0.0, "neutral": 1.0, "other": 0.0,
+                    "sad": 0.0, "surprised": 0.0, "unknown": 0.0}
     if _emotion_model is None:
-        return "Neutral", 0.0
+        return "Neutral", 0.0, dict(empty_scores)
 
     try:
         audio, sr = sf.read(vocals_path)
         chunk = audio[int(start * sr):int(end * sr)]
 
-        # 너무 짧은 구간 (0.3초 미만) 은 감정 추출 불가
         if len(chunk) < sr * 0.3:
-            return "Neutral", 0.0
+            return "Neutral", 0.0, dict(empty_scores)
 
         with tempfile.NamedTemporaryFile(suffix=".wav", delete=False) as tmp:
             sf.write(tmp.name, chunk, sr)
@@ -1759,20 +2023,28 @@ def extract_emotion(vocals_path: str, start: float, end: float) -> Tuple[str, fl
             labels = result[0].get("labels", [])
             scores = result[0].get("scores", [])
             if labels and scores:
-                best_idx  = scores.index(max(scores))
+                # 모든 9개 score 저장 (UI 조정용)
+                all_scores = {}
+                for lab, sc in zip(labels, scores):
+                    key = lab.lower()
+                    if "/" in key:
+                        key = key.split("/")[-1]
+                    all_scores[key] = round(float(sc), 6)
+                # 누락된 라벨은 0.0 으로 채움
+                for k in empty_scores:
+                    all_scores.setdefault(k, 0.0)
+
+                best_idx = scores.index(max(scores))
                 raw_label = labels[best_idx].lower()
-            
-                # [추가] "生气/angry" 처럼 /가 있으면 뒤쪽의 "angry"만 떼어냅니다.
                 if "/" in raw_label:
                     raw_label = raw_label.split("/")[-1]
-                
-                emotion   = EMOTION_LABEL_MAP.get(raw_label, "Neutral")
-                return emotion, round(float(scores[best_idx]), 3)
+                emotion = EMOTION_LABEL_MAP.get(raw_label, "Neutral")
+                return emotion, round(float(scores[best_idx]), 3), all_scores
 
     except Exception as e:
         print(f"[Emotion] 추출 실패: {e}")
 
-    return "Neutral", 0.0
+    return "Neutral", 0.0, dict(empty_scores)
 
 
 def fill_emotions(
@@ -1802,22 +2074,43 @@ def fill_emotions(
     policy = EMOTION_POLICIES.get(content_type, "passthrough")
     print(f"[Emotion] 콘텐츠 타입: {content_type} → 정책: {policy}")
 
+    # v22 (5/14): 감정 수치 조절 env vars
+    #   LATENTSYNC_EMOTION_THRESHOLD: 0.0~1.0. raw_score < 임계값 이면 Neutral 로 강등
+    #   LATENTSYNC_EMOTION_OVERRIDE: 강제 emotion (Neutral/Happy/Sad/Angry/Surprised/Scared)
+    #   LATENTSYNC_EMOTION_INTENSITY: mild/moderate/strong (instruct_text 톤 강도)
+    _emotion_threshold = float(os.environ.get("LATENTSYNC_EMOTION_THRESHOLD", "0.0"))
+    _emotion_override = os.environ.get("LATENTSYNC_EMOTION_OVERRIDE", "").strip()
+    if _emotion_threshold > 0 or _emotion_override:
+        print(f"[Emotion] 수치 조절: threshold={_emotion_threshold}, override='{_emotion_override}'")
+
     override_count = 0
     for seg in segments:
-        raw_emo, raw_score = extract_emotion(vocals_path, seg.start, seg.end)
+        raw_emo, raw_score, raw_scores = extract_emotion(vocals_path, seg.start, seg.end)
         seg.raw_emotion = raw_emo
         seg.raw_emotion_score = raw_score
+        seg.raw_emotion_scores = raw_scores
 
-        if policy == "neutral_only":
+        # 강제 override 가 최우선
+        if _emotion_override:
+            seg.emotion = _emotion_override
+            seg.emotion_score = 1.0
+            print(f"[Emotion] seg {seg.id}: {raw_emo} ({raw_score:.2f}) → {_emotion_override} [override]")
+        elif policy == "neutral_only":
             seg.emotion = "Neutral"
             seg.emotion_score = 1.0
             if raw_emo != "Neutral":
                 override_count += 1
             print(f"[Emotion] seg {seg.id}: {raw_emo} ({raw_score:.2f}) → Neutral [policy]")
         else:  # passthrough
-            seg.emotion = raw_emo
-            seg.emotion_score = raw_score
-            print(f"[Emotion] seg {seg.id}: {raw_emo} ({raw_score:.2f})")
+            # threshold 미만이면 Neutral 로 강등 (강한 감정만 인정)
+            if _emotion_threshold > 0 and raw_emo != "Neutral" and raw_score < _emotion_threshold:
+                seg.emotion = "Neutral"
+                seg.emotion_score = 1.0
+                print(f"[Emotion] seg {seg.id}: {raw_emo} ({raw_score:.2f}) → Neutral [threshold<{_emotion_threshold}]")
+            else:
+                seg.emotion = raw_emo
+                seg.emotion_score = raw_score
+                print(f"[Emotion] seg {seg.id}: {raw_emo} ({raw_score:.2f})")
 
     if policy == "neutral_only" and override_count > 0:
         print(f"[Emotion] 정책 적용으로 {override_count}/{len(segments)}개 세그먼트가 Neutral로 변경됨")
@@ -1826,21 +2119,125 @@ def fill_emotions(
 
 # ─── Step 7: Speaker Profile Bank 구성 ───────────────────────
 
+def _quality_gate(clip: np.ndarray, sr: int) -> Dict[str, float]:
+    """v28 (5/14): Quality Gate 휴리스틱 (사용자 피드백 반영 — 완화).
+    완화 이유: silence 40% 너무 strict → reference 후보 과도 제외 →
+    짧은 ref → CosyVoice3 한국어 prosody 부족 → 어눌/짤림.
+    env var:
+      LATENTSYNC_QG_OFF=1: Quality Gate 완전 비활성화 (모든 candidate 채택)
+      LATENTSYNC_QG_SILENCE_MAX: 무음 비율 임계 (기본 0.70, v9 0.40)
+      LATENTSYNC_QG_SNR_MIN: SNR 임계 dB (기본 5.0, v9 10.0)
+    """
+    import os as _os_qg
+    # mono로 변환 (stereo면 channel 평균)
+    if clip.ndim > 1:
+        mono = clip.mean(axis=-1)
+    else:
+        mono = clip
+
+    silence_thresh = 0.01
+    silence_ratio = float(np.mean(np.abs(mono) < silence_thresh))
+
+    clipping_thresh = 0.99
+    clipping_ratio = float(np.mean(np.abs(mono) > clipping_thresh))
+
+    abs_mono = np.abs(mono)
+    sorted_abs = np.sort(abs_mono)
+    n = len(sorted_abs)
+    if n < 20:
+        snr_db = 0.0
+    else:
+        noise_rms = float(np.sqrt(np.mean(sorted_abs[:n // 10] ** 2))) + 1e-10
+        voice_rms = float(np.sqrt(np.mean(sorted_abs[n // 2:] ** 2)))
+        snr_db = float(20.0 * np.log10(voice_rms / noise_rms))
+
+    # v28 완화: 명백한 결함만 필터 (극단 무음/clipping/저SNR)
+    qg_off = _os_qg.environ.get("LATENTSYNC_QG_OFF", "0") == "1"
+    silence_max = float(_os_qg.environ.get("LATENTSYNC_QG_SILENCE_MAX", "0.70"))
+    snr_min = float(_os_qg.environ.get("LATENTSYNC_QG_SNR_MIN", "5.0"))
+    if qg_off:
+        pass_gate = True
+    else:
+        pass_gate = (
+            silence_ratio < silence_max and   # 기본 70% 무음 미만 (40 → 70 완화)
+            clipping_ratio < 0.005 and         # clipping 0.5% 미만 (0.1 → 0.5 완화)
+            snr_db > snr_min                   # SNR 5dB 이상 (10 → 5 완화)
+        )
+
+    # quality score (0~1, 높을수록 좋음). MOS와 결합용
+    silence_score = max(0.0, 1.0 - silence_ratio / 0.4)   # 무음 40% = score 0
+    clipping_score = max(0.0, 1.0 - clipping_ratio / 0.001)  # clipping 0.1% = score 0
+    snr_score = min(1.0, max(0.0, (snr_db - 5.0) / 20.0))  # 5dB=0, 25dB=1
+    quality_score = (silence_score + clipping_score + snr_score) / 3.0
+
+    return {
+        'silence_ratio': silence_ratio,
+        'clipping_ratio': clipping_ratio,
+        'snr_db': snr_db,
+        'pass': pass_gate,
+        'score': quality_score,
+    }
+
+
 def build_speaker_profiles(
     segments: List[Segment],
-    vocals_path: str
+    vocals_path: str,
+    exclude_intervals: Optional[List[Tuple[float, float, str]]] = None,
 ) -> Dict[str, SpeakerProfile]:
     """
     화자별 + 감정별 레퍼런스 음성 파일 자동 추출.
-    MOS 평가로 가장 깨끗한 구간을 레퍼런스로 선택.
+    v27 (5/14): MOS + Quality Gate 휴리스틱 (팀원 PPT 형식).
     3~15초 사이 구간만 후보로 사용 (CosyVoice3 제한: 30초).
+
+    v19 (5/15): exclude_intervals 옵션 추가.
+        AV-Reassign으로 라벨이 변경된 segment는 원래 라벨이 정확하지 않을 가능성이
+        있으므로 ref bank 후보에서 제외 (ref audio 오염 방지).
+        v18 회귀: SPEAKER_02 ref bank에 SPEAKER_01 segment 섞여 남성화된 사례 fix.
+
+    Args:
+        exclude_intervals: [(start, end, old_spk), ...] 재할당된 영역.
+                           이와 50%+ 겹치는 segment는 ref 후보에서 skip.
     """
-    # 화자별 감정별로 후보 구간 수집 (3~15초)
+    # v20: ref audio 길이 하한 환경변수화
+    # CosyVoice 공식 권장: 6~10초 (4초대는 권장 하한, BGM leak시 metallic ring 위험)
+    # 검색 결과 (Issue #1704, #862): 짧은 ref + noisy → first-word vocoder artifact
+    _ref_min_dur = float(os.environ.get("LATENTSYNC_REF_MIN_DUR", "3.0"))
+    _ref_max_dur = float(os.environ.get("LATENTSYNC_REF_MAX_DUR", "15.0"))
+    _ref_fallback_min = float(os.environ.get("LATENTSYNC_REF_FALLBACK_MIN", "2.0"))
+    _ref_fallback_max = float(os.environ.get("LATENTSYNC_REF_FALLBACK_MAX", "25.0"))
+
+    # v19: 재할당된 영역 제외 헬퍼 (av_fusion이 import 안 됐을 때 fallback)
+    def _is_excluded(seg) -> bool:
+        if not exclude_intervals:
+            return False
+        try:
+            import sys as _sys
+            if "/workspace/scripts" not in _sys.path:
+                _sys.path.insert(0, "/workspace/scripts")
+            from av_fusion import overlaps_excluded_intervals
+            return overlaps_excluded_intervals(
+                seg.start, seg.end, exclude_intervals, min_overlap_ratio=0.5
+            )
+        except Exception:
+            seg_dur = max(1e-3, seg.end - seg.start)
+            for ex_s, ex_e, _old in exclude_intervals:
+                overlap = max(0.0, min(seg.end, ex_e) - max(seg.start, ex_s))
+                if overlap / seg_dur >= 0.5:
+                    return True
+            return False
+
+    # 화자별 감정별로 후보 구간 수집
+    # 5/12 audio quality fix: 짧은 reference (1-2초) 는 voice cloning 부정확
+    # → 기계음/단조로운 prosody 원인. 최소 3초 strict, fallback 도 2초까지만.
     candidates: Dict[str, Dict[str, List[Tuple[float, Segment]]]] = {}
+    n_excluded = 0
 
     for seg in segments:
         duration = seg.end - seg.start
-        if duration < 3.0 or duration > 15.0:
+        if duration < _ref_min_dur or duration > _ref_max_dur:
+            continue
+        if _is_excluded(seg):
+            n_excluded += 1
             continue
         if seg.speaker not in candidates:
             candidates[seg.speaker] = {}
@@ -1848,11 +2245,36 @@ def build_speaker_profiles(
             candidates[seg.speaker][seg.emotion] = []
         candidates[seg.speaker][seg.emotion].append((duration, seg))
 
-    # 후보가 없으면 길이 제한 완화 (1~25초)
+    if n_excluded > 0:
+        print(f"[Profiles] AV-Reassign 영역 {n_excluded}개 segment 제외 (ref 오염 방지)")
+
+    # v20: per-speaker 보강 — speaker가 후보 없으면 그 화자만 fallback 적용
+    # (기존: 전체 candidates 비면 fallback — 일부 화자만 6초+ 없는 케이스 보호 못 함)
+    all_speakers = set(seg.speaker for seg in segments)
+    missing_speakers = all_speakers - set(candidates.keys())
+    if missing_speakers:
+        print(f"[Profiles] 6초+ ref 없는 화자 {len(missing_speakers)}명: {sorted(missing_speakers)} → fallback")
+        for seg in segments:
+            if seg.speaker not in missing_speakers:
+                continue
+            duration = seg.end - seg.start
+            if duration < _ref_fallback_min or duration > _ref_fallback_max:
+                continue
+            if _is_excluded(seg):
+                continue
+            if seg.speaker not in candidates:
+                candidates[seg.speaker] = {}
+            if seg.emotion not in candidates[seg.speaker]:
+                candidates[seg.speaker][seg.emotion] = []
+            candidates[seg.speaker][seg.emotion].append((duration, seg))
+
+    # 후보가 전혀 없으면 전체 fallback
     if not candidates:
         for seg in segments:
             duration = seg.end - seg.start
-            if duration < 1.0 or duration > 25.0:
+            if duration < _ref_fallback_min or duration > _ref_fallback_max:
+                continue
+            if _is_excluded(seg):
                 continue
             if seg.speaker not in candidates:
                 candidates[seg.speaker] = {}
@@ -1880,21 +2302,38 @@ def build_speaker_profiles(
                     end_sample = start_sample + max_ref_samples
                 clip = audio[start_sample:end_sample]
 
-                # MOS 평가로 가장 깨끗한 구간 선택
+                # v27 (5/14): Quality Gate 휴리스틱 우선 필터 (팀원 PPT)
+                # 무음 비율 + clipping + SNR 검증 → 통과한 candidate 만 MOS 평가
+                qg = _quality_gate(clip, sr)
+                if not qg['pass']:
+                    print(f"  [QualityGate] {speaker}/{emotion} seg {seg.id} skip: "
+                          f"silence={qg['silence_ratio']:.2f}, clip={qg['clipping_ratio']:.4f}, "
+                          f"snr={qg['snr_db']:.1f}dB")
+                    continue
+
+                # MOS 평가 + Quality Gate score + duration bonus 결합
                 if _mos_evaluator is not None:
                     with tempfile.NamedTemporaryFile(suffix=".wav", delete=False) as tmp:
                         sf.write(tmp.name, clip, sr)
                         mos_score = _mos_evaluator.evaluate(tmp.name)
                         os.unlink(tmp.name)
 
-                    if mos_score > best_mos:
+                    duration_bonus = 0.05 * min(duration, 10.0)
+                    quality_bonus = 0.5 * qg['score']   # Quality Gate 가중치
+                    combined = mos_score + duration_bonus + quality_bonus
+                    # best_combined 도 같은 metric (이전 best segment 의 qg/duration 재계산 안 함 → 단순화)
+                    if combined > best_mos + 0.05 * min(best_duration, 10.0) if best_seg else -1:
                         best_mos = mos_score
                         best_seg = seg
                         best_duration = duration
                 else:
-                    # MOS 없으면 가장 긴 구간 선택 (기존 방식)
-                    if duration > best_duration:
+                    # MOS 없으면 Quality Gate score + duration 으로 선택
+                    candidate_score = qg['score'] + 0.05 * min(duration, 10.0)
+                    best_candidate_score = best_mos + 0.05 * min(best_duration, 10.0) if best_seg else -1
+                    if candidate_score > best_candidate_score:
+                        best_mos = qg['score']
                         best_seg = seg
+                        best_duration = duration
                         best_duration = duration
                         best_mos = 0.0
 
@@ -2016,7 +2455,12 @@ def _translate_segments_llm(
         return segments
 
     policy = EMOTION_POLICIES.get(content_type, "passthrough")
-    use_emotion_desc = (policy == "passthrough")
+    # v20 (5/14): LATENTSYNC_FORCE_LLM_DESC=1 면 interview/lecture/news 에서도
+    # LLM 자연어 묘사 활성화 → 발화 prosody 강화.
+    _force_llm_desc = os.environ.get("LATENTSYNC_FORCE_LLM_DESC", "0") == "1"
+    use_emotion_desc = (policy == "passthrough") or _force_llm_desc
+    if _force_llm_desc and policy != "passthrough":
+        print(f"[Translate] LLM 자연어 묘사 강제 활성화 (LATENTSYNC_FORCE_LLM_DESC=1, policy={policy})")
 
     BATCH_SIZE = 7  # 5/7: 5→7 sweet spot (-30% LLM 시간, 길이 정확도 95%+ 유지)
     total_batches = (len(to_translate) + BATCH_SIZE - 1) // BATCH_SIZE
@@ -2111,24 +2555,44 @@ def _llm_translate_batch(
     }
     BASE_SYL_RATE = 6.0  # v14 상태
 
+    # v17 (5/14): community-verified soft range + CAPEL countdown for short utterances.
+    # v15 strict 0.3 + HARD CONSTRAINT 피드백 → 의미 손상, 첫부분 잘림 회귀.
+    # 학계+업계 합의 (VideoDubber AAAI 2023, CAPEL arxiv 2508.13805):
+    #   - hard syllable constraint는 증명된 실패 패턴
+    #   - 길이는 LLM이 아닌 TTS speed + time-stretch가 흡수 (already implemented)
+    #   - 의미 보존 > 음절 정확도 (TTS retry stage가 ±15% 처리)
+    #   - 짧은 utterance(<1.5s)만 CAPEL countdown 마커로 LLM 길이 준수율 향상
+    import os as _os_strict
+    _strict_range = float(_os_strict.environ.get("LATENTSYNC_SYL_RANGE", "0.5"))
+    _short_utt_capel = _os_strict.environ.get("LATENTSYNC_CAPEL_SHORT", "1") != "0"
+
     lines = []
     for batch_local_idx, (i, seg) in enumerate(batch):
         duration = max(0.3, seg.end - seg.start)
         seg_emotion = getattr(seg, 'emotion', 'Neutral') or 'Neutral'
         emo_factor = LLM_EMOTION_FACTOR.get(seg_emotion, 1.0)
         rate = BASE_SYL_RATE * emo_factor
-        target_min = max(1, int(duration * (rate - 0.5)))
-        target_max = max(target_min + 1, int(duration * (rate + 0.5)))
+        target_min = max(1, int(duration * (rate - _strict_range)))
+        target_max = max(target_min + 1, int(duration * (rate + _strict_range)))
+        target_mid = (target_min + target_max) // 2
+
+        # CAPEL countdown for short utterances (target ≤ 4 syl, duration < 1.5s).
+        # Increases LLM length compliance 30%→95% on short outputs (arxiv 2508.13805).
+        # Example: 'Good' (target 2) → countdown '<2>_<1>_<0>' guides '좋_아' = '좋아'.
+        countdown_hint = ""
+        if _short_utt_capel and target_max <= 4 and duration < 1.5:
+            countdown_hint = f", countdown: " + "_".join(f"<{n}>" for n in range(max(1, target_mid), 0, -1)) + "<0>"
+
         if use_emotion_desc:
             raw_e = getattr(seg, 'raw_emotion', seg.emotion) or seg.emotion
             raw_s = getattr(seg, 'raw_emotion_score', seg.emotion_score) or 0.0
             lines.append(
-                f"[{batch_local_idx}] (duration: {duration:.1f}s, target: {target_min}~{target_max} syllables, "
+                f"[{batch_local_idx}] (duration: {duration:.1f}s, target ~{target_mid} syl (range {target_min}-{target_max}){countdown_hint}, "
                 f"emotion2vec_hint: {raw_e} {raw_s:.2f}, speaker: {seg.speaker}) {seg.text}"
             )
         else:
             lines.append(
-                f"[{batch_local_idx}] (duration: {duration:.1f}s, target: {target_min}~{target_max} syllables) {seg.text}"
+                f"[{batch_local_idx}] (duration: {duration:.1f}s, target ~{target_mid} syl (range {target_min}-{target_max}){countdown_hint}) {seg.text}"
             )
     batch_text = "\n".join(lines)
 
@@ -2138,49 +2602,76 @@ def _llm_translate_batch(
             f"You are a professional dubbing translator and emotion designer.\n"
             f"For each numbered line, output TWO fields:\n"
             f"  1. korean: natural spoken {lang_name} translation for dubbing\n"
-            f"  2. tone: full English imperative phrase combining STYLE + EMOTION + SITUATION.\n"
-            f"        FORMAT: starts with 'in a' or 'with', natural English imperative.\n"
-            f"        EXAMPLES:\n"
-            f"          'in a casual, pleased, lightly confident tone with warm but restrained excitement'\n"
-            f"          'in a low, deliberate tone with grim resolve, conveying a quiet warning'\n"
-            f"          'with subdued sadness, soft pacing, conveying lingering regret'\n"
-            f"          'in a sharp, impatient tone with controlled frustration'\n"
-            f"        BAD: 'angry' (too short), '낮은 톤' (Korean — must be English).\n"
+            f"  2. tone: SHORT natural English phrase describing delivery.\n"
             f"\n"
             f"OUTPUT FORMAT (strict — keep exactly this structure for every numbered line):\n"
             f"[N]\n"
             f"korean: <translation>\n"
-            f"tone: <imperative phrase>\n"
+            f"tone: <phrase>\n"
             f"\n"
-            f"TRANSLATION RULES:\n"
-            f"- Each line specifies a syllable target: (target: MIN~MAX syllables).\n"
-            f"- Translation MUST use between MIN and MAX syllables — HARD CONSTRAINT.\n"
-            f"- SHORTER than MIN is FAILURE (causes silence). Add natural particles/expansions.\n"
-            f"- LONGER than MAX is FAILURE (causes overflow). Compress, use shorter synonyms.\n"
-            f"- Aim for the MIDDLE of the range.\n"
-            f"- You MUST output translation in {lang_name}. DO NOT output original text.\n"
-            f"- Do NOT merge content between lines.\n"
-            f"- Make consecutive lines from the same speaker sound natural in sequence.\n"
+            f"TRANSLATION RULES (length-aware, meaning-first):\n"
+            f"- Each line shows a soft syllable target: 'target ~N syl (range MIN-MAX)'.\n"
+            f"- AIM for ~N. Range MIN-MAX is acceptable. **Meaning preservation > exact syllable count.**\n"
+            f"- The TTS engine adjusts speed downstream (±15% absorbed automatically),\n"
+            f"   so do NOT force unnatural Korean to hit a number.\n"
+            f"- For VERY SHORT source (1 word: 'Good', 'No', 'Bull') → SHORT translation:\n"
+            f"   'Good'→'좋아' (2 syl) · 'No'→'아니' (2 syl) · 'Bull'→'말이 돼' (3 syl).\n"
+            f"   Do NOT pad: '좋아요 정말 그래요' (8 syl) for 'Good' is WRONG.\n"
+            f"- If line shows 'countdown: <N>_<N-1>_..._<0>', fill EACH slot with exactly 1 syllable.\n"
+            f"   Example for target 2: countdown <2>_<1>_<0> → '좋_아' → output '좋아'.\n"
+            f"   This is a length scaffold for very short utterances only.\n"
+            f"- If natural Korean cannot fit in range, output the SHORTEST natural Korean.\n"
+            f"   The downstream TTS speed adjustment will absorb the gap. Never pad with empty particles.\n"
             f"\n"
-            f"TONE RULES:\n"
-            f"- emotion2vec_hint is the audio classifier's guess — use as REFERENCE only.\n"
-            f"  If the text content suggests a different tone, prefer the text-based judgment.\n"
-            f"- tone: English imperative phrase (15-30 words) starting with 'in a' or 'with'.\n"
-            f"   Combine: STYLE (low/loud/slow/quick) + EMOTION (sad/angry/happy/calm) + SITUATION.\n"
-            f"- This becomes TTS prefix: 'You are a helpful assistant. Please say this sentence {{tone}}.<|endofprompt|>'\n"
+            f"SPEAKER CONSISTENCY (화자 일관성):\n"
+            f"- SAME speaker → SAME 종결어미 (반말 OR 존댓말) throughout entire output.\n"
+            f"- Drama context: child/peer speakers use 반말, formal speakers use 존댓말.\n"
+            f"- DO NOT switch styles within same speaker (e.g., '~한다 → ~해요' transition is FAILURE).\n"
+            f"- Output in {lang_name} ONLY. No original text leak.\n"
+            f"- Make consecutive lines from same speaker flow naturally.\n"
+            f"\n"
+            f"TONE RULES (팀원 검증된 형식, ratio 0.93-1.46 정상):\n"
+            f"- SHORT phrase (5-10 words), starts with 'with' or 'in a'.\n"
+            f"- Describes delivery STYLE + subtle EMOTION cue.\n"
+            f"- AVOID slow-down keywords: 'slow pacing', 'restrained voice', 'measured cadence',\n"
+            f"   'drawn out', 'lingering' — these slow LLM delivery and break timing.\n"
+            f"- USE pace-neutral or pace-positive: 'natural delivery', 'conversational', 'lively',\n"
+            f"   'crisp', 'energetic', 'brisk'.\n"
+            f"\n"
+            f"GOOD EXAMPLES (팀원 스타일):\n"
+            f"  'with a faint hint of delighted curiosity'\n"
+            f"  'with a subtle note of pleased discovery'\n"
+            f"  'with a gentle note of caution'\n"
+            f"  'with a subtle wry edge'\n"
+            f"  'close to the speaker natural delivery'\n"
+            f"  'with a calm professional tone'\n"
+            f"  'in a brisk conversational manner'\n"
+            f"\n"
+            f"BAD EXAMPLES (피해야 함):\n"
+            f"  'angry' (too short — no nuance)\n"
+            f"  'in a casual, pleased, lightly confident tone with warm but restrained excitement' (too long, breaks timing)\n"
+            f"  'with deep, anguished sadness, slow pacing, restrained voice' (slow keywords)\n"
+            f"  '낮은 톤' (Korean — must be English)\n"
+            f"\n"
+            f"TONE CONTEXT:\n"
+            f"- emotion2vec_hint = audio classifier reference (use as hint).\n"
+            f"- text content may override the audio hint if mismatched.\n"
+            f"- TTS prefix template: 'You are a helpful assistant. Please say it close to the speaker natural delivery, {{tone}}.<|endofprompt|>'\n"
             f"- Output ONLY the formatted blocks. No thinking, no explanation."
         )
     else:
         system_prompt = (
             f"You are a professional dubbing translator. Translate each numbered line into "
             f"natural spoken {lang_name} for dubbing with lip-sync.\n"
-            f"CRITICAL RULES:\n"
+            f"RULES (length-aware, meaning-first):\n"
             f"- Keep the same numbering format [0], [1], [2]...\n"
-            f"- Each line specifies a syllable target: (target: MIN~MAX syllables).\n"
-            f"- Your translation MUST use between MIN and MAX syllables — HARD CONSTRAINT.\n"
-            f"- SHORTER than MIN is FAILURE (causes silence). Add natural particles.\n"
-            f"- LONGER than MAX is FAILURE (causes overflow). Compress, use shorter synonyms.\n"
-            f"- Aim for the MIDDLE of the range.\n"
+            f"- Each line shows a soft syllable target: 'target ~N syl (range MIN-MAX)'.\n"
+            f"- AIM for ~N. Range MIN-MAX is acceptable. Meaning preservation > exact count.\n"
+            f"- The TTS engine adjusts speed downstream (±15%), so don't force unnatural Korean.\n"
+            f"- For VERY SHORT source (1 word) → SHORT translation: 'Good'→'좋아', 'No'→'아니'.\n"
+            f"   Never pad short source with empty particles to hit a number.\n"
+            f"- If countdown markers appear ('<N>_..._<0>'), fill each slot with 1 syllable.\n"
+            f"- If natural Korean cannot fit range, output shortest natural Korean; TTS absorbs the rest.\n"
             f"- You MUST output in {lang_name}. DO NOT output the original text.\n"
             f"- Do NOT merge content between lines.\n"
             f"- Make consecutive lines from the same speaker sound natural in sequence.\n"
@@ -2229,6 +2720,13 @@ def _llm_translate_batch(
 
             if "<think>" in result:
                 result = re.sub(r'<think>.*?</think>', '', result, flags=re.DOTALL).strip()
+
+            # v26: CAPEL countdown 마커 제거 (LLM이 가이드를 출력에 포함시킨 경우)
+            # "<3>거<2>기<1>로<0>가" → "거기로가"
+            # 우리가 LLM에 "<N>_<N-1>...<0>" 형식 가이드를 줬는데 LLM이 결과에 넣음
+            if '<' in result and '>' in result:
+                # <숫자> 또는 <숫자>_ 또는 _ 마커 제거
+                result = re.sub(r'<\d+>_?', '', result)
 
             if use_emotion_desc:
                 parsed = _parse_translation_with_emotion(result)
@@ -2612,22 +3110,48 @@ def synthesize_segment_cosy(
     #
     # tts_emotion (= tone, LLM이 v15 prompt로 출력)이 풀 imperative phrase
 
-    # === v13: 카테고리 fallback 강한 묘사 (drama 격렬한 감정 대응) ===
-    # v12 ("with subdued sadness, soft pacing")는 너무 약함 → 사용자 "감정 부족"
-    # 드라마는 톤 변화 큼 (소리지름, 격분, 절규) → 강한 영어 묘사 필요
-    # 단 학습 분포 안에 있는 자연스러운 표현 유지 (leak 위험 ↓)
-    _ = tts_emotion  # LLM 풍부 묘사는 폐기 (영어 leak 방지)
-    if emotion in {"Sad", "Angry", "Happy", "Surprised", "Scared"}:
-        cat_imperative = {
-            "Sad":       "with deep, anguished sadness, slow pacing, restrained voice",
+    # === v22 (5/14): 팀원 master_timeline_cosyvoice.json 형식 적용 ===
+    # LATENTSYNC_EMOTION_INTENSITY: mild/moderate/strong (instruct_text 톤 강도)
+    _intensity = os.environ.get("LATENTSYNC_EMOTION_INTENSITY", "moderate").lower()
+    intensity_tone_maps = {
+        "mild": {
+            "Sad":       "with a faint hint of sadness",
+            "Angry":     "with a slight edge",
+            "Happy":     "with a faint hint of warmth",
+            "Surprised": "with a faint raised intonation",
+            "Scared":    "with a faint breathy hesitation",
+            "Neutral":   "",
+        },
+        "moderate": {
+            "Sad":       "with a gentle note of sadness",
+            "Angry":     "with sharp confrontational intensity",
+            "Happy":     "with a bright energetic edge",
+            "Surprised": "with a subtle raised intonation",
+            "Scared":    "with a tense breathy quality",
+            "Neutral":   "",
+        },
+        "strong": {
+            "Sad":       "with deep, anguished sadness",
             "Angry":     "with sharp, raised, confrontational tone, intense urgency",
-            "Happy":     "in a bright, energetic tone with lively, exuberant pacing",
+            "Happy":     "in a bright, energetic tone with lively prosody",
             "Surprised": "with sudden, sharp surprise, raised intonation",
             "Scared":    "with raw, tense fear, shaky breathy voice",
-        }[emotion]
-        prefix = f'You are a helpful assistant. Please say this sentence {cat_imperative}.<|endofprompt|>'
+            "Neutral":   "",
+        },
+    }
+    cat_tone_map = intensity_tone_maps.get(_intensity, intensity_tone_maps["moderate"])
+    if tts_emotion:
+        # LLM 풍부 묘사 (이미 짧고 자연스러운 형식)
+        tone_phrase = tts_emotion.strip().rstrip(".")
     else:
-        prefix = 'You are a helpful assistant.<|endofprompt|>'
+        tone_phrase = cat_tone_map.get(emotion, cat_tone_map["Neutral"])
+
+    # 팀원 형식: "Please say it close to the speaker's natural delivery, with [톤]"
+    if tone_phrase:
+        instruct_phrase = f"Please say it close to the speaker's natural delivery, {tone_phrase}"
+    else:
+        instruct_phrase = "Please say it close to the speaker's natural delivery"
+    instruct_text = f"You are a helpful assistant. {instruct_phrase}.<|endofprompt|>"
 
     ref_16k = os.path.join(tempfile.gettempdir(), "ref_16k_temp.wav")
     try:
@@ -2638,9 +3162,10 @@ def synthesize_segment_cosy(
         ], capture_output=True)
 
         output = []
-        # APRIL_28_REVERT: inference_cross_lingual + prefix in tts_text (검증된 방식)
-        for result in _cosy_model.inference_cross_lingual(
-            tts_text=f'{prefix}{text}',
+        # v21: instruct2 + pace 명시
+        for result in _cosy_model.inference_instruct2(
+            tts_text=text,
+            instruct_text=instruct_text,
             prompt_wav=ref_16k,
             stream=False,
             speed=speed
@@ -2656,9 +3181,24 @@ def synthesize_segment_cosy(
         if peak > 0:
             wav = wav * (0.9 / peak)
 
+        # 5/12 first-word fix: CosyVoice cold-start 시 첫 50ms 가 high-entropy
+        # → 기계음/click 들림. 짧은 fade-in (50ms ramp) 으로 부드럽게.
+        # v20 (5/15): 끝에도 짧은 fade-out 추가 — trim 발생 시 abrupt cut 완화.
+        # 사용자 피드백 "발화가 끝에서 자꾸 짤려" → 마지막 30ms ramp-down으로
+        # 청각적 잘림 인상 감소.
+        _native_sr = _cosy_model.sample_rate
+        _fade_n = int(0.05 * _native_sr)
+        _fade_out_n = int(0.03 * _native_sr)
+        if len(wav) > _fade_n * 2 and _fade_n > 0:
+            ramp = np.linspace(0.0, 1.0, _fade_n, dtype=np.float32)
+            wav[:_fade_n] *= ramp
+        if len(wav) > _fade_out_n * 2 and _fade_out_n > 0:
+            ramp_out = np.linspace(1.0, 0.0, _fade_out_n, dtype=np.float32)
+            wav[-_fade_out_n:] *= ramp_out
+
         # CosyVoice3 출력(24000Hz)과 TTS_SAMPLE_RATE가 다르면 리샘플링
-        if _cosy_model.sample_rate != TTS_SAMPLE_RATE:
-            wav = librosa.resample(wav, orig_sr=_cosy_model.sample_rate, target_sr=TTS_SAMPLE_RATE)
+        if _native_sr != TTS_SAMPLE_RATE:
+            wav = librosa.resample(wav, orig_sr=_native_sr, target_sr=TTS_SAMPLE_RATE)
 
         return wav
 
@@ -2710,10 +3250,18 @@ def synthesize_chunk(segments, profiles, chunk_name, tgt_lang,
         merged.append(group)
         i += 1
 
-    # 길이 조정 파라미터 (LIP_SYNC v27: 입 움직임에 정확히 맞추기)
-    MAX_STRETCH = 1.25  # 압축 한도 1.15 → 1.25 (lip-sync 우선, 약간의 음질 trade-off)
-    MIN_STRETCH = 0.85  # atempo 늘림 한도 (한국어가 짧을 때 0.85x까지 늘림)
-    TOL_LATE = 0.15     # 입 움직임 끝 + 0.15s까지는 자연스러움 (사람 더빙도 약간 어긋남)
+    # 길이 조정 파라미터 (5/12 audio quality fix: 기계음 방지)
+    # atempo > 1.07 또는 < 0.95 부터 phase vocoder artifact (metallic ring)
+    # 가 들리기 시작 → 입 sync 일부 손실하더라도 음질 우선.
+    # 너무 짧거나 긴 segment 는 PREDICT_THRESHOLD 가 잡아서 재번역 유도.
+    # v17: 환경변수화. rubberband WSOLA는 1.15까지 자연스러움 (VideoDubber AAAI 2023).
+    #   LATENTSYNC_MAX_STRETCH (default 1.07 안전, 1.15 권장 with rubberband)
+    #   LATENTSYNC_MIN_STRETCH (default 0.95 안전, 0.90 권장)
+    #   LATENTSYNC_TOL_LATE   (default 0.15s, 0.20s = LLM soft range와 매칭)
+    import os as _os_stretch
+    MAX_STRETCH = float(_os_stretch.environ.get("LATENTSYNC_MAX_STRETCH", "1.07"))
+    MIN_STRETCH = float(_os_stretch.environ.get("LATENTSYNC_MIN_STRETCH", "0.95"))
+    TOL_LATE = float(_os_stretch.environ.get("LATENTSYNC_TOL_LATE", "0.15"))
     # 다국어 확장: 타겟 언어별 발화 속도. 현재는 한국어만.
     LANG_SPEECH_RATE = {
         "ko": 5.5, "ja": 7.5, "zh": 5.0, "en": 3.5,
@@ -2747,7 +3295,10 @@ def synthesize_chunk(segments, profiles, chunk_name, tgt_lang,
             ref_path = profile.get_ref("Neutral") if profile else ""
 
         # SELF_REF_FALLBACK: profile 없으면 (짧은 outlier 화자 등)
-        # segment 자체 audio을 reference로 사용 → 음색 보존 + 더빙 발화
+        # v30 (5/15): 같은 화자의 모든 segment 를 concat 해서 reference 생성.
+        # 기존 동작 (단일 segment + padding) 은 매우 짧은 화자에게 기계음 유발
+        # (예: SPK_05 0.64s segment 자체 audio → CosyVoice3 voice cloning 빈약).
+        # concat 으로 3s+ 누적되면 zero-shot cloning 안정성 ↑.
         if not ref_path or not os.path.exists(ref_path):
             try:
                 vocals_path = os.path.join(VOCALS_DIR, f"{chunk_name}_clean_vocals.wav")
@@ -2758,22 +3309,65 @@ def synthesize_chunk(segments, profiles, chunk_name, tgt_lang,
                         tempfile.gettempdir(),
                         f"selfref_{chunk_name}_{first_seg.speaker}_{gi}.wav"
                     )
-                    seg_dur = last_seg.end - first_seg.start
-                    # 너무 짧으면 양쪽 0.5s 패딩 (CosyVoice3에 더 안정적)
-                    pad = 0.5 if seg_dur < 2.0 else 0.0
-                    ext_start = max(0, first_seg.start - pad)
-                    ext_end = last_seg.end + pad
-                    r = subprocess.run([
-                        "ffmpeg", "-y", "-loglevel", "error",
-                        "-ss", str(ext_start), "-to", str(ext_end),
-                        "-i", vocals_path,
-                        "-ar", "16000", "-ac", "1", "-c:a", "pcm_s16le",
-                        self_ref,
-                    ], capture_output=True, text=True)
-                    if r.returncode == 0 and os.path.exists(self_ref):
-                        ref_path = self_ref
-                        print(f"  ↳ self-ref fallback: {first_seg.speaker} ({seg_dur:.2f}s, "
-                              f"+{pad*2:.1f}s padding)")
+                    # 같은 화자의 모든 segment 수집 (전체 segments 인자에서)
+                    same_spk = [s for s in segments if s.speaker == first_seg.speaker]
+                    total_dur_same = sum(s.end - s.start for s in same_spk)
+
+                    # v30: concat 시도 — 총 길이 ≥1.5s 면 concat (CosyVoice3 안정 하한)
+                    used_concat = False
+                    if total_dur_same >= 1.5 and len(same_spk) >= 2:
+                        import soundfile as _sf_ref
+                        import numpy as _np_ref
+                        try:
+                            audio_ref, sr_ref = _sf_ref.read(vocals_path)
+                            if audio_ref.ndim > 1:
+                                audio_ref = _np_ref.mean(audio_ref, axis=1)
+                            chunks_ref = []
+                            silence_n = int(0.15 * sr_ref)  # 150ms silence between
+                            silence = _np_ref.zeros(silence_n, dtype=audio_ref.dtype)
+                            for s in sorted(same_spk, key=lambda x: x.start):
+                                s_idx = int(s.start * sr_ref)
+                                e_idx = int(s.end * sr_ref)
+                                if e_idx > s_idx:
+                                    chunks_ref.append(audio_ref[s_idx:e_idx])
+                                    chunks_ref.append(silence)
+                            if chunks_ref:
+                                concat_audio = _np_ref.concatenate(chunks_ref[:-1])  # drop trailing silence
+                                # 16kHz mono cast for CosyVoice3 (sf 직접 write 후 ffmpeg resample)
+                                tmp_concat = self_ref + ".raw.wav"
+                                _sf_ref.write(tmp_concat, concat_audio, sr_ref)
+                                r = subprocess.run([
+                                    "ffmpeg", "-y", "-loglevel", "error", "-i", tmp_concat,
+                                    "-ar", "16000", "-ac", "1", "-c:a", "pcm_s16le", self_ref,
+                                ], capture_output=True, text=True)
+                                if os.path.exists(tmp_concat):
+                                    os.unlink(tmp_concat)
+                                if r.returncode == 0 and os.path.exists(self_ref):
+                                    ref_path = self_ref
+                                    used_concat = True
+                                    print(f"  ↳ self-ref concat: {first_seg.speaker} "
+                                          f"({len(same_spk)} segs, total {total_dur_same:.2f}s)")
+                        except Exception as _ce:
+                            print(f"  ↳ self-ref concat 실패: {_ce} → 단일 segment fallback")
+                            used_concat = False
+
+                    # concat 실패 또는 segment 1개 뿐이면 기존 단일 segment 동작
+                    if not used_concat:
+                        seg_dur = last_seg.end - first_seg.start
+                        pad = 0.5 if seg_dur < 2.0 else 0.0
+                        ext_start = max(0, first_seg.start - pad)
+                        ext_end = last_seg.end + pad
+                        r = subprocess.run([
+                            "ffmpeg", "-y", "-loglevel", "error",
+                            "-ss", str(ext_start), "-to", str(ext_end),
+                            "-i", vocals_path,
+                            "-ar", "16000", "-ac", "1", "-c:a", "pcm_s16le",
+                            self_ref,
+                        ], capture_output=True, text=True)
+                        if r.returncode == 0 and os.path.exists(self_ref):
+                            ref_path = self_ref
+                            print(f"  ↳ self-ref single: {first_seg.speaker} ({seg_dur:.2f}s, "
+                                  f"+{pad*2:.1f}s padding)")
             except Exception as _e:
                 print(f"  ↳ self-ref 실패: {_e}")
 
@@ -2813,7 +3407,10 @@ def synthesize_chunk(segments, profiles, chunk_name, tgt_lang,
         combined_factor = emotion_factor * desc_factor
         effective_rate = speech_rate * combined_factor
         predicted_dur = combined_syllables / effective_rate if effective_rate > 0 else 0
-        PREDICT_THRESHOLD = MAX_STRETCH  # 1.15 — 압축 한도 초과 예상 시 재번역
+        # v17: PREDICT_THRESHOLD를 MAX_STRETCH 에서 분리.
+        # 사전 재번역은 좀 더 관대해도 됨 — TTS speed retry + atempo가 후처리에서 흡수.
+        # MAX_STRETCH 와 동일 묶음(1.07)은 너무 적극적 재번역 → 의미 손상.
+        PREDICT_THRESHOLD = float(os.environ.get("LATENTSYNC_PREDICT_THRESHOLD", "1.20"))
 
         if predicted_dur > max_allowed_duration * PREDICT_THRESHOLD and len(group) == 1:
             # 단일 세그먼트 + overflow 예상 → 재번역 시도
@@ -2830,10 +3427,15 @@ def synthesize_chunk(segments, profiles, chunk_name, tgt_lang,
             )
             if shorter:
                 new_syl = count_korean_syllables(shorter) if tgt_lang == "ko" else len(shorter)
-                if new_syl < combined_syllables:
-                    print(f"  ✅ 축약됨: {combined_syllables}음절 → {new_syl}음절")
+                # v17: 축약 결과 검증 — 너무 짧으면 의미 손상 의심 → 거부
+                # target_syl × 0.5 미만이면 LLM이 의미 버리고 음절만 맞춘 것
+                min_accept = max(2, int(target_syl * 0.5))
+                if new_syl < combined_syllables and new_syl >= min_accept:
+                    print(f"  ✅ 축약됨: {combined_syllables}음절 → {new_syl}음절 (target {target_syl})")
                     combined_text = shorter
                     group[0].translated = shorter
+                elif new_syl < min_accept:
+                    print(f"  ⚠️ 축약 거부 ({new_syl}음절 < {min_accept} 의미 손상 의심) — 원본 사용")
                 else:
                     print(f"  ⚠️ 축약 실패 (여전히 {new_syl}음절) — 원본 사용")
 
@@ -2997,12 +3599,17 @@ def synthesize_chunk(segments, profiles, chunk_name, tgt_lang,
             if len(audio_chunk) > max_allowed_samples:
                 trimmed_sec = (len(audio_chunk) - max_allowed_samples) / TTS_SAMPLE_RATE
                 audio_chunk = audio_chunk[:max_allowed_samples]
+                # v20: trim 후 마지막 30ms fade-out — abrupt cut 청각 인상 완화
+                _fadeout_n = int(0.03 * TTS_SAMPLE_RATE)
+                if len(audio_chunk) > _fadeout_n * 2 and _fadeout_n > 0:
+                    _ramp_out = np.linspace(1.0, 0.0, _fadeout_n, dtype=np.float32)
+                    audio_chunk[-_fadeout_n:] = audio_chunk[-_fadeout_n:] * _ramp_out
                 if is_last_group:
                     print(f"  ⚠️ 마지막 segment ratio={ratio:.2f} — {MAX_STRETCH}x 압축 "
-                          f"+ 비디오 끝 맞춰 {trimmed_sec:.2f}s trim")
+                          f"+ 비디오 끝 맞춰 {trimmed_sec:.2f}s trim (fade-out 30ms)")
                 else:
                     print(f"  ⚠️ ratio={ratio:.2f} 너무 큼 — {MAX_STRETCH}x 압축 "
-                          f"+ 다음 segment 침범 방지 {trimmed_sec:.2f}s trim")
+                          f"+ 다음 segment 침범 방지 {trimmed_sec:.2f}s trim (fade-out 30ms)")
             else:
                 # 1.25x 압축으로 max_allowed 안에는 들어감 (단, group_duration 넘음)
                 overflow_after = (len(audio_chunk) - target_samples) / TTS_SAMPLE_RATE
@@ -3015,6 +3622,53 @@ def synthesize_chunk(segments, profiles, chunk_name, tgt_lang,
         copy_len = end_sample - start_sample
         if copy_len > 0:
             output_audio[start_sample:end_sample] = audio_chunk[:copy_len]
+
+        # v28 (5/14): Redub 지원 — segment 별 wav + 메타 저장
+        try:
+            from pathlib import Path as _Path
+            _seg_dir = _Path(DUBBED_DIR) / f"{chunk_name}_segments"
+            _seg_dir.mkdir(exist_ok=True)
+            _seg_wav = _seg_dir / f"group_{gi:03d}_{first_seg.speaker}.wav"
+            sf.write(str(_seg_wav), audio_chunk, TTS_SAMPLE_RATE)
+            if not hasattr(synthesize_chunk, '_seg_meta_list'):
+                synthesize_chunk._seg_meta_list = []
+            synthesize_chunk._seg_meta_list.append({
+                'group_idx': gi,
+                'speaker': first_seg.speaker,
+                'emotion': first_seg.emotion,
+                'text': combined_text,
+                'tts_emotion': getattr(first_seg, 'tts_emotion', '') or '',
+                'tts_context': getattr(first_seg, 'tts_context', '') or '',
+                'speed': float(getattr(first_seg, 'speed', 1.0)),
+                'group_start': float(group_start),
+                'group_end': float(group_end),
+                'max_allowed_duration': float(max_allowed_duration),
+                'segment_ids': [s.id for s in group],
+                'wav_path': str(_seg_wav),
+                'ref_path': ref_path,
+            })
+        except Exception as _e_redub:
+            print(f"  [Redub] segment 메타 저장 실패: {_e_redub}")
+
+    # v28 (5/14): segments.json 저장 (Redub 위해)
+    try:
+        from pathlib import Path as _Path
+        _meta_dir = _Path(RUNS_DIR) / CURRENT_RUN_ID / "meta"
+        _meta_dir.mkdir(exist_ok=True)
+        _segments_json = _meta_dir / f"{chunk_name}_segments.json"
+        seg_meta_list = getattr(synthesize_chunk, '_seg_meta_list', [])
+        with open(_segments_json, 'w', encoding='utf-8') as _f:
+            json.dump({
+                'chunk_name': chunk_name,
+                'video_duration': float(video_duration),
+                'tts_sample_rate': TTS_SAMPLE_RATE,
+                'groups': seg_meta_list,
+            }, _f, ensure_ascii=False, indent=2)
+        print(f"[Redub] segments meta 저장: {_segments_json} ({len(seg_meta_list)} groups)")
+        # 다음 chunk 처리 위해 reset
+        synthesize_chunk._seg_meta_list = []
+    except Exception as _e:
+        print(f"[Redub] segments.json 저장 실패: {_e}")
 
     # 🔥 SYNC FIX: dubbed.wav를 정확히 video_duration으로 트림.
     #    이전: total_samples = (video_duration + 5.0) * SR → 5초 trailing buffer가 그대로 저장
@@ -3061,24 +3715,34 @@ def mix_audio(
     OUTPUT:
       output_path : str — /data/chunks/movie_chunk_000_final.mp4
     """
-    # 🔥 SYNC FIX: duration=first → shortest. 비디오(0:v)/더빙/BGM 중 가장 짧은 길이로 맞춤.
-    # 5/7 VOLUME FIX: loudnorm으로 perceptual loudness 매칭 (기계음 + 너무 큰 더빙 fix)
+    # 🔥 v24 (5/14): 팀원 compose_audio 파이프라인 형식 적용
+    # 핵심 변경:
+    #   1) 원본 sr 자동 감지 (16k/44.1k/48k 등) 후 그것으로 통일
+    #   2) stereo 2ch 출력 (mono 압축 X, BGM stereo 보존)
+    #   3) LC-AAC 강제 (HE-AAC SBR 비활성 → 96k 비정상 표시 X)
+    #   4) dubbed mono → stereo (양쪽 동일 채널, 가운데 정위)
+    try:
+        _sr_probe = subprocess.check_output([
+            "ffprobe", "-v", "error", "-select_streams", "a:0",
+            "-show_entries", "stream=sample_rate", "-of", "csv=p=0", chunk_path,
+        ], text=True).strip()
+        orig_sr = int(_sr_probe) if _sr_probe else 44100
+    except Exception:
+        orig_sr = 44100
+    print(f"[Mix] 팀원 형식 적용: sr={orig_sr}Hz, stereo 2ch, LC-AAC 192k")
+
+    # dubbed (24k mono) → stereo, BGM (원본 stereo) 유지
     if use_loudnorm:
-        # EBU R128 loudnorm: 모든 컨텐츠가 일관된 perceptual loudness 가짐
-        # I=-23 LUFS: 대화 표준 (영화 dialogue)
-        # TP=-2 dBTP: 클립 방지
-        # LRA=11: 자연스러운 dynamic range
         dubbed_filter = f"loudnorm=I={target_lufs}:TP=-2:LRA=11"
         filter_complex = (
-            f"[1:a]aformat=channel_layouts=mono,{dubbed_filter}[dub];"
-            f"[2:a]aformat=channel_layouts=mono,volume={bgm_volume}[bgm];"
+            f"[1:a]aformat=channel_layouts=stereo:sample_rates={orig_sr},{dubbed_filter}[dub];"
+            f"[2:a]aformat=channel_layouts=stereo:sample_rates={orig_sr},volume={bgm_volume}[bgm];"
             "[dub][bgm]amix=inputs=2:duration=shortest:normalize=0[a]"
         )
     else:
-        # Legacy: 고정 비율
         filter_complex = (
-            f"[1:a]aformat=channel_layouts=mono,volume={dubbed_volume}[dub];"
-            f"[2:a]aformat=channel_layouts=mono,volume={bgm_volume}[bgm];"
+            f"[1:a]aformat=channel_layouts=stereo:sample_rates={orig_sr},volume={dubbed_volume}[dub];"
+            f"[2:a]aformat=channel_layouts=stereo:sample_rates={orig_sr},volume={bgm_volume}[bgm];"
             "[dub][bgm]amix=inputs=2:duration=shortest:normalize=0[a]"
         )
     cmd = [
@@ -3088,7 +3752,12 @@ def mix_audio(
         "-i", bgm_path,
         "-filter_complex", filter_complex,
         "-map", "0:v", "-map", "[a]",
-        "-c:v", "copy", "-c:a", "aac", "-b:a", "192k",
+        "-c:v", "copy",
+        "-c:a", "aac",
+        "-profile:a", "aac_low",  # LC-AAC 강제 (HE-AAC SBR → 96k 비정상 방지)
+        "-b:a", "192k",
+        "-ar", str(orig_sr),       # 원본 sr 유지
+        "-ac", "2",                # stereo 출력 (팀원 형식)
         "-shortest",
         output_path, "-y"
     ]
@@ -3116,7 +3785,7 @@ def apply_latent_sync(
     use_trt: bool = True,                   # TRT FP16 엔진 (2.55GB) 사용 — 3.18× 가속
     scheduler: str = "dpm",                 # DPMSolver++ (10 step = DDIM 20 동등)
     teacache_threshold: float = 0.1,        # TeaCache (timestep skip) — 추가 33% 가속
-    profile_threshold: float = 0.0,         # 5/11: ASD 통합 후 비활성화 (frame 100% skip 방지)
+    profile_threshold: float = 0.35,        # 5/12: 정면만 lipsync (측면 yaw>0.35 skip, 입 떠다님 방지)
     face_diag_min_ratio: float = 0.0,       # 5/11: ASD 통합 후 비활성화 (drama medium-shot 살리기)
     chunk_seconds: int = 0,                 # >0 시 chunked inference (장편 영상 메모리 절약)
     face_strict: bool = False,              # 5/11: face_detector strict mode (드라마 안전)
@@ -3210,12 +3879,15 @@ def apply_latent_sync(
     except Exception as _e:
         print(f"[Lipsync] daemon cleanup 실패: {_e} (진행)")
 
-    # 16kHz mono audio 추출
+    # 5/12 audio quality fix: 24kHz mono 추출 (기존 16kHz는 기계음 원인).
+    # Whisper audio2feat 이 내부에서 16k 로 자동 resample 하므로 24k 입력 OK.
+    # LatentSync 가 최종 mp4 mux 할 때 audio_temp 를 그대로 사용하므로
+    # 출력 영상 음성도 24kHz 유지 (CosyVoice 네이티브 = 24kHz).
     audio_temp = os.path.join("/tmp", f"latentsync_audio_{os.getpid()}.wav")
     try:
         subprocess.run([
             "ffmpeg", "-y", "-i", dubbed_video_path,
-            "-ar", "16000", "-ac", "1", "-c:a", "pcm_s16le",
+            "-ar", "24000", "-ac", "1", "-c:a", "pcm_s16le",
             audio_temp,
         ], check=True, capture_output=True)
     except subprocess.CalledProcessError as e:
@@ -3461,7 +4133,14 @@ def save_pipeline_report(
     chunk_data: dict,
     output_path: str
 ):
-    """파이프라인 중간 결과를 JSON으로 저장."""
+    """파이프라인 중간 결과를 JSON으로 저장.
+
+    v30 (5/15): cross-modal speaker matching 결과 + trim 적용값을 JSON에 노출.
+        chunk 레벨: face_clusters, face_speaker_remap, av_reassigned_intervals,
+                     av_fusion_stats, speaker_face_count, audio_gender_stats
+        segment 레벨: reassigned_from, face_match_track, audio_gender,
+                       trim_applied_s, pad_applied_s, lipsync_coverage_pct
+    """
     report = {
         "run_id": CURRENT_RUN_ID,
         "run_root": os.path.join(RUNS_DIR, CURRENT_RUN_ID) if CURRENT_RUN_ID else None,
@@ -3472,17 +4151,119 @@ def save_pipeline_report(
         "chunks": []
     }
 
+    # v30: audio_f0_gender.json 한 번만 읽기 (전체 영상 단위 1개)
+    audio_gender_data = None
+    audio_gender_fps = 25.0
+    try:
+        _run_root = os.path.join(RUNS_DIR, CURRENT_RUN_ID) if CURRENT_RUN_ID else None
+        if _run_root:
+            _f0_json = os.path.join(_run_root, "meta", "audio_f0_gender.json")
+            if os.path.isfile(_f0_json):
+                with open(_f0_json, "r", encoding="utf-8") as _f:
+                    _f0_doc = json.load(_f)
+                audio_gender_data = _f0_doc.get("gender_per_frame", [])
+                audio_gender_fps = float(_f0_doc.get("fps", 25.0))
+    except Exception as _e_f0:
+        print(f"[Report] audio_f0_gender.json 로드 실패 (계속): {_e_f0}")
+
+    def _seg_audio_gender(start_s: float, end_s: float):
+        """segment 구간의 audio gender majority vote (audio_gender_data 있을 때만)."""
+        if not audio_gender_data:
+            return None
+        f1 = max(0, int(start_s * audio_gender_fps))
+        f2 = min(len(audio_gender_data), int(end_s * audio_gender_fps + 1))
+        if f2 <= f1:
+            return None
+        win = audio_gender_data[f1:f2]
+        if not win:
+            return None
+        male_n = sum(1 for g in win if g == "male")
+        female_n = sum(1 for g in win if g == "female")
+        if male_n == 0 and female_n == 0:
+            return "unknown"
+        return "male" if male_n >= female_n else "female"
+
     for chunk_name, data in chunk_data.items():
+        # v30: AV-Fusion 결과 추출 (없으면 빈 dict)
+        fusion = data.get("av_fusion") or {}
+        asd_result = data.get("asd_result") or {}
+        face_clusters = data.get("face_clusters") or {}
+        face_speaker_remap = data.get("face_speaker_remap") or {}
+        av_reassigned = data.get("av_reassigned_intervals") or []
+        speaker_face_count = fusion.get("speaker_face_count") or {}
+
+        # segment별 reassign source lookup: (round(start,3), round(end,3)) → old_spk
+        reassign_lookup = {
+            (round(s, 3), round(e, 3)): old
+            for s, e, old in av_reassigned
+        }
+
+        # segment별 dominant face track lookup
+        def _seg_dom_face(seg_start: float, seg_end: float):
+            tracks = asd_result.get("tracks") or []
+            fps = asd_result.get("fps", 25.0)
+            if not tracks:
+                return None, 0.0
+            f1 = int(seg_start * fps)
+            f2 = int(seg_end * fps + 1)
+            face_freq = {}
+            seg_frames = max(1, f2 - f1)
+            for tidx, t in enumerate(tracks):
+                for fi in t.get("frames", []):
+                    if f1 <= fi < f2:
+                        face_freq[tidx] = face_freq.get(tidx, 0) + 1
+            if not face_freq:
+                return None, 0.0
+            dom_t, dom_n = max(face_freq.items(), key=lambda x: x[1])
+            return int(dom_t), round(dom_n / seg_frames, 3)
+
         chunk_report = {
             "name": chunk_name,
             "vocals_path": data.get("vocals_path", ""),
             "bgm_path": data.get("bgm_path", ""),
             "detected_lang": data.get("detected_lang", ""),
+            "video_duration_s": round(float(data.get("video_duration", 0.0)), 3),
             "segments": [],
-            "speaker_profiles": {}
+            "speaker_profiles": {},
+            # v30: cross-modal speaker matching 결과
+            "av_fusion_stats": {
+                "n_face_tracks": len(asd_result.get("tracks", [])),
+                "n_frames": int(fusion.get("n_frames", asd_result.get("n_frames", 0))),
+                "fps": float(fusion.get("fps", asd_result.get("fps", 25.0))),
+                "lipsync_target_frames": (
+                    sum(1 for t in fusion.get("per_frame_target", []) if t is not None)
+                    if fusion.get("per_frame_target") else 0
+                ),
+                "audio_active_frames": (
+                    sum(1 for s in fusion.get("frame_active_speaker", []) if s is not None)
+                    if fusion.get("frame_active_speaker") else 0
+                ),
+                "spurious_speakers": fusion.get("spurious_speakers", []),
+            },
+            "face_clusters": {str(k): int(v) for k, v in face_clusters.items()},
+            "face_speaker_remap": dict(face_speaker_remap),
+            "av_reassigned_intervals": [
+                {"start": round(s, 3), "end": round(e, 3), "old_speaker": old}
+                for s, e, old in av_reassigned
+            ],
+            "speaker_face_count": {
+                spk: {str(t): int(n) for t, n in faces.items()}
+                for spk, faces in speaker_face_count.items()
+            },
         }
 
+        # v30: lipsync coverage % (검증 1순위 지표)
+        _nf = chunk_report["av_fusion_stats"]["n_frames"]
+        if _nf > 0:
+            chunk_report["av_fusion_stats"]["lipsync_coverage_pct"] = round(
+                100.0 * chunk_report["av_fusion_stats"]["lipsync_target_frames"] / _nf, 2
+            )
+
         for seg in data.get("segments", []):
+            seg_key = (round(seg.start, 3), round(seg.end, 3))
+            dom_track, dom_share = _seg_dom_face(seg.start, seg.end)
+            aud_gender = _seg_audio_gender(seg.start, seg.end)
+
             seg_info = {
                 "id": seg.id,
                 "speaker": seg.speaker,
@@ -3495,11 +4276,31 @@ def save_pipeline_report(
                 "emotion_score": seg.emotion_score,
                 "raw_emotion": getattr(seg, 'raw_emotion', seg.emotion),
                 "raw_emotion_score": getattr(seg, 'raw_emotion_score', seg.emotion_score),
+                # v29: 팀원 master_timeline 형식 (UI 조정용)
+                "source_emotion": {
+                    "label": getattr(seg, 'raw_emotion', 'Neutral').lower(),
+                    "confidence": getattr(seg, 'raw_emotion_score', 0.0),
+                    "scores": getattr(seg, 'raw_emotion_scores', {}),
+                },
                 "tts_context": getattr(seg, 'tts_context', ''),
                 "tts_emotion": getattr(seg, 'tts_emotion', ''),
+                "tts_instruct_text": f"You are a helpful assistant. Please say it close to the speaker's natural delivery"
+                                     + (f", {seg.tts_emotion}" if getattr(seg, 'tts_emotion', '') else "")
+                                     + ".<|endofprompt|>",
                 "speed": seg.speed,
                 "tts_mos": getattr(seg, '_tts_mos', 0.0),
                 "tts_retries": getattr(seg, '_tts_retries', 0),
+                # v30: cross-modal speaker matching trace
+                "reassigned_from": reassign_lookup.get(seg_key),
+                "face_match_track": dom_track,
+                "face_match_share": dom_share,
+                "audio_gender": aud_gender,
+                # v30: trim/padding 실제 적용값 (synthesize_chunk가 채움)
+                "tts_actual_duration_s": getattr(seg, '_tts_actual_duration', None),
+                "tts_target_duration_s": getattr(seg, '_tts_target_duration', None),
+                "tts_stretch_ratio": getattr(seg, '_tts_stretch_ratio', None),
+                "tts_trim_applied_s": getattr(seg, '_tts_trim_applied', 0.0),
+                "tts_pad_applied_s": getattr(seg, '_tts_pad_applied', 0.0),
             }
             chunk_report["segments"].append(seg_info)
 
@@ -3689,7 +4490,7 @@ def run_pipeline(
     lipsync_use_trt: bool = True,              # TRT FP16 engine (3.18× 가속)
     lipsync_scheduler: str = "dpm",            # DPMSolver++ (default)
     lipsync_teacache: float = 0.1,             # TeaCache rel_l1 threshold (0=off)
-    lipsync_profile_threshold: float = 0.0,    # 5/11: ASD 통합 후 default off (drama medium-shot 살리기)
+    lipsync_profile_threshold: float = 0.35,   # 5/12: 정면만 lipsync (측면 입 떠다님 방지)
     lipsync_face_diag_min_ratio: float = 0.0,  # 5/11: ASD 통합 후 default off (face miss → mask artifact 방지)
     lipsync_chunk_seconds: int = 0,            # >0 시 chunked inference (long video memory)
     lipsync_face_strict: bool = False,         # 5/11: 드라마 artifact 방지 (det_score 0.85, roll 체크)
@@ -3765,12 +4566,22 @@ def run_pipeline(
     chunks = split_video(video_path, file_name, segment_time)
 
     # ── 1단계: 음원 분리 (모든 청크 먼저) ────────────────
+    # v28 (5/14): Resume 지원 — vocals/bgm 파일 존재 시 skip
+    _resume_mode = os.environ.get("LATENTSYNC_RESUME", "0") == "1"
+    if _resume_mode:
+        print("[Resume] LATENTSYNC_RESUME=1 — 결과 파일 존재 시 단계 skip")
     chunk_data = {}
     for chunk_path in chunks:
         chunk_name = os.path.basename(chunk_path).replace(".mp4", "")
-        print(f"\n--- [Separate] 청크: {chunk_name} ---")
-        vocals_path, bgm_path = separate_audio(chunk_path)
-        # 🔥 수정 N: 청크 비디오 길이 기록 (마지막 세그먼트 TTS 경계로 사용)
+        # Resume check: vocals/bgm 존재
+        expected_vocals = os.path.join(VOCALS_DIR, f"{chunk_name}_vocals.wav")
+        expected_bgm = os.path.join(BGM_DIR, f"{chunk_name}_bgm.wav")
+        if _resume_mode and os.path.exists(expected_vocals) and os.path.exists(expected_bgm):
+            print(f"\n--- [Separate] 청크: {chunk_name} [Resume skip] ⚡")
+            vocals_path, bgm_path = expected_vocals, expected_bgm
+        else:
+            print(f"\n--- [Separate] 청크: {chunk_name} ---")
+            vocals_path, bgm_path = separate_audio(chunk_path)
         video_dur = get_video_duration(chunk_path)
         chunk_data[chunk_name] = {
             "chunk_path": chunk_path,
@@ -3812,12 +4623,24 @@ def run_pipeline(
         diarization = diarize(data["vocals_path"], num_speakers=num_speakers)
 
         # 🔥 Step 4-2: ECAPA centroid 후처리 (over-segmentation 해결)
-        #   pyannote가 같은 사람 톤 변화를 다른 화자로 잘못 인식하는 문제 해결.
-        #   centroid 거리가 가까운 (0.65 cosine) 화자 쌍 자동 병합 + 짧은 turn 재할당.
+        # v22 (5/14): env var 로 threshold 조정 가능
+        #   LATENTSYNC_DIARIZE_MERGE_THRESHOLD: cosine sim 임계값 (기본 0.50)
+        #     낮을수록 더 적극 병합 (under-segment 위험)
+        #     높을수록 보수적 (over-segment 잔존)
+        #   LATENTSYNC_DIARIZE_SHORT_TURN: 짧은 turn 재할당 임계값 (기본 0.8s)
         speaker_centroids: Dict[str, np.ndarray] = {}
         if num_speakers is None or num_speakers > 1:
-            # num_speakers=1 이면 단일 화자로 간주 → 후처리 불필요
-            diarization, speaker_centroids = post_process_diarization(diarization, data["vocals_path"])
+            _merge_thr = float(os.environ.get("LATENTSYNC_DIARIZE_MERGE_THRESHOLD", "0.50"))
+            _short_turn = float(os.environ.get("LATENTSYNC_DIARIZE_SHORT_TURN", "0.8"))
+            _min_dur_centroid = float(os.environ.get("LATENTSYNC_DIARIZE_MIN_DUR_CENTROID", "0.5"))
+            print(f"[Diarize] 후처리 파라미터: merge_threshold={_merge_thr}, "
+                  f"short_turn={_short_turn}, min_dur_centroid={_min_dur_centroid}")
+            diarization, speaker_centroids = post_process_diarization(
+                diarization, data["vocals_path"],
+                merge_threshold=_merge_thr,
+                short_turn_threshold=_short_turn,
+                min_dur_for_centroid=_min_dur_centroid,
+            )
         data["speaker_centroids"] = speaker_centroids
 
         # 🔥 Step 4-3: AV Fusion (LightASD) — 화자 분리 정확도 향상
@@ -3884,7 +4707,18 @@ def run_pipeline(
                 # ECAPA centroid가 못 잡은 over-detect를 시각 정보로 보정
                 face_count = fusion.get("speaker_face_count", {})
                 if face_count:
-                    merge_pairs = detect_face_based_merges(face_count, min_shared_frames=10, min_share_ratio=0.30)
+                    # v23 (5/14): AV-Fusion face-based auto merge env var 조정
+                    # LATENTSYNC_AV_MERGE_FRAMES (기본 10): 공유 face frame 임계값 ↑ → 병합 보수적
+                    # LATENTSYNC_AV_MERGE_RATIO (기본 0.30): 공유 비율 임계값 ↑ → 병합 보수적
+                    # LATENTSYNC_AV_MERGE_OFF=1: face merge 완전 비활성화 (DiariZen 결과 그대로)
+                    _av_merge_frames = int(os.environ.get("LATENTSYNC_AV_MERGE_FRAMES", "10"))
+                    _av_merge_ratio = float(os.environ.get("LATENTSYNC_AV_MERGE_RATIO", "0.30"))
+                    _av_merge_off = os.environ.get("LATENTSYNC_AV_MERGE_OFF", "0") == "1"
+                    if _av_merge_off:
+                        print("[AV-Fusion] auto merge 비활성화 (LATENTSYNC_AV_MERGE_OFF=1)")
+                        merge_pairs = []
+                    else:
+                        merge_pairs = detect_face_based_merges(face_count, min_shared_frames=_av_merge_frames, min_share_ratio=_av_merge_ratio)
                     if merge_pairs:
                         # union-find로 병합
                         parent = {spk: spk for spk in face_count.keys()}
@@ -3918,6 +4752,167 @@ def run_pipeline(
                                 speaker_centroids = merged_centroids
                                 data["speaker_centroids"] = speaker_centroids
                             print(f"[AV-Fusion] 화자 병합 후: {sorted(set(speaker_remap.values()))}")
+
+                # === v23 NEW: Face Recognition cluster (audio over-split fix) ===
+                # 사용자 지적: "화자 분리가 제일 중요한 관건"
+                # audio diarization은 같은 사람의 다른 톤 변화를 다른 speaker로 분리할 수 있음.
+                # face_id (ArcFace) embedding으로 face track의 *진짜 정체성* 결정 →
+                # cluster_id 같은데 audio speaker 다르면 통합 (audio over-split fix).
+                # 환경변수:
+                #   LATENTSYNC_FACE_ID_OFF=1 → 비활성
+                #   LATENTSYNC_FACE_ID_SIM (default 0.50) ArcFace cosine sim 임계 (동일인)
+                #   LATENTSYNC_FACE_ID_CLUSTER_SHARE (default 0.50) cluster 대표 speaker 최소 점유
+                # 부수 산출물:
+                #   data["face_clusters"]: Dict[track_idx, cluster_id]
+                #   data["face_speaker_remap"]: Dict[old_speaker, canonical]
+                data["face_clusters"] = {}
+                data["face_speaker_remap"] = {}
+                _faceid_off = os.environ.get("LATENTSYNC_FACE_ID_OFF", "0") == "1"
+                if _faceid_off:
+                    print("[FaceID] 비활성화 (LATENTSYNC_FACE_ID_OFF=1)")
+                else:
+                    try:
+                        from face_id_embedder import (
+                            compute_track_face_embeddings,
+                            cluster_tracks_by_face,
+                            derive_speaker_remap_from_face_clusters,
+                            apply_speaker_remap_to_diarization,
+                            reassign_segments_by_face_voting,
+                        )
+                        _faceid_sim = float(os.environ.get("LATENTSYNC_FACE_ID_SIM", "0.50"))
+                        _faceid_share = float(os.environ.get("LATENTSYNC_FACE_ID_CLUSTER_SHARE", "0.50"))
+                        track_embs = compute_track_face_embeddings(
+                            asd_result, data["chunk_path"], verbose=True
+                        )
+                        if track_embs:
+                            track_to_cluster = cluster_tracks_by_face(
+                                track_embs, similarity_threshold=_faceid_sim, verbose=True,
+                            )
+                            data["face_clusters"] = track_to_cluster
+                            faceid_remap = derive_speaker_remap_from_face_clusters(
+                                fusion, track_to_cluster,
+                                min_cluster_share=_faceid_share, verbose=True,
+                            )
+                            if faceid_remap:
+                                diarization = apply_speaker_remap_to_diarization(
+                                    diarization, faceid_remap
+                                )
+                                data["face_speaker_remap"] = faceid_remap
+                                # speaker_centroids remap
+                                if speaker_centroids:
+                                    new_cents = {}
+                                    for spk, c in speaker_centroids.items():
+                                        canon = faceid_remap.get(spk, spk)
+                                        if canon not in new_cents:
+                                            new_cents[canon] = c
+                                    speaker_centroids = new_cents
+                                    data["speaker_centroids"] = speaker_centroids
+                                # fusion의 speaker_face_count도 remap (downstream AV-Reassign용)
+                                if "speaker_face_count" in fusion:
+                                    old_sfc = fusion["speaker_face_count"]
+                                    new_sfc: Dict[str, Dict[int, int]] = {}
+                                    for spk, face_map in old_sfc.items():
+                                        canon = faceid_remap.get(spk, spk)
+                                        new_sfc.setdefault(canon, {})
+                                        for face_idx, n in face_map.items():
+                                            new_sfc[canon][face_idx] = new_sfc[canon].get(face_idx, 0) + n
+                                    fusion["speaker_face_count"] = new_sfc
+                                print(f"[FaceID] {len(faceid_remap)}개 speaker remap 적용 "
+                                      f"→ 화자 수 {len(set(faceid_remap.values()) | (set(spk for _, _, spk in diarization.itertracks(yield_label=True)) - set(faceid_remap.keys())))}")
+
+                            # === v36 NEW: per-segment ArcFace voting (가설 C) ===
+                            # cluster_canonical safety 우회. segment 마다 face embedding
+                            # 직접 비교 → 가장 가까운 speaker로 reassign.
+                            # 환경변수: LATENTSYNC_FACE_VOTING_OFF=1 → 비활성
+                            #   LATENTSYNC_FACE_VOTING_THRESHOLD (default 0.55)
+                            #   LATENTSYNC_FACE_VOTING_MARGIN (default 0.05)
+                            #   LATENTSYNC_FACE_VOTING_MIN_SHARE (default 0.50)
+                            _voting_off = os.environ.get("LATENTSYNC_FACE_VOTING_OFF", "0") == "1"
+                            if not _voting_off:
+                                try:
+                                    from av_fusion import apply_reassignment_to_diarization as _apply_reassign
+                                    current_audio_segs = [
+                                        (turn.start, turn.end, spk)
+                                        for turn, _, spk in diarization.itertracks(yield_label=True)
+                                    ]
+                                    voting_reassignments = reassign_segments_by_face_voting(
+                                        current_audio_segs, asd_result, track_embs,
+                                        fusion.get("speaker_face_count", {}),
+                                        verbose=True,
+                                    )
+                                    if voting_reassignments:
+                                        diarization, _voting_intervals = _apply_reassign(
+                                            diarization, voting_reassignments, return_intervals=True
+                                        )
+                                        # av_reassigned_intervals 에 추가 (ref bank 오염 방지)
+                                        prev_intervals = data.get("av_reassigned_intervals", []) or []
+                                        data["av_reassigned_intervals"] = prev_intervals + list(_voting_intervals)
+                                        # speaker_face_count 도 voting 결과 반영
+                                        if "speaker_face_count" in fusion:
+                                            voting_map = {(round(s, 3), round(e, 3)): (new, old)
+                                                          for s, e, old, new in voting_reassignments}
+                                            # downstream AV-Reassign 가 fresh state 보도록 fusion 재계산은 생략
+                                            # (voting 결과 자체는 diarization에 이미 적용됨)
+                                            pass
+                                        print(f"[FaceVoting] {len(voting_reassignments)} segments reassigned")
+                                except Exception as _ve:
+                                    import traceback as _vtb
+                                    print(f"[FaceVoting] 실패 (계속 진행): {_ve}")
+                                    _vtb.print_exc()
+                    except Exception as _fie:
+                        import traceback as _ftb
+                        print(f"[FaceID] 실패 (계속 진행): {_fie}")
+                        _ftb.print_exc()
+
+                # === v17/v19 per-segment AV reassignment (재구조) ===
+                # face track 기반 라벨 교정. SPEAKER_3 → 5/0/1 오인 패턴 fix.
+                # 환경변수:
+                #   LATENTSYNC_AV_REASSIGN_OFF=1 → 비활성
+                #   LATENTSYNC_AV_REASSIGN_DOMINANT (default 0.6) face owner threshold
+                #   LATENTSYNC_AV_REASSIGN_SHARE   (default 0.5) seg dominant share
+                #   LATENTSYNC_AV_REASSIGN_MAX_DUR (default 미설정=무제한)
+                #                                  값 있으면 그보다 긴 segment skip
+                #                                  (v18 회귀: 긴 발화의 audio 라벨 신뢰)
+                # 부수 산출물:
+                #   data["av_reassigned_intervals"] = [(start, end, old_spk), ...]
+                #   → build_speaker_profiles에서 ref bank 오염 방지용으로 활용
+                data["av_reassigned_intervals"] = []
+                _reassign_off = os.environ.get("LATENTSYNC_AV_REASSIGN_OFF", "0") == "1"
+                if _reassign_off:
+                    print("[AV-Reassign] 비활성화 (LATENTSYNC_AV_REASSIGN_OFF=1)")
+                else:
+                    try:
+                        from av_fusion import (
+                            reassign_segments_by_face_owner,
+                            apply_reassignment_to_diarization,
+                        )
+                        _reassign_dom = float(os.environ.get("LATENTSYNC_AV_REASSIGN_DOMINANT", "0.6"))
+                        _reassign_share = float(os.environ.get("LATENTSYNC_AV_REASSIGN_SHARE", "0.5"))
+                        _reassign_max_dur_str = os.environ.get("LATENTSYNC_AV_REASSIGN_MAX_DUR", "").strip()
+                        _reassign_max_dur = float(_reassign_max_dur_str) if _reassign_max_dur_str else None
+                        current_audio_segs = [
+                            (turn.start, turn.end, spk)
+                            for turn, _, spk in diarization.itertracks(yield_label=True)
+                        ]
+                        reassignments = reassign_segments_by_face_owner(
+                            current_audio_segs, fusion, asd_result,
+                            min_dominant_ratio=_reassign_dom,
+                            min_seg_face_share=_reassign_share,
+                            max_seg_duration=_reassign_max_dur,
+                            verbose=True,
+                        )
+                        if reassignments:
+                            diarization, reassigned_intervals = apply_reassignment_to_diarization(
+                                diarization, reassignments, return_intervals=True
+                            )
+                            data["av_reassigned_intervals"] = reassigned_intervals
+                            print(f"[AV-Reassign] {len(reassigned_intervals)}/{len(current_audio_segs)} segments 재할당 "
+                                  f"(dom>={_reassign_dom:.0%}, share>={_reassign_share:.0%}, "
+                                  f"max_dur={_reassign_max_dur if _reassign_max_dur else 'inf'})")
+                    except Exception as _re:
+                        import traceback as _rtb
+                        print(f"[AV-Reassign] 실패 (계속 진행): {_re}")
+                        _rtb.print_exc()
 
                 # 결과 저장 (lipsync 단계에서 활용 가능)
                 data["av_fusion"] = fusion
@@ -4006,8 +5001,13 @@ def run_pipeline(
         )
 
         # Step 7: Speaker Profile Bank 구성 (MOS 필터 적용)
+        # v19: AV-Reassign 영역은 ref 후보에서 제외 (ref 오염 방지).
+        # LATENTSYNC_REF_EXCLUDE_REASSIGNED=0 → 제외 비활성
+        _ref_exclude_off = os.environ.get("LATENTSYNC_REF_EXCLUDE_REASSIGNED", "1") == "0"
+        _exclude = None if _ref_exclude_off else data.get("av_reassigned_intervals") or None
         data["profiles"] = build_speaker_profiles(
-            data["segments"], data["vocals_path"]
+            data["segments"], data["vocals_path"],
+            exclude_intervals=_exclude,
         )
     _unload("emotion")
     _unload("mos")  # 레퍼런스 선택 끝 → MOS 해제 (TTS 평가 시 다시 로드)
@@ -4037,21 +5037,35 @@ def run_pipeline(
             seg.speed = EMOTION_SPEED.get(seg.emotion, 1.0)
 
     # ── 5단계: TTS + 믹싱 (MOS reload 제거 - MOS_RESYNTH 비활성 상태) ───
-    load_cosy()
-    # OPTIMIZATION: MOS_RESYNTH_ENABLED=False이라 TTS 단계 MOS load 불필요 (~60s 절약)
+    # v28 (5/14): Resume — dubbed wav + chunk_final.mp4 존재 시 skip
+    _cosy_loaded = False
     for chunk_name, data in chunk_data.items():
-        print(f"\n--- [TTS] 청크: {chunk_name} ---")
+        # Resume check: dubbed wav 존재
+        expected_dubbed = os.path.join(DUBBED_DIR, f"{chunk_name}_dubbed.wav")
+        expected_final = os.path.join(CHUNKS_DIR, f"{chunk_name}_final.mp4")
+        if _resume_mode and os.path.exists(expected_dubbed):
+            print(f"\n--- [TTS] 청크: {chunk_name} [Resume skip] ⚡ (dubbed 존재)")
+            dubbed_path = expected_dubbed
+        else:
+            if not _cosy_loaded:
+                load_cosy()
+                _cosy_loaded = True
+            print(f"\n--- [TTS] 청크: {chunk_name} ---")
+            dubbed_path = synthesize_chunk(
+                data["segments"], data["profiles"], chunk_name, tgt_lang,
+                video_duration=data.get("video_duration"),
+            )
 
-        # Step 9: 음성 합성 (MOS 기반 자동 재합성, 마지막 세그먼트 비디오 길이 보호)
-        dubbed_path = synthesize_chunk(
-            data["segments"], data["profiles"], chunk_name, tgt_lang,
-            video_duration=data.get("video_duration"),
-        )
-
-        # Step 10: 믹싱
-        final_path = os.path.join(CHUNKS_DIR, f"{chunk_name}_final.mp4")
-        mix_audio(data["chunk_path"], dubbed_path, data["bgm_path"], final_path)
-    _unload("cosy")
+        # Mix: chunk_final.mp4 존재 시 skip
+        if _resume_mode and os.path.exists(expected_final):
+            print(f"[Mix] 청크: {chunk_name} [Resume skip] ⚡ ({expected_final})")
+            final_path = expected_final
+        else:
+            final_path = os.path.join(CHUNKS_DIR, f"{chunk_name}_final.mp4")
+            mix_audio(data["chunk_path"], dubbed_path, data["bgm_path"], final_path)
+        data["chunk_final_path"] = final_path
+    if _cosy_loaded:
+        _unload("cosy")
 
     # 전체 청크 합치기
     output_path = concat_chunks(file_name, tgt_lang)
@@ -4123,6 +5137,89 @@ def run_pipeline(
             print(f"[ASD-Filter] index dump failed (continuing without filter): {_e_asd}")
             _tb_asd.print_exc()
         # === ASD_INDEX_PATCH:dump end ===
+
+        # === SPEAKER_PROFILE_PATCH:dump (5/12) ===
+        # Build face_profiles + audio F0 gender JSONs and set env vars so the
+        # LatentSync subprocess applies per-face speaker matching.
+        # Uses the standalone scripts under /workspace/patches/ which read
+        # the ASD pickles + diarized vocals.
+        try:
+            _spk_run_root = os.path.join(RUNS_DIR, CURRENT_RUN_ID) if CURRENT_RUN_ID else None
+            if _spk_run_root and os.path.isdir(_spk_run_root) and \
+               os.environ.get("LATENTSYNC_SPEAKER_PROFILES_DISABLE", "0") != "1":
+                import subprocess as _sub_sp
+                from concurrent.futures import ThreadPoolExecutor as _TPE
+                _build_script = "/workspace/patches/build_face_profiles.py"
+                _f0_script = "/workspace/patches/audio_f0_gender.py"
+                _meta_dir = os.path.join(_spk_run_root, "meta")
+                os.makedirs(_meta_dir, exist_ok=True)
+
+                # 5/12 PARALLEL: face profile (GPU/insightface) + audio F0 (CPU/librosa)
+                # 둘이 자원 경쟁 안 하므로 동시 실행 → ~2분 절약
+                def _build_face_profiles_task():
+                    if not os.path.isfile(_build_script):
+                        return None
+                    _n_spks = locals().get("num_speakers", None)
+                    _cmd = [LATENT_SYNC_PYTHON, _build_script,
+                            "--run-dir", _spk_run_root,
+                            "--cluster-threshold", "0.4",
+                            "--n-samples", "10"]
+                    if _n_spks:
+                        _cmd += ["--num-speakers", str(int(_n_spks))]
+                    _env = dict(os.environ)
+                    _env["LATENTSYNC_ENABLE_FACE_RECOGNITION"] = "1"
+                    print("[SpeakerProfile] building speaker_face_profiles.json (parallel) ...", flush=True)
+                    return _sub_sp.run(_cmd, env=_env,
+                                       capture_output=True, text=True, timeout=600)
+
+                def _build_audio_gender_task():
+                    if not os.path.isfile(_f0_script):
+                        return None
+                    _dubbed_dir = os.path.join(_spk_run_root, "dubbed")
+                    if not os.path.isdir(_dubbed_dir):
+                        return None
+                    _wavs = sorted(_g for _g in os.listdir(_dubbed_dir)
+                                   if _g.endswith("_dubbed.wav"))
+                    if not _wavs:
+                        return None
+                    _wav_path = os.path.join(_dubbed_dir, _wavs[0])
+                    _f0_json_local = os.path.join(_meta_dir, "audio_f0_gender.json")
+                    print(f"[SpeakerProfile] building audio_f0_gender.json on {_wavs[0]} (parallel) ...", flush=True)
+                    return _sub_sp.run([LATENT_SYNC_PYTHON, _f0_script,
+                                        "--wav", _wav_path,
+                                        "--fps", "25",
+                                        "--out", _f0_json_local],
+                                       capture_output=True, text=True, timeout=300)
+
+                with _TPE(max_workers=2) as _ex:
+                    _fut_face = _ex.submit(_build_face_profiles_task)
+                    _fut_audio = _ex.submit(_build_audio_gender_task)
+                    _rc_face = _fut_face.result()
+                    _rc_audio = _fut_audio.result()
+
+                # Process face profile result
+                _spk_json = os.path.join(_meta_dir, "speaker_face_profiles.json")
+                if _rc_face is not None and _rc_face.returncode == 0 and os.path.isfile(_spk_json):
+                    os.environ["LATENTSYNC_SPEAKER_PROFILES_PATH"] = _spk_json
+                    print(f"[SpeakerProfile] ENABLED ({_spk_json})")
+                else:
+                    rc = _rc_face.returncode if _rc_face else "(skipped)"
+                    err = (_rc_face.stderr[-200:] if _rc_face and _rc_face.stderr else "")
+                    print(f"[SpeakerProfile] face build failed: rc={rc}, stderr: {err!r}")
+                # Process audio gender result
+                _f0_json = os.path.join(_meta_dir, "audio_f0_gender.json")
+                if _rc_audio is not None and _rc_audio.returncode == 0 and os.path.isfile(_f0_json):
+                    os.environ["LATENTSYNC_AUDIO_F0_GENDER_PATH"] = _f0_json
+                    print(f"[SpeakerProfile] audio gender ENABLED ({_f0_json})")
+                else:
+                    rc = _rc_audio.returncode if _rc_audio else "(skipped)"
+                    print(f"[SpeakerProfile] F0 build failed: rc={rc}")
+                # Recognition auto-enables when SPEAKER_PROFILES_PATH set (face_detector.py)
+        except Exception as _e_sp:
+            import traceback as _tb_sp
+            print(f"[SpeakerProfile] integration failed (continuing): {_e_sp}")
+            _tb_sp.print_exc()
+        # === SPEAKER_PROFILE_PATCH:dump end ===
         result = apply_lipsync(
             dubbed_video_path=output_path,
             output_path=lipsync_out,
@@ -4150,22 +5247,55 @@ def run_pipeline(
             print(f"[Pipeline] ⚠️  립싱크 실패 — 오디오만 더빙된 원본 유지")
     # ──────────────────────────────────────────────────────────
 
-    # ─── 🎨 GFPGAN 후처리 (face quality 향상) ──────────────────
-    # 5/7: v42 setup (LoRA + smaller + steps=20 + EMA + GFPGAN 2x) = 사용자 검증 quality
-    # Color Match는 rectangle 자국 이슈로 제외 (production에서 사용 안 함)
-    if enable_lipsync and enable_postprocess:
-        gfpgan_out = output_path.replace(".mp4", "_gfpgan.mp4")
-        gfp_result = apply_gfpgan_postprocess(
-            lipsync_video_path=output_path,
-            output_path=gfpgan_out,
-            upscale=postprocess_upscale,
-            downscale_detect=postprocess_downscale_detect,  # 5/11: v3 only
-        )
-        if gfp_result:
-            print(f"[Pipeline] GFPGAN 후처리 완료: {gfp_result}")
-            output_path = gfp_result
-        else:
-            print(f"[Pipeline] ⚠️  GFPGAN 실패 — 립싱크 버전 유지")
+    # ─── 🎨 Mouth-only enhance (5/12: 사용자 요청 — 립싱크 영역만 화질 향상) ──
+    # 전체 GFPGAN 대비 빠르고 (1080p 6분 ~10분), mask 영역만 GFPGAN +
+    # Gaussian feather (σ=6) 로 마스크 자국 완화.
+    # enable_postprocess=True 이면 자동 적용 (기존 GFPGAN 대체).
+    # Lipsync succeeded iff output_path was updated to a *_lipsync.mp4
+    _lipsync_ok = enable_lipsync and output_path.endswith("_lipsync.mp4")
+    if enable_lipsync and enable_postprocess and _lipsync_ok:
+        try:
+            # Original frame source for non-mask area (BGM-mixed pre-lipsync)
+            _chunk_final = None
+            for _ck, _cd in sorted(chunk_data.items()):
+                _cf = _cd.get("chunk_final_path") if isinstance(_cd, dict) else None
+                if _cf and os.path.isfile(_cf):
+                    _chunk_final = _cf
+                    break
+            _mouth_script = "/workspace/patches/mouth_only_enhance_v3.py"
+            if _chunk_final and os.path.isfile(_mouth_script):
+                _gfpgan_py = "/opt/venv_gfpgan/bin/python"
+                _mouth_out = output_path.replace(".mp4", "_mouth_enhanced.mp4")
+                # 5/12 update: poisson_mixed (MIXED_CLONE) — 양쪽 gradient 유지.
+                # NORMAL_CLONE 은 source color 까지 덮어 lipsync 안 보이는 부작용.
+                # MIXED 는 source/target 둘 다 보존 → lipsync 가시성 + 경계 부드럽게.
+                print(f"\n--- [Mouth-only enhance] Poisson MIXED_CLONE + GFPGAN ---")
+                _rc = subprocess.run(
+                    [_gfpgan_py, _mouth_script,
+                     "--lipsync", output_path,
+                     "--original", _chunk_final,
+                     "--output", _mouth_out,
+                     "--blend-mode", "poisson_mixed",   # changed from "poisson"
+                     "--feather-sigma", "3",
+                     "--color-match",
+                     "--temporal-smooth", "5",
+                     "--face-diag-min-ratio", "0.10",
+                     "--mask-erode-px", "2",
+                     "--no-nvenc",
+                     "--mux-audio-from", output_path],
+                    capture_output=True, text=True, timeout=1800,
+                )
+                if _rc.returncode == 0 and os.path.isfile(_mouth_out):
+                    print(f"[Mouth-Enhance] 완료: {_mouth_out}")
+                    output_path = _mouth_out
+                else:
+                    print(f"[Mouth-Enhance] ⚠️  실패 (rc={_rc.returncode}) — 립싱크 버전 유지")
+                    if _rc.stderr:
+                        print(f"  stderr 마지막 200: {_rc.stderr[-200:]!r}")
+            else:
+                print(f"[Mouth-Enhance] skip (script/chunk_final 없음)")
+        except Exception as _e_mouth:
+            print(f"[Mouth-Enhance] 예외 (계속 진행): {_e_mouth}")
     # ──────────────────────────────────────────────────────────
 
     # JSON 리포트 저장
@@ -4240,12 +5370,15 @@ if __name__ == "__main__":
     parser.add_argument("--lipsync-teacache", default=0.1, type=float,
                         dest="lipsync_teacache",
                         help="TeaCache rel_l1 threshold (기본 0.1, 0=off). UNet step 50%% skip")
+    # 5/12: 사용자 요청 — "정면만 lipsync 적용". 측면 (yaw>0.35) 은 학습 분포
+    # 밖이라 입만 따로 움직이는 artifact 생김 → 다시 enable.
+    # ASD bbox + Profile + Audio gender 와 함께 작동 (중복 방어).
     parser.add_argument("--lipsync-profile-threshold", default=0.35, type=float,
                         dest="lipsync_profile_threshold",
-                        help="측면 face skip yaw threshold (기본 0.35, 약 45도. 0=off)")
-    parser.add_argument("--lipsync-face-min-ratio", default=0.10, type=float,
+                        help="측면 face skip yaw threshold (기본 0.35, 0=off)")
+    parser.add_argument("--lipsync-face-min-ratio", default=0.0, type=float,
                         dest="lipsync_face_diag_min_ratio",
-                        help="작은 face skip threshold (face diag / frame diag, 기본 0.10. 0=off)")
+                        help="작은 face skip threshold (기본 0=off, ASD 통합 후 비활성)")
     parser.add_argument("--lipsync-chunk-seconds", default=0, type=int,
                         dest="lipsync_chunk_seconds",
                         help=">0 시 chunked inference (장편 영상 메모리 절약, 권장 10)")

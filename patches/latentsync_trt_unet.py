@@ -49,14 +49,17 @@ class TRTUNet(nn.Module):
     """Drop-in TRT replacement for UNet3DConditionModel.forward."""
 
     # static shapes baked into the engine
+    # === ENGINE_T_AUTO_PATCH (5/12): auto-detect T from filename or env var ===
+    # Default T=16 (legacy unet_fp16.trt). T=24 if path/env says so.
     ENGINE_B: int = 2
     ENGINE_C_IN: int = 13
-    ENGINE_T: int = 16
+    ENGINE_T: int = 16   # overridden by __init__ from engine introspection
     ENGINE_H: int = 64
     ENGINE_W: int = 64
     ENGINE_C_OUT: int = 4
     ENGINE_AUDIO_S: int = 50
     ENGINE_AUDIO_D: int = 384
+    # === ENGINE_T_AUTO_PATCH end ===
 
     def __init__(self, engine_path: str, original_unet: Optional[nn.Module] = None):
         super().__init__()
@@ -75,6 +78,16 @@ class TRTUNet(nn.Module):
 
         self._debug = os.environ.get("LATENTSYNC_TRT_DEBUG", "0") == "1"
         self._engine_path = engine_path
+
+        # === ENGINE_T_AUTO_PATCH: env var override before engine load ===
+        _env_t = os.environ.get("LATENTSYNC_TRT_T")
+        if _env_t and _env_t.isdigit():
+            self.ENGINE_T = int(_env_t)
+            print(f"[TRTUNet] ENGINE_T set to {self.ENGINE_T} via env var", flush=True)
+        elif "nf24" in engine_path:
+            self.ENGINE_T = 24
+            print(f"[TRTUNet] ENGINE_T=24 (detected from path)", flush=True)
+        # === ENGINE_T_AUTO_PATCH end ===
 
         # Borrow attributes that LipsyncPipeline reads
         if original_unet is not None:

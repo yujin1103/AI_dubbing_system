@@ -142,3 +142,43 @@ media/*.xml
 _tmp_*.md
 _tmp_*.txt
 count_chars.py
+
+# ========================
+# 19. 로컬 백업 파일 (pre-edit snapshots)
+# ========================
+*.pre_*
+*.before_resume
+*.before_resume[0-9]
+*.bak_*
+patches/_*_orig.py
+patches/*_backup.py
+patches/*.v[0-9]_backup.py
+scripts/*.bak_*
+
+# ========================
+# 20. 서드파티 clone / 로컬 데이터 디렉토리
+# ========================
+CosyVoice/
+backup/
+checkpoints/
+
+# ========================
+# 21. 테스트 출력 영상 (기존 test_*.mp4 패턴 보완)
+# ========================
+test[1-9]_*.mp4
+test[1-9][0-9]_*.mp4
+
+# ========================
+# 22. tmp/ — 대부분 임시 실험. 운영 가치 있는 것만 예외로 commit.
+# ========================
+tmp/
+!tmp/run_test4_v*.sh
+!tmp/eval_*.py
+!tmp/.gitkeep
+
+# ========================
+# 23. media/ — model_cache 등 큰 폴더는 위에서 ignore됨. gt/는 commit OK.
+# ========================
+media/*
+!media/gt/
+!media/gt/**
