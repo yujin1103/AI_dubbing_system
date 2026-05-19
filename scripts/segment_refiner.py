@@ -325,6 +325,355 @@ def reassign_speakers_by_ecapa(
     return refined_segments
 
 
+def merge_speakers_by_centroid_distance(
+    segments: List[Any],
+    vocals_path: str,
+    ecapa_model,
+    min_seg_dur: float = 0.5,
+    spk_face_centroid: Optional[Dict[str, "np.ndarray"]] = None,
+    wespeaker_model=None,
+    spk_gender: Optional[Dict[str, str]] = None,
+    spk_shape_feats: Optional[Dict[str, "np.ndarray"]] = None,
+) -> List[Any]:
+    """SPK centroid 단위 voice cluster — fusion이 자동 detect한 화자들의 voice centroid를
+    cosine distance 기반으로 자동 통합 (similar voice = 같은 사람으로 합침).
+
+    v87+: 옵션으로 face centroid (spk_face_centroid)도 함께 사용. face cos sim 높고
+    voice distance 적절히 낮으면 merge — voice만으론 구분 어려운 케이스 해결.
+
+    Env var:
+      LATENTSYNC_MERGE_SPK_BY_VOICE=1 → 활성
+      LATENTSYNC_MERGE_SPK_VOICE_DIST (default 0.55) — voice cosine distance 임계
+      LATENTSYNC_MERGE_SPK_FACE_SIM (default 0.0) — face cos sim 보조 임계
+        (0.0 = face 정보 무시, 양수면 voice dist < 별도 임계 + face sim ≥ 이 값)
+      LATENTSYNC_MERGE_SPK_VOICE_DIST_FACE (default 0.85) — face 통과 시 사용할 voice dist
+    """
+    if ecapa_model is None or not vocals_path or not segments:
+        return segments
+    import os as _os
+    if _os.environ.get("LATENTSYNC_MERGE_SPK_BY_VOICE", "0") != "1":
+        return segments
+    dist_threshold = float(_os.environ.get("LATENTSYNC_MERGE_SPK_VOICE_DIST", "0.55"))
+    face_sim_threshold = float(_os.environ.get("LATENTSYNC_MERGE_SPK_FACE_SIM", "0.0"))
+    dist_threshold_face = float(_os.environ.get("LATENTSYNC_MERGE_SPK_VOICE_DIST_FACE", "0.85"))
+
+    try:
+        import soundfile as sf
+        audio, sr = sf.read(vocals_path)
+    except Exception as e:
+        print(f"[SPKMerge] vocals 로드 실패: {e}")
+        return segments
+    if audio.ndim > 1:
+        audio = np.mean(audio, axis=1)
+
+    # SPK별 segment 임베딩 모음 (ECAPA + wespeaker)
+    from collections import defaultdict
+    spk_embs = defaultdict(list)
+    spk_wespeaker_embs = defaultdict(list)
+    # wespeaker는 wav 파일로 직접 호출하므로 임시 chunk 저장
+    import tempfile, soundfile as _sf, os as _os2
+    for seg in segments:
+        dur = seg.end - seg.start
+        if dur < min_seg_dur:
+            continue
+        chunk = audio[int(seg.start * sr):min(int(seg.end * sr), len(audio))]
+        emb = _compute_ecapa_emb(chunk, sr, ecapa_model)
+        if emb is not None:
+            spk_embs[seg.speaker].append(emb)
+        # wespeaker embedding (옵션)
+        if wespeaker_model is not None:
+            try:
+                with tempfile.NamedTemporaryFile(suffix=".wav", delete=False) as tmp:
+                    _sf.write(tmp.name, chunk.astype(np.float32), sr)
+                    tmp_path = tmp.name
+                ws_emb = wespeaker_model.extract_embedding(tmp_path)
+                _os2.unlink(tmp_path)
+                if ws_emb is not None:
+                    ws_arr = np.asarray(ws_emb, dtype=np.float32).flatten()
+                    spk_wespeaker_embs[seg.speaker].append(ws_arr)
+            except Exception as _we:
+                pass
+
+    if len(spk_embs) < 2:
+        print(f"[SPKMerge] only {len(spk_embs)} SPKs, no merge")
+        return segments
+
+    # 각 SPK centroid (L2 normalized mean)
+    spk_centroids = {}
+    for spk, embs_list in spk_embs.items():
+        c = np.mean(np.stack(embs_list), axis=0)
+        c = c / max(np.linalg.norm(c), 1e-9)
+        spk_centroids[spk] = c
+
+    # wespeaker centroid (옵션)
+    spk_ws_centroids = {}
+    for spk, embs_list in spk_wespeaker_embs.items():
+        if not embs_list:
+            continue
+        c = np.mean(np.stack(embs_list), axis=0)
+        c = c / max(np.linalg.norm(c), 1e-9)
+        spk_ws_centroids[spk] = c
+    if spk_ws_centroids:
+        print(f"[SPKMerge] wespeaker centroid 계산: {list(spk_ws_centroids.keys())}")
+
+    # pairwise distance matrix
+    spks = sorted(spk_centroids.keys())
+    n = len(spks)
+    print(f"[SPKMerge] {n} SPKs detected, computing pairwise distance...")
+    dist_pairs = []
+    for i in range(n):
+        for j in range(i+1, n):
+            d = 1.0 - float(np.dot(spk_centroids[spks[i]], spk_centroids[spks[j]]))
+            dist_pairs.append((d, spks[i], spks[j]))
+    dist_pairs.sort()
+    for d, a, b in dist_pairs[:10]:
+        print(f"  {a} ↔ {b}: dist={d:.3f}")
+
+    # union-find로 distance < threshold인 SPK 합침
+    parent = {spk: spk for spk in spks}
+    def find(x):
+        while parent[x] != x:
+            parent[x] = parent[parent[x]]
+            x = parent[x]
+        return x
+    def union(a, b):
+        ra, rb = find(a), find(b)
+        if ra != rb:
+            # 더 많은 segment 가진 SPK가 canonical (라벨 보존)
+            n_a = len(spk_embs[a])
+            n_b = len(spk_embs[b])
+            if n_a >= n_b:
+                parent[rb] = ra
+            else:
+                parent[ra] = rb
+
+    # wespeaker dist 계산 (있으면)
+    ws_dist_map = {}
+    if spk_ws_centroids:
+        for d, a, b in dist_pairs:
+            ca = spk_ws_centroids.get(a)
+            cb = spk_ws_centroids.get(b)
+            if ca is not None and cb is not None:
+                ws_dist_map[(a, b)] = 1.0 - float(np.dot(ca, cb))
+                ws_dist_map[(b, a)] = ws_dist_map[(a, b)]
+        if ws_dist_map:
+            print("[SPKMerge] wespeaker pairwise:")
+            for d, a, b in dist_pairs[:10]:
+                wd = ws_dist_map.get((a, b))
+                if wd is not None:
+                    print(f"  {a} ↔ {b}: ecapa_dist={d:.3f}, wespeaker_dist={wd:.3f}, avg={(d+wd)/2:.3f}")
+
+    # combined distance threshold (env)
+    ws_combine = float(_os.environ.get("LATENTSYNC_MERGE_SPK_COMBINED_DIST", "0.0"))
+
+    n_merged = 0
+    n_blocked_gender = 0
+    for d, a, b in dist_pairs:
+        merge = False
+        face_sim = None
+        ws_dist = ws_dist_map.get((a, b)) if ws_dist_map else None
+        combined = (d + ws_dist) / 2 if ws_dist is not None else d
+        if d < dist_threshold:
+            merge = True
+        elif ws_combine > 0 and ws_dist is not None and combined < ws_combine:
+            merge = True
+        elif face_sim_threshold > 0 and spk_face_centroid is not None and d < dist_threshold_face:
+            ca = spk_face_centroid.get(a)
+            cb = spk_face_centroid.get(b)
+            if ca is not None and cb is not None:
+                face_sim = float(np.dot(ca, cb))
+                if face_sim >= face_sim_threshold:
+                    merge = True
+        # v114+: gender 다른 SPK는 merge 금지 (강한 신호)
+        if merge and spk_gender:
+            ga = spk_gender.get(a)
+            gb = spk_gender.get(b)
+            if ga and gb and ga != gb:
+                merge = False
+                n_blocked_gender += 1
+                print(f"[SPKMerge] {a}({ga}) ↔ {b}({gb}): merge blocked by gender mismatch", flush=True)
+        # v120+: face shape feature 차이가 큰 SPK는 merge 금지
+        if merge and spk_shape_feats:
+            sa = spk_shape_feats.get(a)
+            sb = spk_shape_feats.get(b)
+            if sa is not None and sb is not None:
+                shape_dist = float(np.linalg.norm(sa - sb))
+                shape_block_th = float(_os.environ.get("LATENTSYNC_MERGE_SPK_SHAPE_DIST", "0.10"))
+                if shape_dist >= shape_block_th:
+                    merge = False
+                    print(f"[SPKMerge] {a} ↔ {b}: merge blocked by shape mismatch (dist={shape_dist:.3f} ≥ {shape_block_th})", flush=True)
+        if merge and find(a) != find(b):
+            union(a, b)
+            tag = f"voice_dist={d:.3f}"
+            if ws_dist is not None:
+                tag += f", ws_dist={ws_dist:.3f}, combined={combined:.3f}"
+            if face_sim is not None:
+                tag += f", face_sim={face_sim:.3f}"
+            print(f"[SPKMerge] {a} + {b} ({tag}) → merge")
+            n_merged += 1
+
+    # 각 SPK → canonical (root) 매핑
+    spk_to_canon = {spk: find(spk) for spk in spks}
+    n_unique_before = len(spks)
+    n_unique_after = len(set(spk_to_canon.values()))
+    print(f"[SPKMerge] {n_unique_before} → {n_unique_after} SPKs (threshold={dist_threshold}, {n_merged} merges)")
+    print(f"[SPKMerge debug] mapping: {spk_to_canon}")
+
+    # 적용 — segments 안의 모든 speaker 값 변경 (없는 경우는 그대로)
+    changed = 0
+    for seg in segments:
+        sp = getattr(seg, "speaker", None)
+        if sp is None:
+            continue
+        canon = spk_to_canon.get(sp, sp)
+        if canon != sp:
+            seg.speaker = canon
+            changed += 1
+    print(f"[SPKMerge debug] {changed}/{len(segments)} segments relabeled")
+
+    return segments
+
+
+def force_voice_cluster_all_segments(
+    segments: List[Any],
+    vocals_path: str,
+    ecapa_model,
+    min_seg_dur: float = 0.5,
+) -> List[Any]:
+    """모든 segment의 ECAPA 임베딩 → AgglomerativeClustering (distance threshold 기반) → 자동 라벨 통합.
+
+    Purpose: fusion + face_id가 같은 사람을 다른 시간대에 다른 SPK로 잡는 문제 해결.
+    voice 신호만으로 자동 재라벨링. 화자 수 강제 안 함 (영상마다 다른 화자 수 자동 처리).
+
+    Env var:
+      LATENTSYNC_FORCE_VOICE_CLUSTER=1 → 활성
+      LATENTSYNC_VOICE_CLUSTER_DIST (default 0.35) — cosine distance threshold
+        값이 작을수록 cluster 더 많이 (보수), 클수록 적게 (적극 합침).
+    """
+    if ecapa_model is None or not vocals_path:
+        return segments
+    if not segments:
+        return segments
+
+    import os as _os
+    if _os.environ.get("LATENTSYNC_FORCE_VOICE_CLUSTER", "0") != "1":
+        return segments
+    dist_threshold = float(_os.environ.get("LATENTSYNC_VOICE_CLUSTER_DIST", "0.35"))
+
+    try:
+        import soundfile as sf
+        audio, sr = sf.read(vocals_path)
+    except Exception as e:
+        print(f"[VoiceCluster] vocals 로드 실패: {e}")
+        return segments
+    if audio.ndim > 1:
+        audio = np.mean(audio, axis=1)
+
+    # 각 segment의 ECAPA 임베딩 추출
+    embs = []
+    valid_idx = []
+    for i, seg in enumerate(segments):
+        dur = seg.end - seg.start
+        if dur < min_seg_dur:
+            embs.append(None)
+            continue
+        s_idx = int(seg.start * sr)
+        e_idx = min(int(seg.end * sr), len(audio))
+        chunk = audio[s_idx:e_idx]
+        emb = _compute_ecapa_emb(chunk, sr, ecapa_model)
+        embs.append(emb)
+        if emb is not None:
+            valid_idx.append(i)
+
+    if len(valid_idx) < 2:
+        print(f"[VoiceCluster] valid embeddings {len(valid_idx)} too few, skip")
+        return segments
+
+    valid_embs = np.array([embs[i] for i in valid_idx])
+    # L2 normalize (cosine similarity = dot product)
+    norms = np.linalg.norm(valid_embs, axis=1, keepdims=True)
+    norms = np.maximum(norms, 1e-9)
+    valid_embs = valid_embs / norms
+
+    try:
+        from sklearn.cluster import AgglomerativeClustering
+        # distance threshold 기반 자동 cluster 수 결정
+        clusterer = AgglomerativeClustering(
+            n_clusters=None,
+            distance_threshold=dist_threshold,
+            metric="cosine",
+            linkage="average",
+        )
+        labels = clusterer.fit_predict(valid_embs)
+        n_clusters = len(set(labels))
+        print(f"[VoiceCluster] distance_threshold={dist_threshold} → {n_clusters} clusters (자동 결정)")
+    except Exception as e:
+        print(f"[VoiceCluster] clustering 실패: {e}")
+        return segments
+
+    # 각 cluster의 dominant 기존 SPK 라벨을 canonical로
+    from collections import Counter, defaultdict
+    cluster_old_spks = defaultdict(Counter)
+    for i_valid, label in enumerate(labels):
+        seg_idx = valid_idx[i_valid]
+        old_spk = segments[seg_idx].speaker
+        cluster_old_spks[label][old_spk] += 1
+
+    # cluster → canonical SPEAKER_XX 라벨 매핑 (dominant 라벨)
+    # 가장 큰 cluster부터 우선권 → smaller cluster가 같은 SPK 못 가져가도록
+    sorted_clusters = sorted(cluster_old_spks.items(), key=lambda x: -sum(x[1].values()))
+    cluster_to_spk = {}
+    used_spks = set()
+    next_idx = 0
+    for cluster_id, spk_counts in sorted_clusters:
+        assigned = False
+        for spk, _ in spk_counts.most_common():
+            if spk not in used_spks:
+                cluster_to_spk[cluster_id] = spk
+                used_spks.add(spk)
+                assigned = True
+                break
+        if not assigned:
+            # 새 라벨 부여 (충돌 회피)
+            while f"SPEAKER_{next_idx:02d}" in used_spks:
+                next_idx += 1
+            new_label = f"SPEAKER_{next_idx:02d}"
+            cluster_to_spk[cluster_id] = new_label
+            used_spks.add(new_label)
+            next_idx += 1
+
+    # 각 valid segment에 새 라벨 부여
+    n_changed = 0
+    for i_valid, label in enumerate(labels):
+        seg_idx = valid_idx[i_valid]
+        new_spk = cluster_to_spk[label]
+        old_spk = segments[seg_idx].speaker
+        if new_spk != old_spk:
+            segments[seg_idx].speaker = new_spk
+            n_changed += 1
+            print(f"[VoiceCluster] [{segments[seg_idx].start:.2f}~{segments[seg_idx].end:.2f}] {old_spk} → {new_spk}")
+
+    # invalid (짧은 segment) → 인접 segment 라벨 따라감
+    for i, emb in enumerate(embs):
+        if emb is not None:
+            continue
+        # 가장 가까운 valid segment 라벨
+        best_d = float("inf")
+        best_spk = segments[i].speaker
+        mid = (segments[i].start + segments[i].end) / 2
+        for vi in valid_idx:
+            v_mid = (segments[vi].start + segments[vi].end) / 2
+            d = abs(v_mid - mid)
+            if d < best_d:
+                best_d = d
+                best_spk = segments[vi].speaker
+        if best_spk != segments[i].speaker:
+            segments[i].speaker = best_spk
+
+    print(f"[VoiceCluster] {n_changed}/{len(valid_idx)} segments 재라벨 (auto n={n_clusters}, dist_th={dist_threshold})")
+    return segments
+
+
 def refine_segments(
     segments: List[Any],
     asd_result: Optional[Dict] = None,
@@ -332,6 +681,10 @@ def refine_segments(
     speaker_centroids: Optional[Dict[str, np.ndarray]] = None,
     vocals_path: Optional[str] = None,
     ecapa_model=None,
+    spk_face_centroid: Optional[Dict[str, np.ndarray]] = None,
+    wespeaker_model=None,
+    spk_gender: Optional[Dict[str, str]] = None,
+    spk_shape_feats: Optional[Dict[str, np.ndarray]] = None,
 ) -> List[Any]:
     """전체 segment list refinement.
 
@@ -396,11 +749,36 @@ def refine_segments(
 
     # ECAPA sliding window로 audio-blind 화자 변화 감지 + split
     # (DiariZen이 turn을 못 만든 빠른 화자 교차 대응)
-    if speaker_centroids and ecapa_model is not None and vocals_path:
+    # LATENTSYNC_SLIDING_SPLIT_OFF=1 → 비활성 (v66+: over-fragmented 회피)
+    import os as _os
+    _slide_off = _os.environ.get("LATENTSYNC_SLIDING_SPLIT_OFF", "0") == "1"
+    if not _slide_off and speaker_centroids and ecapa_model is not None and vocals_path:
         final = sliding_split_all(final, vocals_path, speaker_centroids, ecapa_model)
+    elif _slide_off:
+        print("[Refine] ECAPA sliding split 비활성화 (LATENTSYNC_SLIDING_SPLIT_OFF=1)", flush=True)
 
     # 너무 짧은 outlier segment 흡수 (ECAPA 신뢰도 낮음)
     final = _absorb_short_outliers(final)
+
+    # v71+: ECAPA voice-based 자동 재라벨링 (distance threshold 기반, 화자 수 자동 결정)
+    if ecapa_model is not None and vocals_path:
+        final = force_voice_cluster_all_segments(
+            final, vocals_path, ecapa_model,
+        )
+
+    # v83+: SPK centroid 단위 자동 통합 (segment cluster보다 robust)
+    # v87+: spk_face_centroid 전달 시 face cos sim 보조 조건 활성화
+    # v98+: wespeaker_model 전달 시 ECAPA+wespeaker combined distance 활성화
+    # v114+: spk_gender 전달 시 다른 gender SPK는 merge 금지
+    # v120+: spk_shape_feats 전달 시 shape 차이 큰 SPK는 merge 금지
+    if ecapa_model is not None and vocals_path:
+        final = merge_speakers_by_centroid_distance(
+            final, vocals_path, ecapa_model,
+            spk_face_centroid=spk_face_centroid,
+            wespeaker_model=wespeaker_model,
+            spk_gender=spk_gender,
+            spk_shape_feats=spk_shape_feats,
+        )
 
     return final
 
@@ -431,6 +809,10 @@ def split_by_ecapa_sliding(
     min_sub_dur: float = 0.5,
     min_seg_dur: float = 1.5,
 ) -> List[Any]:
+    import os as _os
+    min_consecutive = int(_os.environ.get("LATENTSYNC_SLIDING_MIN_CONSEC", str(min_consecutive)))
+    min_sub_dur = float(_os.environ.get("LATENTSYNC_SLIDING_MIN_SUB_DUR", str(min_sub_dur)))
+    min_seg_dur = float(_os.environ.get("LATENTSYNC_SLIDING_MIN_SEG_DUR", str(min_seg_dur)))
     """segment 안에서 ECAPA sliding window로 화자 변화 감지 → split.
 
     DiariZen이 turn을 못 만든 빠른 화자 교차에 대응. ASD-blind 케이스 보완.

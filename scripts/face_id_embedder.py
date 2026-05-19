@@ -45,12 +45,21 @@ def _get_face_app(ctx_id: int = 0):
     from insightface.app import FaceAnalysis
     det_size = int(os.environ.get("LATENTSYNC_FACE_DET_SIZE", "320"))
     det_thresh = float(os.environ.get("LATENTSYNC_FACE_DET_THRESH", "0.30"))
+    # v113+: face encoder upgrade (default buffalo_l, antelopev2=R100 더 정밀)
+    model_name = os.environ.get("LATENTSYNC_FACE_MODEL", "buffalo_l")
+    # v114+: gender/age 모델 추가 (SPK merge 강화 신호)
+    use_genderage = os.environ.get("LATENTSYNC_FACE_GENDERAGE", "1") == "1"
+    allowed_modules = ["detection", "recognition"]
+    if use_genderage:
+        allowed_modules.append("genderage")
     providers = ['CUDAExecutionProvider', 'CPUExecutionProvider']
     _face_app = FaceAnalysis(
-        name='buffalo_l',
+        name=model_name,
         providers=providers,
+        allowed_modules=allowed_modules,
     )
     _face_app.prepare(ctx_id=ctx_id, det_size=(det_size, det_size), det_thresh=det_thresh)
+    print(f"[FaceID] InsightFace model: {model_name} (modules: {allowed_modules})", flush=True)
     return _face_app
 
 
@@ -60,6 +69,67 @@ def extract_face_id_embedding(image_bgr: np.ndarray) -> Optional[np.ndarray]:
     Returns:
         np.ndarray (512-dim, L2-normalized) 또는 None
     """
+    res = extract_face_id_embedding_with_gender(image_bgr)
+    return res[0] if res else None
+
+
+def _compute_shape_features(kps) -> Optional[np.ndarray]:
+    """InsightFace 5-point keypoints에서 pose-invariant face shape ratios.
+
+    kps: (5, 2) array — [eye_L, eye_R, nose, mouth_L, mouth_R]
+    Returns: 5-dim feature vector or None if invalid.
+
+    v120+: 동일 gender + age 화자 분리용 face geometry signal.
+    All ratios normalized by inter-eye distance → 2D similarity invariant.
+    """
+    if kps is None:
+        return None
+    try:
+        kps = np.asarray(kps, dtype=np.float32)
+        if kps.shape != (5, 2):
+            return None
+        eye_l, eye_r, nose, mouth_l, mouth_r = kps[0], kps[1], kps[2], kps[3], kps[4]
+        eye_dist = float(np.linalg.norm(eye_r - eye_l))
+        if eye_dist < 1e-3:
+            return None
+        eye_center = (eye_l + eye_r) / 2.0
+        mouth_center = (mouth_l + mouth_r) / 2.0
+        mouth_width = float(np.linalg.norm(mouth_r - mouth_l))
+        eye_to_mouth = float(np.linalg.norm(mouth_center - eye_center))
+        eye_to_nose = float(np.linalg.norm(nose - eye_center))
+        nose_to_mouth = float(np.linalg.norm(mouth_center - nose))
+        # nose lateral offset from eye-mouth midline (face symmetry signal)
+        mid_em = (eye_center + mouth_center) / 2.0
+        face_axis = mouth_center - eye_center
+        axis_len = float(np.linalg.norm(face_axis)) + 1e-6
+        face_axis_n = face_axis / axis_len
+        # perpendicular distance nose to face axis
+        rel_nose = nose - eye_center
+        proj = float(np.dot(rel_nose, face_axis_n))
+        perp = float(np.linalg.norm(rel_nose - proj * face_axis_n))
+        feats = np.array([
+            mouth_width / eye_dist,           # mouth width ratio
+            eye_to_mouth / eye_dist,          # face length ratio
+            eye_to_nose / eye_dist,           # nose top-position
+            nose_to_mouth / eye_dist,         # nose-to-mouth length
+            perp / eye_dist,                  # nose lateral offset (asymmetry)
+        ], dtype=np.float32)
+        # filter NaN/inf
+        if not np.all(np.isfinite(feats)):
+            return None
+        return feats
+    except Exception:
+        return None
+
+
+def extract_face_id_embedding_with_gender(image_bgr: np.ndarray):
+    """단일 이미지에서 가장 큰 얼굴의 임베딩 + gender + age + shape feats.
+
+    Returns: (embedding, gender_str, age, shape_feats) or None
+        gender_str: 'M' or 'F' (genderage 모델 활성 시), None (없으면)
+        age: estimated age (int) or None
+        shape_feats: 5-dim np.ndarray (mouth/face geometry ratios) or None
+    """
     if image_bgr is None or image_bgr.size == 0:
         return None
     try:
@@ -67,13 +137,24 @@ def extract_face_id_embedding(image_bgr: np.ndarray) -> Optional[np.ndarray]:
         faces = app.get(image_bgr)
         if not faces:
             return None
-        # bbox 면적 기준 가장 큰 얼굴
         def area(f):
             x1, y1, x2, y2 = f.bbox
             return max(0, (x2 - x1) * (y2 - y1))
         biggest = max(faces, key=area)
-        emb = biggest.normed_embedding  # 이미 L2-normalized
-        return emb.astype(np.float32)
+        emb = biggest.normed_embedding.astype(np.float32)
+        gender = None
+        if hasattr(biggest, "sex"):
+            gender = biggest.sex
+        elif hasattr(biggest, "gender") and biggest.gender is not None:
+            gender = "F" if biggest.gender == 0 else "M"
+        age = None
+        if hasattr(biggest, "age") and biggest.age is not None:
+            age = int(biggest.age)
+        # v120+: face shape ratios from kps (5-point)
+        shape_feats = None
+        if hasattr(biggest, "kps") and biggest.kps is not None:
+            shape_feats = _compute_shape_features(biggest.kps)
+        return emb, gender, age, shape_feats
     except Exception as e:
         print(f"[FaceID] embedding 추출 실패: {e}")
         return None
@@ -126,6 +207,9 @@ def compute_track_face_embeddings(
     )
 
     track_embeddings: Dict[int, np.ndarray] = {}
+    track_genders: Dict[int, str] = {}
+    track_ages: Dict[int, int] = {}
+    track_shape_feats: Dict[int, np.ndarray] = {}
     n_total_extracts = 0
     n_failed_extracts = 0
 
@@ -136,7 +220,6 @@ def compute_track_face_embeddings(
             continue
 
         n = len(frames)
-        # 균등 sampling (시작/중간/끝 포함)
         if n <= n_samples_per_track:
             sample_indices = list(range(n))
         else:
@@ -144,6 +227,9 @@ def compute_track_face_embeddings(
             sample_indices = [int(round(i * step)) for i in range(n_samples_per_track)]
 
         embs: List[np.ndarray] = []
+        gender_votes = []
+        age_votes = []
+        shape_votes: List[np.ndarray] = []
         for si in sample_indices:
             frame_idx = frames[si]
             bbox = bboxes[si]
@@ -163,11 +249,18 @@ def compute_track_face_embeddings(
                 continue
             crop = frame[y1i:y2i, x1i:x2i]
             n_total_extracts += 1
-            emb = extract_face_id_embedding(crop)
-            if emb is None:
+            result = extract_face_id_embedding_with_gender(crop)
+            if result is None:
                 n_failed_extracts += 1
                 continue
+            emb, gender, age, shape_feats = result
             embs.append(emb)
+            if gender:
+                gender_votes.append(gender)
+            if age is not None:
+                age_votes.append(age)
+            if shape_feats is not None:
+                shape_votes.append(shape_feats)
 
         if embs:
             mean_emb = np.mean(np.stack(embs, axis=0), axis=0)
@@ -175,13 +268,48 @@ def compute_track_face_embeddings(
             if norm > 1e-8:
                 mean_emb = mean_emb / norm
             track_embeddings[tidx] = mean_emb.astype(np.float32)
+            if gender_votes:
+                from collections import Counter as _C
+                track_genders[tidx] = _C(gender_votes).most_common(1)[0][0]
+            if age_votes:
+                track_ages[tidx] = int(round(sum(age_votes) / len(age_votes)))
+            if shape_votes:
+                track_shape_feats[tidx] = np.mean(np.stack(shape_votes, axis=0), axis=0).astype(np.float32)
 
     cap.release()
     if verbose:
         n_tracks_with_emb = len(track_embeddings)
         print(f"[FaceID] {n_tracks_with_emb}/{len(tracks)} face tracks 임베딩 추출 "
-              f"(samples {n_total_extracts}, fail {n_failed_extracts})")
+              f"(samples {n_total_extracts}, fail {n_failed_extracts}, gender={len(track_genders)}, shape={len(track_shape_feats)})")
+    # 사이드 효과: gender/age/shape info를 module-level global에 저장
+    global _last_track_genders, _last_track_ages, _last_track_shape_feats
+    _last_track_genders = track_genders
+    _last_track_ages = track_ages
+    _last_track_shape_feats = track_shape_feats
+    if verbose and track_ages:
+        ages_summary = sorted(track_ages.values())
+        print(f"[FaceID] track ages range: {min(ages_summary)} ~ {max(ages_summary)} (median={ages_summary[len(ages_summary)//2]})", flush=True)
     return track_embeddings
+
+
+_last_track_genders: Dict[int, str] = {}
+_last_track_ages: Dict[int, int] = {}
+_last_track_shape_feats: Dict[int, np.ndarray] = {}
+
+
+def get_last_track_genders() -> Dict[int, str]:
+    """compute_track_face_embeddings 호출 후 track별 gender 가져오기."""
+    return dict(_last_track_genders)
+
+
+def get_last_track_shape_feats() -> Dict[int, np.ndarray]:
+    """compute_track_face_embeddings 호출 후 track별 shape feature 가져오기."""
+    return dict(_last_track_shape_feats)
+
+
+def get_last_track_ages() -> Dict[int, int]:
+    """compute_track_face_embeddings 호출 후 track별 age 가져오기."""
+    return dict(_last_track_ages)
 
 
 def cluster_tracks_by_face(
@@ -368,6 +496,139 @@ def apply_speaker_remap_to_diarization(diarization, speaker_remap: Dict[str, str
     return new_anno
 
 
+def absorb_spurious_speakers(
+    audio_segments,
+    asd_result,
+    track_embeddings,
+    speaker_face_count,
+    max_n_segments: int = 1,
+    max_total_dur: float = 3.0,
+    similarity_threshold: float = 0.30,
+    verbose: bool = True,
+):
+    """1-turn spurious speaker (n_segs ≤ max_n_segments + total_dur < max_total_dur)
+    → 그 segment 시간대의 face embedding과 가장 가까운 *다른* speaker로 reassign.
+
+    환경변수:
+        LATENTSYNC_SPURIOUS_MAX_SEGS (default 1)
+        LATENTSYNC_SPURIOUS_MAX_DUR  (default 3.0)
+        LATENTSYNC_SPURIOUS_SIM      (default 0.30) 최소 face cosine sim
+    """
+    max_n_segments = int(os.environ.get(
+        "LATENTSYNC_SPURIOUS_MAX_SEGS", str(max_n_segments)
+    ))
+    max_total_dur = float(os.environ.get(
+        "LATENTSYNC_SPURIOUS_MAX_DUR", str(max_total_dur)
+    ))
+    sim_thr = float(os.environ.get(
+        "LATENTSYNC_SPURIOUS_SIM", str(similarity_threshold)
+    ))
+
+    if not track_embeddings or not speaker_face_count:
+        return []
+    n_frames = asd_result.get("n_frames", 0)
+    fps = asd_result.get("fps", 25.0)
+    tracks = asd_result.get("tracks", [])
+    if n_frames <= 0 or not tracks:
+        return []
+
+    from collections import defaultdict
+    spk_segs = defaultdict(list)
+    for s in audio_segments:
+        spk_segs[s[2]].append((s[0], s[1]))
+
+    spurious_spks = []
+    for spk, segs in spk_segs.items():
+        if len(segs) > max_n_segments:
+            continue
+        total_dur = sum(e - s for s, e in segs)
+        if total_dur < max_total_dur:
+            spurious_spks.append(spk)
+    if not spurious_spks:
+        if verbose:
+            print(f"[Spurious] no spurious speakers (max_segs={max_n_segments}, max_dur={max_total_dur}s)")
+        return []
+    if verbose:
+        print(f"[Spurious] candidates: {spurious_spks}")
+
+    # speaker별 face embedding mean (spurious 제외)
+    speaker_ref_emb = {}
+    for spk, face_map in speaker_face_count.items():
+        if spk in spurious_spks:
+            continue
+        weighted, weights = [], []
+        for face_idx, n_f in face_map.items():
+            emb = track_embeddings.get(face_idx)
+            if emb is None:
+                continue
+            weighted.append(emb * n_f)
+            weights.append(n_f)
+        if not weighted:
+            continue
+        ref = np.sum(weighted, axis=0) / max(1, sum(weights))
+        nrm = float(np.linalg.norm(ref))
+        if nrm > 1e-8:
+            ref = ref / nrm
+        speaker_ref_emb[spk] = ref.astype(np.float32)
+
+    if not speaker_ref_emb:
+        if verbose:
+            print(f"[Spurious] no non-spurious speaker references → skip")
+        return []
+
+    face_at_frame = [[] for _ in range(n_frames)]
+    for tidx, t in enumerate(tracks):
+        if tidx not in track_embeddings:
+            continue
+        for f in t.get("frames", []):
+            if 0 <= f < n_frames:
+                face_at_frame[f].append(tidx)
+
+    reassignments = []
+    for spk in spurious_spks:
+        for start, end in spk_segs[spk]:
+            f1 = max(0, int(start * fps))
+            f2 = min(n_frames, int(end * fps + 1))
+            if f2 <= f1:
+                continue
+            face_freq = {}
+            for f in range(f1, f2):
+                for tidx in face_at_frame[f]:
+                    face_freq[tidx] = face_freq.get(tidx, 0) + 1
+            if not face_freq:
+                if verbose:
+                    print(f"[Spurious] {spk} {start:.2f}~{end:.2f}s — no face in segment → skip")
+                continue
+
+            # segment 대표 embedding
+            seg_w, seg_wts = [], []
+            for tidx, n_f in face_freq.items():
+                emb = track_embeddings.get(tidx)
+                if emb is None:
+                    continue
+                seg_w.append(emb * n_f)
+                seg_wts.append(n_f)
+            if not seg_w:
+                continue
+            seg_emb = np.sum(seg_w, axis=0) / max(1, sum(seg_wts))
+            nrm = float(np.linalg.norm(seg_emb))
+            if nrm > 1e-8:
+                seg_emb = seg_emb / nrm
+
+            sims = {s: float(np.dot(seg_emb, ref)) for s, ref in speaker_ref_emb.items()}
+            best = max(sims.items(), key=lambda x: x[1])
+            if best[1] >= sim_thr:
+                reassignments.append((start, end, spk, best[0]))
+                if verbose:
+                    print(f"[Spurious] {spk}({start:.2f}~{end:.2f}s) → {best[0]} (sim={best[1]:.3f})")
+            elif verbose:
+                print(f"[Spurious] {spk}({start:.2f}~{end:.2f}s) skip — best sim {best[1]:.3f} < {sim_thr}")
+
+    if verbose:
+        print(f"[Spurious] {len(reassignments)} segments reassigned (absorb)")
+    return reassignments
+
+
 def reassign_segments_by_face_voting(
     audio_segments,
     asd_result,
@@ -440,13 +701,22 @@ def reassign_segments_by_face_voting(
                 if s >= 0.50:
                     print(f"  {a} ↔ {b}: cos={s:.3f}")
 
+    # v44: LightASD speaking score 가중치
+    # v108+: speaking_pow로 강한 score 더 강조 (silent frame 무력화)
+    # face_at_frame[f] = [(tidx, asd_score), ...]
+    use_speaking_weight = os.environ.get("LATENTSYNC_FACE_VOTING_SPEAKING_WEIGHT", "1") == "1"
+    speaking_min_score = float(os.environ.get("LATENTSYNC_FACE_VOTING_SPEAKING_MIN", "0.0"))
+    speaking_pow = float(os.environ.get("LATENTSYNC_FACE_VOTING_SPEAKING_POW", "1.0"))
     face_at_frame = [[] for _ in range(n_frames)]
     for tidx, t in enumerate(tracks):
         if tidx not in track_embeddings:
             continue
-        for f in t["frames"]:
+        t_frames = t.get("frames", [])
+        t_scores = t.get("scores", [1.0] * len(t_frames))
+        for fi, f in enumerate(t_frames):
             if 0 <= f < n_frames:
-                face_at_frame[f].append(tidx)
+                asd_score = float(t_scores[fi]) if fi < len(t_scores) else 0.0
+                face_at_frame[f].append((tidx, asd_score))
 
     reassignments = []
     for start, end, spk in audio_segments:
@@ -460,27 +730,38 @@ def reassign_segments_by_face_voting(
         if f2 <= f1:
             continue
 
+        # face_freq[tidx] = (frame_count, speaking_weight_sum)
         face_freq = {}
         for f in range(f1, f2):
-            for tidx in face_at_frame[f]:
-                face_freq[tidx] = face_freq.get(tidx, 0) + 1
+            for tidx, score in face_at_frame[f]:
+                if score < speaking_min_score:
+                    continue
+                w_speaking = max(0.0, score) if use_speaking_weight else 1.0
+                if speaking_pow != 1.0 and w_speaking > 0:
+                    w_speaking = w_speaking ** speaking_pow
+                cnt, w_sum = face_freq.get(tidx, (0, 0.0))
+                face_freq[tidx] = (cnt + 1, w_sum + w_speaking)
         if not face_freq:
             continue
-        total_face = sum(face_freq.values())
+        total_face = sum(cnt for cnt, _ in face_freq.values())
         if total_face < seg_frames * min_share:
             continue
 
         seg_weighted = []
         seg_weights = []
-        for tidx, n in face_freq.items():
+        for tidx, (cnt, w_speaking_sum) in face_freq.items():
             emb = track_embeddings.get(tidx)
             if emb is None:
                 continue
-            seg_weighted.append(emb * n)
-            seg_weights.append(n)
-        if not seg_weighted:
+            # v44: speaking-weighted (default) or frame-count weighted
+            w = w_speaking_sum if use_speaking_weight else cnt
+            if w <= 0:
+                continue
+            seg_weighted.append(emb * w)
+            seg_weights.append(w)
+        if not seg_weighted or sum(seg_weights) <= 0:
             continue
-        seg_emb = np.sum(seg_weighted, axis=0) / max(1, sum(seg_weights))
+        seg_emb = np.sum(seg_weighted, axis=0) / max(1e-6, sum(seg_weights))
         nrm = float(np.linalg.norm(seg_emb))
         if nrm > 1e-8:
             seg_emb = seg_emb / nrm
@@ -491,6 +772,125 @@ def reassign_segments_by_face_voting(
         second_sim = sorted_sims[1][1] if len(sorted_sims) > 1 else 0.0
         cur_sim = sims.get(spk, 0.0)
 
+        # v115+: segment dominant gender — SPK ref gender와 다르면 reassign 강제
+        # v116+: age 추가 — 같은 gender + age 가까운 SPK 우선
+        # v120+: face shape (mouth/face geometry) — 같은 gender+age라도 shape distance 멀면 reassign
+        if _last_track_genders or _last_track_ages or _last_track_shape_feats:
+            from collections import Counter as _C3
+            seg_gender_votes = []
+            seg_age_votes = []
+            seg_shape_list: List[np.ndarray] = []
+            seg_shape_w: List[float] = []
+            for tidx, (cnt, _) in face_freq.items():
+                g = _last_track_genders.get(tidx)
+                if g:
+                    seg_gender_votes.extend([g] * cnt)
+                a = _last_track_ages.get(tidx)
+                if a is not None:
+                    seg_age_votes.extend([a] * cnt)
+                sf = _last_track_shape_feats.get(tidx)
+                if sf is not None:
+                    seg_shape_list.append(sf * cnt)
+                    seg_shape_w.append(float(cnt))
+            seg_gender = _C3(seg_gender_votes).most_common(1)[0][0] if seg_gender_votes else None
+            seg_age = int(round(sum(seg_age_votes) / len(seg_age_votes))) if seg_age_votes else None
+            seg_shape = None
+            if seg_shape_list and sum(seg_shape_w) > 0:
+                seg_shape = np.sum(seg_shape_list, axis=0) / sum(seg_shape_w)
+            # spk별 dominant gender + mean age + mean shape
+            cur_spk_gender = None
+            cur_spk_age = None
+            cur_spk_shape = None
+            if speaker_face_count.get(spk):
+                g_votes = []
+                a_votes = []
+                sh_acc: List[np.ndarray] = []
+                sh_w: List[float] = []
+                for f_idx, n in speaker_face_count[spk].items():
+                    g = _last_track_genders.get(f_idx)
+                    if g:
+                        g_votes.extend([g] * n)
+                    a = _last_track_ages.get(f_idx)
+                    if a is not None:
+                        a_votes.extend([a] * n)
+                    sf = _last_track_shape_feats.get(f_idx)
+                    if sf is not None:
+                        sh_acc.append(sf * n)
+                        sh_w.append(float(n))
+                if g_votes:
+                    cur_spk_gender = _C3(g_votes).most_common(1)[0][0]
+                if a_votes:
+                    cur_spk_age = int(round(sum(a_votes) / len(a_votes)))
+                if sh_acc and sum(sh_w) > 0:
+                    cur_spk_shape = np.sum(sh_acc, axis=0) / sum(sh_w)
+            # gender mismatch → reassign to same-gender SPK
+            need_reassign = False
+            reassign_reason = ""
+            if seg_gender and cur_spk_gender and seg_gender != cur_spk_gender:
+                need_reassign = True
+                reassign_reason = "gender"
+            # v116+: same gender but age 차이 큼 (>=15세) → reassign 후보
+            age_th = int(os.environ.get("LATENTSYNC_FACE_VOTING_AGE_DIFF", "15"))
+            if not need_reassign and seg_age is not None and cur_spk_age is not None:
+                if abs(seg_age - cur_spk_age) >= age_th:
+                    need_reassign = True
+                    reassign_reason = "age"
+            # v120+: face shape distance — same gender+age라도 mouth/face geometry 다르면 reassign
+            # NOTE: 5-point kps geometry는 head pose에 noisy → conservative threshold (default OFF as trigger)
+            shape_th = float(os.environ.get("LATENTSYNC_FACE_VOTING_SHAPE_DIST", "9.99"))
+            use_shape = os.environ.get("LATENTSYNC_FACE_VOTING_SHAPE", "1") == "1"
+            if (use_shape and not need_reassign
+                    and seg_shape is not None and cur_spk_shape is not None):
+                shape_dist = float(np.linalg.norm(seg_shape - cur_spk_shape))
+                if shape_dist >= shape_th:
+                    need_reassign = True
+                    reassign_reason = f"shape({shape_dist:.3f})"
+            if need_reassign:
+                # gender 일치 + age 가까운 + shape 가까운 SPK 후보 선택
+                best_cand = None
+                best_cand_score = float("-inf")
+                for cand_spk, cand_sim in sorted_sims:
+                    if cand_spk == spk:
+                        continue
+                    g_v, a_v = [], []
+                    sh_acc2: List[np.ndarray] = []
+                    sh_w2: List[float] = []
+                    for f_idx, n in speaker_face_count.get(cand_spk, {}).items():
+                        g = _last_track_genders.get(f_idx)
+                        if g:
+                            g_v.extend([g] * n)
+                        a = _last_track_ages.get(f_idx)
+                        if a is not None:
+                            a_v.extend([a] * n)
+                        sf = _last_track_shape_feats.get(f_idx)
+                        if sf is not None:
+                            sh_acc2.append(sf * n)
+                            sh_w2.append(float(n))
+                    cand_g = _C3(g_v).most_common(1)[0][0] if g_v else None
+                    cand_a = int(round(sum(a_v) / len(a_v))) if a_v else None
+                    cand_sh = None
+                    if sh_acc2 and sum(sh_w2) > 0:
+                        cand_sh = np.sum(sh_acc2, axis=0) / sum(sh_w2)
+                    # gender 일치 필수
+                    if seg_gender and cand_g and cand_g != seg_gender:
+                        continue
+                    # age proximity + shape proximity bonus
+                    age_diff = abs(seg_age - cand_a) if (seg_age is not None and cand_a is not None) else 999
+                    sh_dist = float(np.linalg.norm(seg_shape - cand_sh)) if (seg_shape is not None and cand_sh is not None) else 0.0
+                    # v120: shape weight 추가 — 같은 gender 후보 중 shape 가까운 우선
+                    sh_w_coef = float(os.environ.get("LATENTSYNC_FACE_VOTING_SHAPE_WEIGHT", "0.20"))
+                    score = cand_sim - 0.005 * age_diff - sh_w_coef * sh_dist
+                    if score > best_cand_score:
+                        best_cand_score = score
+                        best_cand = (cand_spk, cand_sim, cand_g, cand_a, sh_dist)
+                if best_cand:
+                    cs, csi, cg, ca, csd = best_cand
+                    reassignments.append((start, end, spk, cs))
+                    if verbose:
+                        tag = "G+A+S" if reassign_reason.startswith("shape") else "G+A"
+                        print(f"[FaceVoting/{tag}] {start:.2f}~{end:.2f}s {spk}({cur_spk_gender}/{cur_spk_age},sim={cur_sim:.3f}) → "
+                              f"{cs}({cg}/{ca},sim={csi:.3f},sh={csd:.3f}) — seg=({seg_gender}/{seg_age}) reason={reassign_reason}", flush=True)
+                    continue  # next segment
         if (best_spk != spk
                 and best_sim >= threshold
                 and (best_sim - second_sim) >= margin
@@ -502,5 +902,6 @@ def reassign_segments_by_face_voting(
 
     if verbose:
         print(f"[FaceVoting] {len(reassignments)}/{len(audio_segments)} segments reassigned "
-              f"(thr={threshold}, margin={margin}, min_share={min_share})")
+              f"(thr={threshold}, margin={margin}, min_share={min_share}, "
+              f"speaking_weight={use_speaking_weight})")
     return reassignments

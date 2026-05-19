@@ -4778,6 +4778,7 @@ def run_pipeline(
                             derive_speaker_remap_from_face_clusters,
                             apply_speaker_remap_to_diarization,
                             reassign_segments_by_face_voting,
+                            absorb_spurious_speakers,
                         )
                         _faceid_sim = float(os.environ.get("LATENTSYNC_FACE_ID_SIM", "0.50"))
                         _faceid_share = float(os.environ.get("LATENTSYNC_FACE_ID_CLUSTER_SHARE", "0.50"))
@@ -4793,6 +4794,10 @@ def run_pipeline(
                                 fusion, track_to_cluster,
                                 min_cluster_share=_faceid_share, verbose=True,
                             )
+                            # v68+: face_id remap만 OFF (FaceVoting/absorb는 유지)
+                            if os.environ.get("LATENTSYNC_FACE_ID_REMAP_OFF", "0") == "1":
+                                print("[FaceID] speaker remap 비활성화 (LATENTSYNC_FACE_ID_REMAP_OFF=1) — FaceVoting/absorb_spurious는 유지")
+                                faceid_remap = {}
                             if faceid_remap:
                                 diarization = apply_speaker_remap_to_diarization(
                                     diarization, faceid_remap
@@ -4819,6 +4824,33 @@ def run_pipeline(
                                     fusion["speaker_face_count"] = new_sfc
                                 print(f"[FaceID] {len(faceid_remap)}개 speaker remap 적용 "
                                       f"→ 화자 수 {len(set(faceid_remap.values()) | (set(spk for _, _, spk in diarization.itertracks(yield_label=True)) - set(faceid_remap.keys())))}")
+
+                            # === v49 NEW: spurious 1-turn speaker auto-absorb ===
+                            # LATENTSYNC_SPURIOUS_OFF=1 → 비활성. default 활성.
+                            _spurious_off = os.environ.get("LATENTSYNC_SPURIOUS_OFF", "0") == "1"
+                            if not _spurious_off:
+                                try:
+                                    from av_fusion import apply_reassignment_to_diarization as _apply_re
+                                    current_audio = [
+                                        (turn.start, turn.end, spk)
+                                        for turn, _, spk in diarization.itertracks(yield_label=True)
+                                    ]
+                                    sp_reassign = absorb_spurious_speakers(
+                                        current_audio, asd_result, track_embs,
+                                        fusion.get("speaker_face_count", {}),
+                                        verbose=True,
+                                    )
+                                    if sp_reassign:
+                                        diarization, _sp_intervals = _apply_re(
+                                            diarization, sp_reassign, return_intervals=True
+                                        )
+                                        prev_iv = data.get("av_reassigned_intervals", []) or []
+                                        data["av_reassigned_intervals"] = prev_iv + list(_sp_intervals)
+                                        print(f"[Spurious] {len(sp_reassign)} segments absorbed")
+                                except Exception as _se:
+                                    import traceback as _stb
+                                    print(f"[Spurious] 실패 (계속 진행): {_se}")
+                                    _stb.print_exc()
 
                             # === v36 NEW: per-segment ArcFace voting (가설 C) ===
                             # cluster_canonical safety 우회. segment 마다 face embedding
@@ -4969,6 +5001,104 @@ def run_pipeline(
                 ]
                 words_by_seg.append(seg_words)
             ecapa_centroids = data.get("speaker_centroids", {})
+
+            # v87+: SPK별 face centroid 계산 (SPK merge 시 voice + face 결합용)
+            # v112+: dominant face cluster의 face만 사용 (mixed centroid 회피)
+            # v114+: SPK별 dominant gender 추출 (다른 gender SPK는 merge 금지)
+            spk_face_centroid = {}
+            spk_gender = {}
+            spk_shape_feats = {}
+            try:
+                from scripts.face_id_embedder import get_last_track_genders as _get_tg
+                _track_genders = _get_tg()
+                _sfc2 = fusion.get("speaker_face_count", {}) if 'fusion' in locals() else {}
+                if _track_genders and _sfc2:
+                    from collections import Counter as _C2
+                    for _spk, _face_map in _sfc2.items():
+                        _gender_votes = []
+                        for _f_idx, _n in _face_map.items():
+                            g = _track_genders.get(_f_idx)
+                            if g:
+                                _gender_votes.extend([g] * int(_n))
+                        if _gender_votes:
+                            spk_gender[_spk] = _C2(_gender_votes).most_common(1)[0][0]
+                    if spk_gender:
+                        print(f"[Refine] SPK dominant gender: {spk_gender}")
+            except Exception as _ge:
+                print(f"[Refine] gender 계산 실패: {_ge}")
+            # v120+: SPK별 shape feature centroid 계산 (mouth/face geometry)
+            try:
+                from scripts.face_id_embedder import get_last_track_shape_feats as _get_tsf
+                _track_shapes = _get_tsf()
+                _sfc3 = fusion.get("speaker_face_count", {}) if 'fusion' in locals() else {}
+                if _track_shapes and _sfc3:
+                    import numpy as _np_s
+                    for _spk, _face_map in _sfc3.items():
+                        _accs, _ws = [], []
+                        for _f_idx, _n in _face_map.items():
+                            sf = _track_shapes.get(_f_idx)
+                            if sf is not None:
+                                _accs.append(sf * float(_n))
+                                _ws.append(float(_n))
+                        if _accs and sum(_ws) > 0:
+                            spk_shape_feats[_spk] = (_np_s.sum(_accs, axis=0) / sum(_ws)).astype(_np_s.float32)
+                    if spk_shape_feats:
+                        print(f"[Refine] SPK shape feats: {list(spk_shape_feats.keys())}")
+            except Exception as _shge:
+                print(f"[Refine] shape feats 계산 실패: {_shge}")
+            try:
+                _sfc = fusion.get("speaker_face_count", {}) if 'fusion' in locals() else {}
+                _te = locals().get("track_embs", {})
+                _ttc = locals().get("track_to_cluster", {})
+                _use_dom_cluster = os.environ.get("LATENTSYNC_SPK_FACE_DOMINANT_CLUSTER", "0") == "1"
+                if _sfc and _te:
+                    import numpy as _np
+                    from collections import defaultdict as _dd
+                    # SPK별 dominant cluster 결정
+                    spk_dom_cluster = {}
+                    if _use_dom_cluster and _ttc:
+                        for _spk, _face_map in _sfc.items():
+                            _cluster_count = _dd(int)
+                            for _f_idx, _n in _face_map.items():
+                                _cid = _ttc.get(_f_idx)
+                                if _cid is not None:
+                                    _cluster_count[_cid] += _n
+                            if _cluster_count:
+                                spk_dom_cluster[_spk] = max(_cluster_count, key=_cluster_count.get)
+                        print(f"[Refine] SPK dominant cluster: {spk_dom_cluster}")
+                    for _spk, _face_map in _sfc.items():
+                        _embs, _w = [], []
+                        _dom_cid = spk_dom_cluster.get(_spk) if _use_dom_cluster else None
+                        for _f_idx, _n in _face_map.items():
+                            if _use_dom_cluster and _dom_cid is not None and _ttc:
+                                if _ttc.get(_f_idx) != _dom_cid:
+                                    continue
+                            if _f_idx in _te:
+                                _embs.append(_te[_f_idx])
+                                _w.append(float(_n))
+                        if _embs:
+                            _avg = _np.average(_np.stack(_embs), axis=0, weights=_w)
+                            _norm = max(_np.linalg.norm(_avg), 1e-9)
+                            spk_face_centroid[_spk] = _avg / _norm
+                    print(f"[Refine] spk_face_centroid 계산 완료: {list(spk_face_centroid.keys())} (dominant_cluster={_use_dom_cluster})")
+            except Exception as _se:
+                print(f"[Refine] spk_face_centroid 계산 실패: {_se}")
+
+            # v98+: wespeaker model load (옵션, ENV로 활성화)
+            _wespeaker_model = None
+            if os.environ.get("LATENTSYNC_WESPEAKER", "0") == "1":
+                try:
+                    import wespeakerruntime as _wr
+                    _ws_onnx = os.environ.get("LATENTSYNC_WESPEAKER_ONNX", "")
+                    if _ws_onnx and os.path.exists(_ws_onnx):
+                        _wespeaker_model = _wr.Speaker(onnx_path=_ws_onnx, lang="en")
+                        print(f"[Refine] wespeaker model loaded ({os.path.basename(_ws_onnx)})")
+                    else:
+                        _wespeaker_model = _wr.Speaker(lang="en")
+                        print("[Refine] wespeaker model loaded (voxceleb_resnet34_LM default)")
+                except Exception as _wse:
+                    print(f"[Refine] wespeaker load 실패: {_wse}")
+
             refined = refine_segments(
                 segments,
                 asd_for_refine,
@@ -4976,6 +5106,10 @@ def run_pipeline(
                 speaker_centroids=ecapa_centroids,
                 vocals_path=data["vocals_path"],
                 ecapa_model=_ecapa_model,
+                spk_face_centroid=spk_face_centroid,
+                wespeaker_model=_wespeaker_model,
+                spk_gender=spk_gender,
+                spk_shape_feats=spk_shape_feats,
             )
             if len(refined) != len(segments):
                 print(f"[Refine] {len(segments)} → {len(refined)} segments after ASD refinement")
@@ -4988,6 +5122,30 @@ def run_pipeline(
         data["diarization"] = diarization
         data["segments"] = segments
     _unload("diarization")
+
+    # v75+: DIARIZE_ONLY 모드 — 화자 분리 sweep용 fast iteration (TTS skip)
+    if os.environ.get("LATENTSYNC_DIARIZE_ONLY", "0") == "1":
+        from pathlib import Path as _Path
+        _meta_dir = _Path(RUNS_DIR) / CURRENT_RUN_ID / "meta"
+        _meta_dir.mkdir(exist_ok=True)
+        for _cn, _d in chunk_data.items():
+            _segs = _d.get("segments", [])
+            _out = _meta_dir / f"{_cn}_diarize_only.json"
+            with open(_out, 'w', encoding='utf-8') as _f:
+                json.dump({
+                    "chunk_name": _cn,
+                    "n_segments": len(_segs),
+                    "groups": [{
+                        "speaker": getattr(s, "speaker", ""),
+                        "start": float(getattr(s, "start", 0)),
+                        "end": float(getattr(s, "end", 0)),
+                        "text": getattr(s, "text", ""),
+                    } for s in _segs],
+                }, _f, ensure_ascii=False, indent=2)
+            print(f"[DIARIZE_ONLY] {_cn}: {len(_segs)} segments → {_out}")
+        print("[DIARIZE_ONLY] Exit before TTS (LATENTSYNC_DIARIZE_ONLY=1).")
+        import sys as _sys
+        _sys.exit(0)
 
     # ── 3단계: 감정 추출 + MOS 레퍼런스 선택 ──────────────
     load_emotion()

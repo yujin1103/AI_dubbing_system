@@ -54,11 +54,15 @@ class DiarizeResponse(BaseModel):
 @app.on_event("startup")
 async def load_model():
     global _pipe
-    print(f"[DiarizeDaemon] loading DiariZen...", flush=True)
+    # env: DIARIZEN_MODEL — model_id override (default v2)
+    model_id = os.environ.get(
+        "DIARIZEN_MODEL", "BUT-FIT/diarizen-wavlm-large-s80-md-v2"
+    )
+    print(f"[DiarizeDaemon] loading DiariZen ({model_id})...", flush=True)
     t0 = time.time()
     try:
         from diarizen.pipelines.inference import DiariZenPipeline
-        _pipe = DiariZenPipeline.from_pretrained("BUT-FIT/diarizen-wavlm-large-s80-md-v2")
+        _pipe = DiariZenPipeline.from_pretrained(model_id)
         # v38b (5/15): load 후 attribute 직접 override (config_parse 인자 API 없음)
         # 환경변수가 있으면 적용 시도; 실패해도 정상 load 유지.
         ahc_thr = os.environ.get("DIARIZEN_AHC_THRESHOLD")
