@@ -1,0 +1,22 @@
+# Full dubbing pipeline dependencies
+# Tested on Python 3.10+, CUDA 12+
+
+# === Stage 1: diarization + ASR ===
+pyannote.audio>=3.1.1
+whisperx>=3.1.0
+modelscope>=1.9.0     # ERes2NetV2 voice embedding (Alibaba)
+
+# === Stage 3: VAD boundary refinement + LLM client + CosyVoice client ===
+silero-vad>=6.2.0
+requests>=2.31.0
+
+# === Audio I/O ===
+soundfile>=0.12.1
+scipy>=1.11.0
+numpy>=1.24.0
+torch>=2.0.0
+torchaudio>=2.0.0
+
+# === Optional: Visual ASD (better diarization on emotional voice) ===
+# insightface>=0.7.3
+# opencv-python-headless>=4.8.0

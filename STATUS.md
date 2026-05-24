@@ -1,9 +1,110 @@
 # Korean Dubbing Pipeline — Project Status
 
-**최종 갱신**: 2026-05-19
-**현재 baseline**: **v121** (5-way fusion + face gender + age + shape feature)
-**이전 baseline**: v92 → v116 → **v121** (face shape tie-breaker 추가로 73-94s 영역 개선)
+**최종 갱신**: 2026-05-25
+**현재 baseline**: **v195/v196_vad** (v194 + Find another school 분리 + Silero VAD 자동 boundary 보정)
+**이전 baseline**: v121 → v156 → v178 → v190 → v192 → v194 → **v195/v196_vad**
 **호스트**: Windows + Docker (`dubbing_pipeline` 컨테이너)
+
+---
+
+## 🎬 Full pipeline (Diarize → Dub → Lipsync) — 2026-05-22~25 신규
+
+### Stage 1 — Diarization (v194/v195 baseline)
+6 unique SPK 자동 분리. 위 v178~v194 그대로.
+
+### Stage 2 — Speaker references (v16 strict boundaries)
+- v195 strict boundaries 기반 `speaker_refs_test4_v16/`
+- v15 SPK_01 contamination 해결 (22.82-27.32 → 22.82-26.84)
+- Loud normalize -3dB peak, 짧은 ref는 loop-augment
+
+### Stage 3 — Korean dubbing (v13_auto = LLM + VAD)
+- **v12**: VectorEngine GPT-5.4 LLM duration-aware 번역 도입
+- **v13**: 4-stage 길이 제어 결합
+  - #1 phoneme (자모 14/s) budget
+  - #2 LABS 3-candidate (short/normal/long) 한 호출 생성
+  - #3 iterative correction (off>15% → measured rate로 budget 재계산)
+  - #4 CosyVoice speed (0.85-1.50) fine-tune
+- **v13_auto** (최종): 위 + **Silero VAD 자동 boundary 보정** (segment.start 잘못 잡힌 11개 자동 수정 — seg[13] 34.60→37.31s 등)
+- 결과: `test4_korean_dub_v13_auto/` 24 segs, 평균 8.1% 오차, 21/25 ±15% 안
+
+### Stage 4 — Lipsync (TRT + LoRA, 2026-05-23~25)
+- TRT engine 빌드 (TensorRT 10.16.1.11 호환):
+  - `unet_ko50k_fp16.trt` (50k Korean full fine-tune)
+  - `unet_lora07_fp16.trt` (50k + LoRA r32 α16 × 0.7)
+  - `unet_lora10_fp16.trt` (× 1.0)
+- 자동 GPU→CPU fallback ONNX export (`build_lora10_auto.sh`)
+  - GPU 성공: 73초 (CPU 95분 대비 78× ↑)
+- 결과 (4 buffer): `test4_lipsync/test4_lipsync_lora07_v2.mp4` 가 시각적 최우수
+  - LoRA 0.7: 마스킹 자국 거의 없음, 부드러운 boundary blending
+  - LoRA 1.0: 0.7 대비 거의 동일 (pixel diff 0.68/255)
+  - ko50k: 마스킹 자국 약간 보임 (LoRA fine-tune 효과 빠짐)
+- mouth_only_enhance 후처리: 효과 미미 → **다음 영상부터 생략** (chunk당 +75s 절감)
+
+### 미해결 — Face-cluster 정확성
+- `LATENTSYNC_ASD_FILTER_RUN_DIR` + `LATENTSYNC_AUDIO_F0_GENDER_PATH` 활성화에도 multi-face frame에서 SPK_01 얼굴에 SPK_02 음성 입혀짐 (43-44s)
+- SpeakerProfile (`speaker_face_profiles.json`)도 시도했지만 InsightFace가 "화면에서 가장 큰 얼굴"만 채택 → 모든 화자 gender=M 오감지로 무효
+- 해결 방향 (다음 세션):
+  - ASD threshold 0.3→0.5 상향
+  - ASD bbox와 detected face bbox IOU 매칭 (가장 큰 face가 아닌 speaking bbox 위치 채택)
+  - Diarization timeline + face cluster ID 강제 매핑
+
+### Full pipeline 시간 (2분 영상 기준)
+| Stage | 시간 |
+|---|---|
+| Diarize + ASR + refiner | 15-25분 |
+| Speaker refs | 1-2분 |
+| Dubbing (LLM concurrent + CosyVoice + VAD) | 10-15분 |
+| Lipsync (TRT, no enhance) | 28-32분 |
+| **합계** | **55-75분** |
+
+### 다음 적용 예정 (시간 절감)
+- A. face detect GPU provider (lipsync chunk당 -25s × 8 = -3-4분)
+- A. chunk 30s (init 절감 -3-5분)
+- A. WhisperX batch ↑
+- A. Stage 1/3/4 pipelining (stage 1 끝나면 stage 3 segment 들어오는대로 즉시 시작)
+- → 목표: 2분 영상 40-55분
+
+### Code package — `full_dubbing_pipeline/`
+팀원 핸드오프용 standalone:
+- `1_diarize.py` (383 lines)
+- `2_extract_speaker_refs.py` (117 lines)
+- `3_dub_pipeline.py` (438 lines) — concurrent LLM/CosyVoice + VAD + 4-stage length control
+- `example_speaker_config.json`
+- `run_pipeline.sh`
+- `README.md`
+
+---
+
+## 🏆 v178 — test4.mp4 96%+ 달성 (2026-05-21)
+
+**결과**: 46 segments, 6 unique speakers — 모든 SPK 자동 분리.
+- **0-60s 영역**: 28/29 segment 정확 (51.37s "I" 0.02s 노이즈만 ambiguous)
+- **60-97s 영역**: "That's where" → SPK_05 (Sean 단독 보존 ✅), "Good" → SPK_04 (Brian ✅), "How hard can/Bull/third school/just act/doesn't know how/stopped petting" → SPK_03 (frustrated father ✅)
+- 명백한 오류: "Find another" → SPK_00 1건 (애매한 boundary)
+- **정확도**: 95.7%~97.8% (계산 방식에 따라)
+
+**v178 핵심 refiner pipeline 순서**:
+1. DiariZen daemon (port 8913) → 6명 detect, 35 turns
+2. FaceTrack continuity (ASD speaking-score >= 0.5, dur >= 1.0s gate) — visible-but-silent 얼굴 차단 (Sean off-camera 보존)
+3. F0 long-segment gender split (>= 5s 장발화 F/M transition detect)
+4. TimeGapSplit (gap >= 5s, eval ALL sub-clusters, MIN_TARGET_SIM=0.5) — scene change detect, 낮은 confidence reject
+5. IntraSPK consensus (3 passes, min_sim=0.5)
+6. ERes2NetV2 short reassign (singleton SPK skip — Sean preserved)
+
+**핵심 환경변수**:
+```
+LATENTSYNC_TIME_GAP_SPLIT=1
+LATENTSYNC_TIME_GAP_MIN_TARGET_SIM=0.50
+LATENTSYNC_TIME_GAP_EVAL_ALL=1
+LATENTSYNC_FACE_TRACK_SPEAK_TH=0.5
+LATENTSYNC_FACE_TRACK_MIN_DUR=1.0
+LATENTSYNC_INTRASPK_PASSES=3
+LATENTSYNC_ERES2_LONG_DUR=1.5
+LATENTSYNC_ERES2_MIN_SIM=0.30
+```
+
+---
+
 
 ---
 

@@ -479,6 +479,33 @@ def apply_vad_filter(vocals_path: str) -> str:
             e = int(seg['end']   * sr)
             clean_audio[s:e] = audio[s:e]
 
+        # v135+: peak normalize clean vocals (조용한 segment 음량 균일화 → diarize 정확도 향상)
+        # 사용자 보고: "How hard can be" 68s 소리 작아서 잘 안 잡힘.
+        # 환경변수: LATENTSYNC_VOCALS_NORMALIZE (default 1, 끄려면 0)
+        _normalize = os.environ.get("LATENTSYNC_VOCALS_NORMALIZE", "1") == "1"
+        if _normalize:
+            peak = float(np.abs(clean_audio).max())
+            if peak > 1e-6 and peak < 0.7:
+                gain = min(0.9 / peak, 5.0)  # 최대 5x boost (extreme noise 회피)
+                clean_audio = np.clip(clean_audio * gain, -1.0, 1.0)
+                print(f"[VAD] peak normalize ×{gain:.2f} ({peak:.3f}→{min(0.9, gain*peak):.2f})")
+            # 추가: per-segment RMS-based gain (조용한 발화 구간 더 균일화)
+            _per_seg_norm = os.environ.get("LATENTSYNC_VOCALS_SEG_NORM", "1") == "1"
+            if _per_seg_norm:
+                from numpy import sqrt as _sqrt
+                target_rms = 0.10  # 평균 RMS 목표
+                for seg in speech_ts:
+                    s = int(seg['start'] * sr); e = int(seg['end'] * sr)
+                    chunk = clean_audio[s:e]
+                    if len(chunk) == 0:
+                        continue
+                    rms = float(_sqrt(np.mean(chunk * chunk)))
+                    if rms < 1e-6:
+                        continue
+                    seg_gain = min(target_rms / rms, 3.0)  # 최대 3x boost per segment
+                    if seg_gain > 1.2:  # 20% 이상 boost 필요할 때만
+                        clean_audio[s:e] = np.clip(chunk * seg_gain, -1.0, 1.0)
+
         clean_path = vocals_path.replace("_vocals.wav", "_clean_vocals.wav")
         sf.write(clean_path, clean_audio, sr)
 
@@ -3147,10 +3174,19 @@ def synthesize_segment_cosy(
         tone_phrase = cat_tone_map.get(emotion, cat_tone_map["Neutral"])
 
     # 팀원 형식: "Please say it close to the speaker's natural delivery, with [톤]"
+    # v129+: F5-TTS Issue #315 + 연구 결과: instruction text가 target 언어와 다르면 cross-lingual accent leakage
+    # → tgt_lang 별로 instruction을 target 언어로 작성 (기계음 방지)
+    _instruct_by_lang = {
+        "ko": ("자연스러운 화자 음성에 가깝게 말해주세요", "톤"),
+        "ja": ("話者の自然な声に近いトーンで話してください", "トーン"),
+        "zh": ("请用接近说话人自然语调的方式说", "语调"),
+        "en": ("Please say it close to the speaker's natural delivery", "tone"),
+    }
+    _base_phrase, _tone_label = _instruct_by_lang.get(lang, _instruct_by_lang["en"])
     if tone_phrase:
-        instruct_phrase = f"Please say it close to the speaker's natural delivery, {tone_phrase}"
+        instruct_phrase = f"{_base_phrase}, {tone_phrase}"
     else:
-        instruct_phrase = "Please say it close to the speaker's natural delivery"
+        instruct_phrase = _base_phrase
     instruct_text = f"You are a helpful assistant. {instruct_phrase}.<|endofprompt|>"
 
     ref_16k = os.path.join(tempfile.gettempdir(), "ref_16k_temp.wav")
@@ -3368,12 +3404,63 @@ def synthesize_chunk(segments, profiles, chunk_name, tgt_lang,
                             ref_path = self_ref
                             print(f"  ↳ self-ref single: {first_seg.speaker} ({seg_dur:.2f}s, "
                                   f"+{pad*2:.1f}s padding)")
+
+                    # v126+: ref < 3s 면 audio loop 적용 (CosyVoice3 기계음 방지)
+                    # 본인 voice 그대로 + 0.2s silence 끼고 반복 → ≥ min_ref_dur
+                    if ref_path and os.path.exists(ref_path):
+                        try:
+                            import soundfile as _sf_loop
+                            import numpy as _np_loop
+                            _min_ref = float(os.environ.get("LATENTSYNC_MIN_REF_DUR", "3.0"))
+                            _loop_audio, _loop_sr = _sf_loop.read(ref_path)
+                            if _loop_audio.ndim > 1:
+                                _loop_audio = _np_loop.mean(_loop_audio, axis=1)
+                            _cur_dur = len(_loop_audio) / _loop_sr
+                            if _cur_dur > 0 and _cur_dur < _min_ref:
+                                _loop_count = int(_min_ref / _cur_dur) + 1
+                                _silence = _np_loop.zeros(int(0.2 * _loop_sr), dtype=_loop_audio.dtype)
+                                _looped = _loop_audio.copy()
+                                for _ in range(_loop_count - 1):
+                                    _looped = _np_loop.concatenate([_looped, _silence, _loop_audio])
+                                _sf_loop.write(ref_path, _looped, _loop_sr)
+                                _new_dur = len(_looped) / _loop_sr
+                                print(f"  ↳ self-ref loop: {first_seg.speaker} "
+                                      f"{_cur_dur:.2f}s × {_loop_count} → {_new_dur:.2f}s "
+                                      f"(min_ref={_min_ref}s)", flush=True)
+                        except Exception as _le:
+                            print(f"  ↳ self-ref loop 실패: {_le} (원본 ref 유지)")
             except Exception as _e:
                 print(f"  ↳ self-ref 실패: {_e}")
 
         if not ref_path or not os.path.exists(ref_path):
             print(f"  ⚠️ {first_seg.speaker} reference 없음 — segment skip")
             continue
+
+        # v126+: profile ref도 < 3s면 loop (silence trim으로 짧아진 경우)
+        # 자기 본인 voice 그대로 반복 → CosyVoice3 클로닝 안정성 보장
+        try:
+            import soundfile as _sf_p
+            import numpy as _np_p
+            _min_ref_p = float(os.environ.get("LATENTSYNC_MIN_REF_DUR", "3.0"))
+            _p_audio, _p_sr = _sf_p.read(ref_path)
+            if _p_audio.ndim > 1:
+                _p_audio = _np_p.mean(_p_audio, axis=1)
+            _p_dur = len(_p_audio) / _p_sr
+            if _p_dur > 0 and _p_dur < _min_ref_p:
+                _p_count = int(_min_ref_p / _p_dur) + 1
+                _p_silence = _np_p.zeros(int(0.2 * _p_sr), dtype=_p_audio.dtype)
+                _p_looped = _p_audio.copy()
+                for _ in range(_p_count - 1):
+                    _p_looped = _np_p.concatenate([_p_looped, _p_silence, _p_audio])
+                # 새 파일 (원본 보존)
+                _loop_path = ref_path.replace(".wav", "_loop.wav")
+                _sf_p.write(_loop_path, _p_looped, _p_sr)
+                ref_path = _loop_path
+                _p_new = len(_p_looped) / _p_sr
+                print(f"  ↳ profile-ref loop: {first_seg.speaker} "
+                      f"{_p_dur:.2f}s × {_p_count} → {_p_new:.2f}s (min={_min_ref_p}s)", flush=True)
+        except Exception as _ple:
+            print(f"  ↳ profile-ref duration check 실패: {_ple} (원본 유지)")
 
         group_start = first_seg.start
         group_end   = last_seg.end
@@ -4421,11 +4508,20 @@ def _stop_daemons(timeout: int = 10):
     import time as _time
 
     daemon_names = [cfg["name"] for cfg in DAEMON_CONFIGS]
+    # v124+: 7-daemon 구성 전체 종료 (whisperx, nemo, pyannote, fusion, vbx 포함)
+    # 누락 시 lipsync GPU 메모리 부족 → SIGKILL (exit -9)
     daemon_scripts = [
         "cosyvoice_daemon.py",
         "asr_daemon.py",
+        "whisperx_daemon.py",
         "diarize_daemon.py",
+        "nemo_diarize_daemon.py",
+        "pyannote_diarize_daemon.py",
+        "fusion_diarize_daemon.py",
+        "vbx_diarize_daemon.py",
+        "campplus_diarize_daemon.py",
     ]
+    pgrep_pattern = "(cosyvoice_daemon|asr_daemon|whisperx_daemon|diarize_daemon|nemo_diarize_daemon|pyannote_diarize_daemon|fusion_diarize_daemon|vbx_diarize_daemon|campplus_diarize_daemon)"
 
     # 1. SIGTERM (graceful)
     print(f"[Daemon] stopping all daemons (graceful)...")
@@ -4439,7 +4535,7 @@ def _stop_daemons(timeout: int = 10):
     deadline = _time.time() + timeout
     while _time.time() < deadline:
         result = subprocess.run(
-            ["pgrep", "-f", "(cosyvoice_daemon|asr_daemon|diarize_daemon)"],
+            ["pgrep", "-f", pgrep_pattern],
             capture_output=True, text=True
         )
         if not result.stdout.strip():

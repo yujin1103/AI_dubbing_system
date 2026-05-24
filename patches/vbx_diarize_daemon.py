@@ -123,6 +123,11 @@ def diarize(req: DiarizeRequest):
     try:
         import numpy as np
         import soundfile as sf
+        # Determinism: re-seed RNG before each inference (AHC / VBx EM init)
+        import random as _r, torch as _t
+        _r.seed(42); np.random.seed(42); _t.manual_seed(42)
+        if _t.cuda.is_available():
+            _t.cuda.manual_seed_all(42)
 
         wav, sr = sf.read(req.vocals_wav)
         if wav.ndim > 1:

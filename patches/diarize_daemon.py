@@ -107,6 +107,11 @@ def diarize(req: DiarizeRequest):
         return DiarizeResponse(segments=[], n_speakers=0,
                                success=False, error=f"file not found: {req.vocals_wav}")
     try:
+        # Determinism: re-seed RNG before each inference (AHC/k-means rely on it)
+        import random as _r, numpy as _np
+        _r.seed(42); _np.random.seed(42); torch.manual_seed(42)
+        if torch.cuda.is_available():
+            torch.cuda.manual_seed_all(42)
         diar = _pipe(req.vocals_wav)
         segments = []
         for turn, _, speaker in diar.itertracks(yield_label=True):

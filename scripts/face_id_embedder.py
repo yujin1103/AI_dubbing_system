@@ -282,10 +282,12 @@ def compute_track_face_embeddings(
         print(f"[FaceID] {n_tracks_with_emb}/{len(tracks)} face tracks 임베딩 추출 "
               f"(samples {n_total_extracts}, fail {n_failed_extracts}, gender={len(track_genders)}, shape={len(track_shape_feats)})")
     # 사이드 효과: gender/age/shape info를 module-level global에 저장
-    global _last_track_genders, _last_track_ages, _last_track_shape_feats
+    global _last_track_genders, _last_track_ages, _last_track_shape_feats, _last_asd_result
     _last_track_genders = track_genders
     _last_track_ages = track_ages
     _last_track_shape_feats = track_shape_feats
+    # v166+: asd_result 저장 (face track frame lookup용)
+    _last_asd_result = asd_result
     if verbose and track_ages:
         ages_summary = sorted(track_ages.values())
         print(f"[FaceID] track ages range: {min(ages_summary)} ~ {max(ages_summary)} (median={ages_summary[len(ages_summary)//2]})", flush=True)
@@ -295,6 +297,8 @@ def compute_track_face_embeddings(
 _last_track_genders: Dict[int, str] = {}
 _last_track_ages: Dict[int, int] = {}
 _last_track_shape_feats: Dict[int, np.ndarray] = {}
+_last_track_to_cluster: Dict[int, int] = {}
+_last_asd_result: Optional[Dict] = None  # asd_runner result for face frame lookup
 
 
 def get_last_track_genders() -> Dict[int, str]:
@@ -305,6 +309,16 @@ def get_last_track_genders() -> Dict[int, str]:
 def get_last_track_shape_feats() -> Dict[int, np.ndarray]:
     """compute_track_face_embeddings 호출 후 track별 shape feature 가져오기."""
     return dict(_last_track_shape_feats)
+
+
+def get_last_track_to_cluster() -> Dict[int, int]:
+    """cluster_tracks_by_face 호출 후 track → cluster_id 매핑 가져오기."""
+    return dict(_last_track_to_cluster)
+
+
+def get_last_asd_result() -> Optional[Dict]:
+    """face_id 처리에 사용된 asd_result (face frames + bboxes) 가져오기."""
+    return _last_asd_result
 
 
 def get_last_track_ages() -> Dict[int, int]:
@@ -355,6 +369,10 @@ def cluster_tracks_by_face(
     roots = sorted(set(find(ti) for ti in track_indices))
     root_to_cid = {r: i for i, r in enumerate(roots)}
     track_to_cluster = {ti: root_to_cid[find(ti)] for ti in track_indices}
+
+    # v166+: 글로벌 cache for segment_refiner 통합
+    global _last_track_to_cluster
+    _last_track_to_cluster = dict(track_to_cluster)
 
     if verbose:
         from collections import Counter

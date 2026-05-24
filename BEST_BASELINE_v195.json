@@ -1,0 +1,232 @@
+{
+  "baseline": "v195 (v194 + word-level mom detection in male SPK segments)",
+  "date": "2026-05-21",
+  "input": "media/input/test4.mp4",
+  "accuracy": {
+    "detected_segments": 24,
+    "unique_speakers": 6,
+    "target_speakers": 6,
+    "target_achieved": true
+  },
+  "speaker_counts": {
+    "SPEAKER_01": 7,
+    "SPEAKER_02": 7,
+    "SPEAKER_04": 2,
+    "SPEAKER_05": 1,
+    "SPEAKER_03": 6,
+    "SPEAKER_00": 3
+  },
+  "label_to_gt": {
+    "SPEAKER_00": "SPK_0 (어릴때 mom, flashback yelling)",
+    "SPEAKER_01": "SPK_1 (dad on phone — Sean 부르는 어른)",
+    "SPEAKER_02": "SPK_2 (대화 상대)",
+    "SPEAKER_03": "SPK_3 (어릴때 dad, frustrated father)",
+    "SPEAKER_04": "SPK_4 (Brian, Sean 동생)",
+    "SPEAKER_05": "SPK_5 (Sean/John, 어른)"
+  },
+  "pipeline_v190": {
+    "stages": [
+      "Stage 1: LightASD face cluster speaking score → identify speaking face clusters",
+      "Stage 2: ERes2NetV2 voice cross-check: speaking face cluster's audio voice vs parent SPK centroid. If sim < 0.55 → suspicious window",
+      "Stage 3: Focused NeMo re-diarize on suspicious window ±3s with min_speakers=2 → precise mom utterance boundary"
+    ],
+    "key_models": {
+      "LightASD": "per-face speaking score (TalkNet-style)",
+      "InsightFace_antelopev2": "R100 ArcFace 512-dim face embedding for clustering",
+      "ERes2NetV2": "192-dim voice embedding for parent-SPK voice cross-check",
+      "NeMo_TitaNet": "focused 2-speaker re-diarize on suspicious window"
+    },
+    "thresholds": {
+      "face_cluster_th": 0.5,
+      "speak_score_th": 0.5,
+      "voice_mismatch_th": 0.55,
+      "focused_window_margin": "±3s",
+      "nemo_force_speakers": 2
+    },
+    "generic_property": "No hard-coded time ranges. Applied automatically to any video where face is visible during mom/sub-speaker interjection."
+  },
+  "segments": [
+    {
+      "speaker": "SPEAKER_01",
+      "start": 0.657,
+      "end": 6.899,
+      "text": "Sean, where are you? I... Call me as soon as you can, please. That was a mistake.",
+      "word_count": 17
+    },
+    {
+      "speaker": "SPEAKER_02",
+      "start": 7.059,
+      "end": 11.2,
+      "text": "I agree. This is not about the new doctor. This is about you. They're baiting you and you're letting them.",
+      "word_count": 20
+    },
+    {
+      "speaker": "SPEAKER_01",
+      "start": 11.68,
+      "end": 12.02,
+      "text": "Maybe.",
+      "word_count": 1
+    },
+    {
+      "speaker": "SPEAKER_02",
+      "start": 12.04,
+      "end": 14.041,
+      "text": "Maybe what? What mistake are you talking about?",
+      "word_count": 8
+    },
+    {
+      "speaker": "SPEAKER_01",
+      "start": 14.041,
+      "end": 15.641,
+      "text": "Your shot at Andrew's nephew.",
+      "word_count": 5
+    },
+    {
+      "speaker": "SPEAKER_02",
+      "start": 15.701,
+      "end": 16.561,
+      "text": "Oh, come on. It was funny.",
+      "word_count": 6
+    },
+    {
+      "speaker": "SPEAKER_01",
+      "start": 16.561,
+      "end": 19.622,
+      "text": "Very funny. It was also disrespectful.",
+      "word_count": 6
+    },
+    {
+      "speaker": "SPEAKER_02",
+      "start": 19.622,
+      "end": 22.543,
+      "text": "Well, you don't show him respect. I assume it's because you don't respect him.",
+      "word_count": 14
+    },
+    {
+      "speaker": "SPEAKER_01",
+      "start": 22.823,
+      "end": 27.324,
+      "text": "You show someone respect because you respect them or because you're afraid of them. I don't fit into either category.",
+      "word_count": 20
+    },
+    {
+      "speaker": "SPEAKER_02",
+      "start": 27.344,
+      "end": 28.205,
+      "text": "Well, neither do I.",
+      "word_count": 4
+    },
+    {
+      "speaker": "SPEAKER_01",
+      "start": 28.205,
+      "end": 29.365,
+      "text": "You should.",
+      "word_count": 2
+    },
+    {
+      "speaker": "SPEAKER_01",
+      "start": 30.915,
+      "end": 34.577,
+      "text": "You're only in that room because your grandfather founded this hospital.",
+      "word_count": 11
+    },
+    {
+      "speaker": "SPEAKER_02",
+      "start": 34.597,
+      "end": 46.404,
+      "text": "I'm going to pretend that this conversation didn't take this tangent and instead focus on something relevant. The debate you were losing. Here's how you win this. You do not make it personal.",
+      "word_count": 33
+    },
+    {
+      "speaker": "SPEAKER_02",
+      "start": 47.024,
+      "end": 51.347,
+      "text": "You do not make it about you. That is what they want. And if you give it to them, you will lose.",
+      "word_count": 22
+    },
+    {
+      "speaker": "SPEAKER_04",
+      "start": 56.189,
+      "end": 58.671,
+      "text": "need to get to San Jose St. Bonaventure Hospital.",
+      "word_count": 9
+    },
+    {
+      "speaker": "SPEAKER_05",
+      "start": 59.191,
+      "end": 59.871,
+      "text": "That's where we're going.",
+      "word_count": 4
+    },
+    {
+      "speaker": "SPEAKER_04",
+      "start": 59.871,
+      "end": 60.692,
+      "text": "Good.",
+      "word_count": 1
+    },
+    {
+      "speaker": "SPEAKER_03",
+      "start": 68.702,
+      "end": 71.985,
+      "text": "How hard can it be to just act like a normal human being?",
+      "word_count": 13
+    },
+    {
+      "speaker": "SPEAKER_00",
+      "start": 72.265,
+      "end": 73.146,
+      "text": "doesn't know how.",
+      "word_count": 3
+    },
+    {
+      "speaker": "SPEAKER_03",
+      "start": 73.626,
+      "end": 75.087,
+      "text": "Bull. What are we supposed to do",
+      "word_count": 7
+    },
+    {
+      "speaker": "SPEAKER_03",
+      "start": 76.408,
+      "end": 78.69,
+      "text": "This is the third school he's been thrown out of.",
+      "word_count": 10
+    },
+    {
+      "speaker": "SPEAKER_00",
+      "start": 78.69,
+      "end": 79.471,
+      "text": "Find another school.",
+      "word_count": 3
+    },
+    {
+      "speaker": "SPEAKER_03",
+      "start": 79.471,
+      "end": 81.332,
+      "text": "No, we won't, because nothing's going to change.",
+      "word_count": 8
+    },
+    {
+      "speaker": "SPEAKER_03",
+      "start": 81.893,
+      "end": 88.338,
+      "text": "They can't handle him, and I don't blame them, because obviously, we can't handle him either. What the hell happened this time? What happened?",
+      "word_count": 24
+    },
+    {
+      "speaker": "SPEAKER_00",
+      "start": 88.338,
+      "end": 91.14,
+      "text": "You're hurting him.",
+      "word_count": 3
+    },
+    {
+      "speaker": "SPEAKER_03",
+      "start": 91.14,
+      "end": 97.506,
+      "text": "What did you do? John! No! You stopped petting that stupid rabbit!",
+      "word_count": 12
+    }
+  ]
+}

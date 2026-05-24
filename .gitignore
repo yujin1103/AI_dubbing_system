@@ -182,3 +182,18 @@ tmp/
 media/*
 !media/gt/
 !media/gt/**
+
+# ========================
+# 24. Per-version 결과물 (각 ver 별 ref/dub/lipsync wav+mp4)
+# ========================
+speaker_refs_test4*/
+test4_korean_dub_*/
+test4_lipsync/
+_archive_baselines/
+
+# ========================
+# 25. 잘못 만들어진 윈도우 'nul' 파일 + 백업 zip
+# ========================
+nul
+full_dubbing_pipeline.zip
+

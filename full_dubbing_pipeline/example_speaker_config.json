@@ -1,0 +1,36 @@
+{
+  "_note": "Optional per-speaker emotion/tone/desc hints for LLM + CosyVoice. All fields optional.",
+  "_emotion_options": ["Neutral","Calm","Concerned","Frustrated","Angry (screaming)","Urgent","Happy","Sad"],
+  "_tone_options": ["natural","calm but urgent","firm composed","screaming protective","frustrated shouting","urgent emergency","calm reassuring"],
+
+  "SPEAKER_00": {
+    "desc": "young mother in flashback — protective rage when child is hurt",
+    "emotion": "Angry (screaming)",
+    "tone": "screaming protective"
+  },
+  "SPEAKER_01": {
+    "desc": "father on the phone, concerned but composed",
+    "emotion": "Concerned",
+    "tone": "calm but urgent"
+  },
+  "SPEAKER_02": {
+    "desc": "female dialogue partner, calm and firm adult",
+    "emotion": "Calm",
+    "tone": "firm composed"
+  },
+  "SPEAKER_03": {
+    "desc": "young father in flashback — frustrated, angry shouting",
+    "emotion": "Frustrated",
+    "tone": "frustrated shouting"
+  },
+  "SPEAKER_04": {
+    "desc": "EMT in emergency, urgent commanding tone",
+    "emotion": "Urgent",
+    "tone": "urgent emergency"
+  },
+  "SPEAKER_05": {
+    "desc": "John (adult) — calm, reassuring",
+    "emotion": "Calm",
+    "tone": "calm reassuring"
+  }
+}

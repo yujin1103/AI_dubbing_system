@@ -198,6 +198,11 @@ def diarize(req: DiarizeRequest):
                                success=False, error=f"file not found: {req.vocals_wav}")
 
     try:
+        # Determinism: re-seed RNG before each inference (k-means in NeMo Clustering)
+        import random as _r, numpy as _np, torch as _t
+        _r.seed(42); _np.random.seed(42); _t.manual_seed(42)
+        if _t.cuda.is_available():
+            _t.cuda.manual_seed_all(42)
         from nemo.collections.asr.models import ClusteringDiarizer
         from omegaconf import OmegaConf
 

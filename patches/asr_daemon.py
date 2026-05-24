@@ -39,17 +39,20 @@ async def load_model():
     try:
         from qwen_asr import Qwen3ASRModel
         device = "cuda:0" if torch.cuda.is_available() else "cpu"
+        # v128+: flash_attn 깨짐 시 sdpa fallback (CUDA 11.x 호환)
+        attn_impl = os.environ.get("ASR_ATTN_IMPL", "sdpa")
         _model = Qwen3ASRModel.from_pretrained(
             "Qwen/Qwen3-ASR-1.7B",
             device_map=device,
             dtype=torch.bfloat16,
-            attn_implementation="flash_attention_2",
+            attn_implementation=attn_impl,
             max_inference_batch_size=1,
             max_new_tokens=512,
             forced_aligner="Qwen/Qwen3-ForcedAligner-0.6B",
             forced_aligner_kwargs=dict(
                 dtype=torch.bfloat16,
                 device_map=device,
+                attn_implementation=attn_impl,
             ),
         )
         print(f"[AsrDaemon] loaded ({time.time()-t0:.1f}s)", flush=True)

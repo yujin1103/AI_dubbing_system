@@ -96,6 +96,11 @@ def diarize(req: DiarizeRequest):
         return DiarizeResponse(segments=[], n_speakers=0,
                                success=False, error=f"file not found: {req.vocals_wav}")
     try:
+        # Determinism: re-seed RNG before each inference
+        import random as _r, numpy as _np, torch as _t
+        _r.seed(42); _np.random.seed(42); _t.manual_seed(42)
+        if _t.cuda.is_available():
+            _t.cuda.manual_seed_all(42)
         # pyannote는 16kHz mono wav를 직접 로드 (ffmpeg 변환 불필요, 자동 처리)
         kwargs = {}
         if req.num_speakers:

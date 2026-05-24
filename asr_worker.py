@@ -36,17 +36,21 @@ def main():
 
     device = "cuda:0" if torch.cuda.is_available() else "cpu"
 
+    # v128+: flash_attn 깨짐 시 sdpa fallback (env ASR_ATTN_IMPL)
+    import os as _os_attn
+    attn_impl = _os_attn.environ.get("ASR_ATTN_IMPL", "sdpa")
     model = Qwen3ASRModel.from_pretrained(
         args.model,
         device_map=device,
         dtype=torch.bfloat16,
-        attn_implementation="flash_attention_2",  # 🔥 최고 속도를 위해 Flash Attention 명시적 사용
+        attn_implementation=attn_impl,
         max_inference_batch_size=args.batch_size,
         max_new_tokens=args.max_tokens,
         forced_aligner=args.aligner,
         forced_aligner_kwargs=dict(
             dtype=torch.bfloat16,
             device_map=device,
+            attn_implementation=attn_impl,
         ),
     )
     print(f"[ASR Worker] Model loaded ✅", file=sys.stderr)
