@@ -13,6 +13,7 @@
 
 PATCHES_DIR=${PATCHES_DIR:-/workspace/patches}
 COSYVOICE_PORT=${COSYVOICE_PORT:-8901}
+ASR_PORT=${ASR_PORT:-8902}        # Qwen3-ASR-1.7B daemon
 FUSION_PORT=${FUSION_PORT:-8903}
 
 # Backend daemon ports
@@ -39,6 +40,7 @@ FUSION_PYANNOTE2_URL=http://127.0.0.1:$PYANN_31_PORT \
 nohup /opt/venv_diarizen/bin/python $PATCHES_DIR/fusion_diarize_daemon.py --port $FUSION_PORT > /tmp/daemon_logs/fusion.log 2>&1 &
 
 nohup /opt/venv_lipsync/bin/python $PATCHES_DIR/cosyvoice_daemon.py --port $COSYVOICE_PORT > /tmp/daemon_logs/cosy.log 2>&1 &
+nohup /opt/venv_asr/bin/python $PATCHES_DIR/asr_daemon.py --port $ASR_PORT > /tmp/daemon_logs/asr.log 2>&1 &
 
 echo "==> Waiting for all daemons to become ready (models loading ~5-10min)..."
 wait_health() {
@@ -60,12 +62,14 @@ wait_health http://127.0.0.1:$PYANN_C1_PORT pyann_c1   200
 wait_health http://127.0.0.1:$PYANN_31_PORT pyann_3.1  200
 wait_health http://127.0.0.1:$FUSION_PORT   Fusion     30
 wait_health http://127.0.0.1:$COSYVOICE_PORT CosyVoice 120
+wait_health http://127.0.0.1:$ASR_PORT      ASR_Qwen3  120
 
 echo
 echo "==================================================="
 echo "All daemons ready. Use these in process_video.sh:"
 echo "  export FUSION_URL=http://127.0.0.1:$FUSION_PORT"
 echo "  export COSYVOICE_URL=http://127.0.0.1:$COSYVOICE_PORT"
+echo "  export ASR_DAEMON_URL=http://127.0.0.1:$ASR_PORT  # Qwen3-ASR"
 echo
 echo "GPU usage: $(nvidia-smi --query-gpu=memory.used --format=csv,noheader)"
 echo "Stop with: bash kill_daemons.sh"

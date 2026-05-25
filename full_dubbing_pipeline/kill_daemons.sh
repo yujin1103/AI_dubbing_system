@@ -6,6 +6,7 @@ pkill -9 -f nemo_diarize || true
 pkill -9 -f pyannote_diarize || true
 pkill -9 -f fusion_diarize || true
 pkill -9 -f cosyvoice_daemon || true
+pkill -9 -f asr_daemon || true
 sleep 3
 
 # Wait for GPU release (zombie cleanup may take time)
