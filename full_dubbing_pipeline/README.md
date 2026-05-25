@@ -51,6 +51,51 @@ export VECTORENGINE_MODEL=gpt-5.4
 export COSYVOICE_URL=http://127.0.0.1:8901
 ```
 
+## ⚠️ Stage 1 정확도 보장 — 필수 환경변수
+
+**메인 orchestrator (4-way fusion) 사용 시 반드시 설정**. 누락하면 SPEAKER_99/98/97 outlier 라벨 발생.
+
+```bash
+# 가짜 outlier 라벨 (SPK_99/98/97) 방지 — v195 baseline 만든 시점부터 검증된 핵심 fix
+export LATENTSYNC_OUTLIER_OFF=1
+
+# v178 refiner (segment_refiner.py multi-pass)
+export LATENTSYNC_TIME_GAP_SPLIT=1
+export LATENTSYNC_TIME_GAP_MIN_TARGET_SIM=0.50
+export LATENTSYNC_TIME_GAP_EVAL_ALL=1
+export LATENTSYNC_FACE_TRACK_SPEAK_TH=0.5
+export LATENTSYNC_FACE_TRACK_MIN_DUR=1.0
+export LATENTSYNC_INTRASPK_PASSES=3
+export LATENTSYNC_ERES2_LONG_DUR=1.5
+export LATENTSYNC_ERES2_MIN_SIM=0.30
+export LATENTSYNC_SANDWICH_GAP=0.3
+export LATENTSYNC_FINAL_SANDWICH=1
+
+# v190 Visual ASD + Focused NeMo
+export V190_FACE_CLUSTER_TH=0.5
+export V190_SPEAK_SCORE_TH=0.5
+export V190_VOICE_MISMATCH_TH=0.55
+export V190_WINDOW_MARGIN=3.0
+export V190_NEMO_NUM_SPEAKERS=2
+
+# v194 word-level intra-segment split
+export V194_WORD_DIFF_TH=0.60
+export V194_F0_JUMP_TH=100
+export V194_LR_COS_TH=0.35
+export V194_SHORT_SEG_REASSIGN_MARGIN=0.03
+```
+
+### standalone `1_diarize.py` (pyannote 3.1 단독)
+- 위 env 무관 (메인 orchestrator 전용)
+- pyannote.audio 3.x + WhisperX + (optional) ERes2NetV2 refiner만 사용
+- 가볍지만 정확도 ↓ (test4에서 2 SPK 검출 — 메인은 6 SPK)
+- 빠른 검증/단순 영상용
+
+### 운영 권장
+- **정확도 우선**: 메인 repo `orchestrator.py` + 위 env vars
+- **단순 영상 (1-2명)**: standalone `1_diarize.py` OK
+- **반복 처리/시연**: 첫 처리 결과 (`diarize.json`) 저장 → 재처리 시 reuse → 100% 동일 결과
+
 ## End-to-End 사용
 
 ```bash
