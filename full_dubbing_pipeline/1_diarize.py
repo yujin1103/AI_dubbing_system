@@ -36,12 +36,22 @@ class Segment:
 def run_pyannote(audio_path: str, hf_token: Optional[str] = None) -> List[Segment]:
     """Primary diarization via pyannote 3.1."""
     from pyannote.audio import Pipeline
-    pipe = Pipeline.from_pretrained("pyannote/speaker-diarization-3.1",
-                                     use_auth_token=hf_token)
+    # pyannote.audio 3.x renamed use_auth_token → token
+    try:
+        pipe = Pipeline.from_pretrained("pyannote/speaker-diarization-3.1",
+                                         token=hf_token)
+    except TypeError:
+        # Old API fallback
+        pipe = Pipeline.from_pretrained("pyannote/speaker-diarization-3.1",
+                                         use_auth_token=hf_token)
     import torch
     if torch.cuda.is_available():
         pipe.to(torch.device("cuda"))
     diar = pipe(audio_path)
+    # pyannote.audio 3.x: returns DiarizeOutput (with .speaker_diarization Annotation),
+    # 2.x: returns Annotation directly with .itertracks
+    if hasattr(diar, "speaker_diarization"):
+        diar = diar.speaker_diarization
     out = []
     for turn, _, spk in diar.itertracks(yield_label=True):
         spk_str = f"SPEAKER_{int(spk):02d}" if str(spk).isdigit() else str(spk)
@@ -357,14 +367,20 @@ def main():
     import soundfile as sf
     audio, sr = sf.read(audio_path)
     if audio.ndim > 1: audio = np.mean(audio, axis=1)
-    extract_emb = load_eres2()
+    try:
+        extract_emb = load_eres2()
+    except Exception as ex:
+        print(f"  ⚠ ERes2NetV2 load failed ({ex}) — skipping voice-embedding refiner passes", flush=True)
+        extract_emb = None
 
     print("[5/5] Refining diarization ...", flush=True)
-    time_gap_split(segments, audio, sr, extract_emb)
-    intra_spk_split(segments, audio, sr, extract_emb, passes=3)
+    if extract_emb is not None:
+        time_gap_split(segments, audio, sr, extract_emb)
+        intra_spk_split(segments, audio, sr, extract_emb, passes=3)
     sandwich_override(segments)
     assign_text(segments, words)
-    segments = word_level_intra_split(segments, words, audio, sr, extract_emb)
+    if extract_emb is not None:
+        segments = word_level_intra_split(segments, words, audio, sr, extract_emb)
     assign_text(segments, words)
 
     out_data = {

@@ -265,17 +265,25 @@ def health():
 
 @app.post("/diarize", response_model=DiarizeResponse)
 def diarize(req: DiarizeRequest):
-    diarizen_segs = _call_daemon(DIARIZEN_URL, req.vocals_wav, req.num_speakers, req.min_duration)
-    nemo_segs = _call_daemon(NEMO_URL, req.vocals_wav, req.num_speakers, req.min_duration)
-    pyannote_segs = None
-    pyannote2_segs = None
-    vbx_segs = None
-    if PYANNOTE_URL:
-        pyannote_segs = _call_daemon(PYANNOTE_URL, req.vocals_wav, req.num_speakers, req.min_duration)
-    if PYANNOTE2_URL:
-        pyannote2_segs = _call_daemon(PYANNOTE2_URL, req.vocals_wav, req.num_speakers, req.min_duration)
-    if VBX_URL:
-        vbx_segs = _call_daemon(VBX_URL, req.vocals_wav, req.num_speakers, req.min_duration)
+    # PARALLEL_FUSION_PATCH: call all sub-daemons concurrently (was sequential).
+    # Each daemon is its own process/GPU, so concurrent calls just overlap HTTP latency.
+    # Reduces total wait from sum(times) to max(times).
+    from concurrent.futures import ThreadPoolExecutor, as_completed
+    backends = [("diarizen", DIARIZEN_URL, True), ("nemo", NEMO_URL, True)]
+    if PYANNOTE_URL:  backends.append(("pyannote_c1", PYANNOTE_URL, False))
+    if PYANNOTE2_URL: backends.append(("pyannote_3_1", PYANNOTE2_URL, False))
+    if VBX_URL:       backends.append(("vbx", VBX_URL, False))
+    results = {}
+    with ThreadPoolExecutor(max_workers=len(backends)) as ex:
+        futs = {ex.submit(_call_daemon, url, req.vocals_wav, req.num_speakers, req.min_duration): name
+                for name, url, _ in backends}
+        for fut in as_completed(futs):
+            results[futs[fut]] = fut.result()
+    diarizen_segs   = results.get("diarizen")
+    nemo_segs       = results.get("nemo")
+    pyannote_segs   = results.get("pyannote_c1")
+    pyannote2_segs  = results.get("pyannote_3_1")
+    vbx_segs        = results.get("vbx")
     if diarizen_segs is None and nemo_segs is None and pyannote_segs is None and pyannote2_segs is None and vbx_segs is None:
         return DiarizeResponse(segments=[], n_speakers=0, success=False,
                                error="all sub-daemons failed")

@@ -302,6 +302,9 @@ class LipsyncPipeline(DiffusionPipeline):
         _has_asd_scene = _asd_flt is not None
         _has_profile = _profiles is not None
         _has_gender = _audio_gender is not None and _profiles is not None
+        # IoU threshold for ASD bbox match — env override (default strict 0.5)
+        import os as _os_iou
+        _iou_match_thr = float(_os_iou.environ.get("LATENTSYNC_ASD_IOU_MATCH", "0.5"))
         _n_dark = 0
         _n_asd_scene_skip = 0
         _n_bbox_mm = 0
@@ -329,11 +332,13 @@ class LipsyncPipeline(DiffusionPipeline):
             # === ASD_FILTER_PATCH end ===
 
             face, box, affine_matrix = _ip.affine_transform(frame)
-            # === ASD_BBOX_MATCH_PATCH ===
+            # === ASD_BBOX_MATCH_PATCH (env-tunable IoU) ===
             if face is not None and _has_asd_scene:
                 _det_bbox = _ip.last_face_bbox
                 if _det_bbox is not None:
-                    if _asd_flt.is_detected_face_speaker(_g, list(_det_bbox)) is False:
+                    if _asd_flt.is_detected_face_speaker(
+                        _g, list(_det_bbox), iou_match=_iou_match_thr
+                    ) is False:
                         _n_bbox_mm += 1
                         face = None
             # === ASD_BBOX_MATCH_PATCH end ===

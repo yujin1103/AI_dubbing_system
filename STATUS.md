@@ -7,6 +7,43 @@
 
 ---
 
+## ⚠️ v195 재현 필수 환경변수 (누락 시 SPK_97/98 outlier 발생)
+
+`tmp/full_main_orchestrator_run.sh` 또는 `orchestrator.py` 호출 시 반드시 export:
+
+```bash
+# v178 refiner (segment_refiner.py multi-pass)
+LATENTSYNC_TIME_GAP_SPLIT=1
+LATENTSYNC_TIME_GAP_MIN_TARGET_SIM=0.50
+LATENTSYNC_TIME_GAP_EVAL_ALL=1
+LATENTSYNC_FACE_TRACK_SPEAK_TH=0.5
+LATENTSYNC_FACE_TRACK_MIN_DUR=1.0
+LATENTSYNC_INTRASPK_PASSES=3
+LATENTSYNC_ERES2_LONG_DUR=1.5
+LATENTSYNC_ERES2_MIN_SIM=0.30
+LATENTSYNC_SANDWICH_GAP=0.3
+LATENTSYNC_FINAL_SANDWICH=1
+
+# v190 Visual ASD + Focused NeMo
+V190_FACE_CLUSTER_TH=0.5
+V190_SPEAK_SCORE_TH=0.5
+V190_VOICE_MISMATCH_TH=0.55
+V190_WINDOW_MARGIN=3.0
+V190_NEMO_NUM_SPEAKERS=2
+
+# v194 word-level intra-segment split
+V194_WORD_DIFF_TH=0.60
+V194_F0_JUMP_TH=100
+V194_LR_COS_TH=0.35
+V194_SHORT_SEG_REASSIGN_MARGIN=0.03
+```
+
+**재현 검증** (2026-05-25): 누락 시 fresh run이 v195와 다른 결과 (24 seg/6 SPK 대신 44 seg/SPK_97/98 outlier 발생). parallel fusion patch는 결과에 영향 없음 (sequential과 동일).
+
+---
+
+---
+
 ## 🎬 Full pipeline (Diarize → Dub → Lipsync) — 2026-05-22~25 신규
 
 ### Stage 1 — Diarization (v194/v195 baseline)

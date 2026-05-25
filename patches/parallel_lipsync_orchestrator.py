@@ -136,14 +136,30 @@ def _wait_gpu_clean(min_free_gb=10.0, timeout_s=120, settle_s=2):
     _log(f"  ⚠ GPU still {_gpu_free_gb():.1f}GB after {timeout_s}s — proceeding anyway")
 
 
+def _is_oom_error(stderr_text):
+    """Detect CUDA OOM signals in subprocess stderr."""
+    if not stderr_text: return False
+    oom_signals = (
+        "CUDA out of memory",
+        "OutOfMemoryError",
+        "cuda runtime error (out of memory)",
+        "CUDNN_STATUS_NOT_ENOUGH_WORKSPACE",
+        "Failed to allocate",
+        "RuntimeError: CUDA error: out of memory",
+    )
+    return any(sig in stderr_text for sig in oom_signals)
+
+
 def run_lipsync(chunk_video, chunk_audio, output_path):
-    """Run LatentSync on one chunk. BLOCKING."""
-    # Clear memory before launching: wait for GPU to be clean
+    """Run LatentSync on one chunk. BLOCKING.
+
+    On OOM: auto-fallback by reducing memory pressure (VAE chunk 1, TRT off).
+    """
     _wait_gpu_clean(min_free_gb=float(os.environ.get("LIPSYNC_MIN_GPU_GB","10")),
                     timeout_s=int(os.environ.get("LIPSYNC_GPU_WAIT_S","60")))
     ckpt = os.environ.get("LATENTSYNC_INFERENCE_CKPT",
                           "/opt/LatentSync/checkpoints/latentsync_unet.pt")
-    cmd = [
+    base_cmd = [
         "/opt/venv_lipsync/bin/python", "-m", "scripts.inference",
         "--unet_config_path", "configs/unet/stage2_512_nf16.yaml",
         "--inference_ckpt_path", ckpt,
@@ -154,19 +170,55 @@ def run_lipsync(chunk_video, chunk_audio, output_path):
         "--guidance_scale", "1.5",
         "--seed", "1247",
     ]
-    env = os.environ.copy()
-    env.setdefault("LATENTSYNC_USE_TRT", "1")
-    env.setdefault("LATENTSYNC_TRT_ENGINE", "/workspace/trt_work/engines/unet_fp16.trt")
-    env.setdefault("LATENTSYNC_SCHEDULER", "dpm")
-    env.setdefault("LATENTSYNC_TEACACHE", "0.1")
-    env.setdefault("LATENTSYNC_USE_NVENC", "1")
-    # No internal chunking since we already pre-chunked
-    env["LATENTSYNC_CHUNK_SECONDS"] = "0"
-    r = subprocess.run(cmd, cwd="/opt/LatentSync", env=env,
+    base_env = os.environ.copy()
+    base_env.setdefault("LATENTSYNC_USE_TRT", "1")
+    base_env.setdefault("LATENTSYNC_TRT_ENGINE", "/workspace/trt_work/engines/unet_fp16.trt")
+    base_env.setdefault("LATENTSYNC_SCHEDULER", "dpm")
+    base_env.setdefault("LATENTSYNC_TEACACHE", "0.1")
+    base_env.setdefault("LATENTSYNC_USE_NVENC", "1")
+    base_env["LATENTSYNC_CHUNK_SECONDS"] = "0"
+
+    # Attempt 1: default config
+    r = subprocess.run(base_cmd, cwd="/opt/LatentSync", env=base_env,
                        capture_output=True, text=True)
-    if r.returncode != 0:
-        _log(f"lipsync FAIL: {r.stderr[-300:]}")
-    return r.returncode == 0
+    if r.returncode == 0:
+        return True
+
+    # OOM fallback: VAE chunk 1, slicing on, TRT VAE off
+    if _is_oom_error(r.stderr):
+        _log("lipsync OOM detected → fallback: VAE_CHUNK=1, VAE_SLICING=1, VAE_TRT=0")
+        oom_env = base_env.copy()
+        oom_env["LATENTSYNC_VAE_CHUNK"] = "1"
+        oom_env["LATENTSYNC_VAE_SLICING"] = "1"
+        oom_env["LATENTSYNC_VAE_TRT"] = "0"
+        # Free GPU before retry
+        import time as _t; _t.sleep(5)
+        _wait_gpu_clean(min_free_gb=3.0, timeout_s=30)
+        r2 = subprocess.run(base_cmd, cwd="/opt/LatentSync", env=oom_env,
+                            capture_output=True, text=True)
+        if r2.returncode == 0:
+            _log("lipsync OOM fallback succeeded")
+            return True
+        if _is_oom_error(r2.stderr):
+            _log("lipsync OOM persists → final fallback: inference_steps=8 + TRT UNet off")
+            final_cmd = list(base_cmd)
+            si = final_cmd.index("--inference_steps")
+            final_cmd[si+1] = "8"
+            final_env = oom_env.copy()
+            final_env["LATENTSYNC_USE_TRT"] = "0"
+            _t.sleep(5)
+            r3 = subprocess.run(final_cmd, cwd="/opt/LatentSync", env=final_env,
+                                capture_output=True, text=True)
+            if r3.returncode == 0:
+                _log("lipsync final fallback succeeded (steps=8, no TRT)")
+                return True
+            _log(f"lipsync FINAL FAIL: {r3.stderr[-300:]}")
+            return False
+        _log(f"lipsync OOM fallback FAIL (non-OOM error): {r2.stderr[-300:]}")
+        return False
+
+    _log(f"lipsync FAIL: {r.stderr[-300:]}")
+    return False
 
 
 def run_mouth_enhance(lipsync_out, original_chunk, enhance_out):
@@ -216,7 +268,8 @@ def main():
     ap.add_argument("--input", required=True, help="Input video")
     ap.add_argument("--audio", required=True, help="Dubbed audio (any sample rate)")
     ap.add_argument("--output", required=True, help="Final mp4 output")
-    ap.add_argument("--chunk-seconds", type=int, default=10)
+    ap.add_argument("--chunk-seconds", type=int, default=30,
+                    help="Seconds per lipsync chunk (default 30, was 15 — larger = less init overhead)")
     ap.add_argument("--no-enhance", action="store_true",
                     help="Skip mouth_only_enhance (lipsync only)")
     ap.add_argument("--no-parallel", action="store_true",

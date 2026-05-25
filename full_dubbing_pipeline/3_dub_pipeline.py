@@ -177,9 +177,13 @@ class CosyVoice:
         return audio_b, len(arr) / sr, sr
 
 
-# === VAD boundary refinement (parallel, prev-end constrained) ===
-def vad_refine_boundaries(audio_full, sr, segs, vad_model, max_workers=4):
-    """Returns dict {idx: (orig_start, new_start)} for segments whose VAD onset differs > MIN_SHIFT."""
+# === VAD boundary refinement (sequential by default — silero_vad model is thread-unsafe) ===
+def vad_refine_boundaries(audio_full, sr, segs, vad_model, max_workers=1):
+    """Returns dict {idx: (orig_start, new_start)} for segments whose VAD onset differs > MIN_SHIFT.
+
+    Silero VAD model is NOT thread-safe — concurrent get_speech_timestamps() calls cause
+    silent native abort (free(): corrupted unsorted chunks). Stays sequential by default.
+    """
     # Precompute prev_end per seg
     prev_ends = []
     last_end = 0.0
