@@ -96,7 +96,38 @@ export V194_SHORT_SEG_REASSIGN_MARGIN=0.03
 - **단순 영상 (1-2명)**: standalone `1_diarize.py` OK
 - **반복 처리/시연**: 첫 처리 결과 (`diarize.json`) 저장 → 재처리 시 reuse → 100% 동일 결과
 
-## End-to-End 사용
+## 권장 흐름 — Modular pipeline (daemon 상시 + 영상별 처리)
+
+```bash
+# 1. Daemon 한 번만 시작 (4-way fusion 5개 + CosyVoice = 5-10분)
+bash start_daemons.sh
+export FUSION_URL=http://127.0.0.1:8903
+export COSYVOICE_URL=http://127.0.0.1:8901
+
+# 2. 각 영상 처리 (stage 1+2+3, daemon 재사용 → 빠름)
+bash process_video.sh video1.mp4 ./out1
+bash process_video.sh video2.mp4 ./out2
+# ... 사용자가 ./outN/diarize.json text/emotion 편집 가능 (stage 2와 3 사이)
+# 편집 후 stage 3만 재실행: python 3_dub_pipeline.py ...
+
+# 3. 모든 영상 처리 끝 → daemon 종료 (GPU 회수)
+bash kill_daemons.sh
+
+# 4. 영상별 lipsync (daemon down 상태에서, 메모리 안전)
+bash lipsync.sh video1.mp4 ./out1/dub/dub_audio.wav ./out1/lipsync.mp4
+bash lipsync.sh video2.mp4 ./out2/dub/dub_audio.wav ./out2/lipsync.mp4
+```
+
+### 왜 modular?
+- **UI 수정 가능**: stage별 file 기반 → segments.json의 text/emotion 사용자 편집 후 stage 3만 재실행
+- **메모리 안전**: stage 1+3 daemon ~12GB + lipsync 12GB → 단일 16GB GPU에선 동시 불가 → daemon 종료 후 lipsync
+- **반복 처리 빠름**: daemon 한 번만 로드, 영상마다 재사용
+
+### 1_diarize.py — 두 가지 모드
+- **4-way fusion (정확, FUSION_URL 설정 시)**: DiariZen + NeMo + pyannote_c1 + pyannote_3.1 → test4 6 SPK 검출
+- **standalone pyannote 3.1 (FUSION_URL 없을 때)**: 가볍지만 ~2명만 검출 → 단순 영상용
+
+## End-to-End 사용 (legacy, daemon 안 띄울 때)
 
 ```bash
 # 가장 간단한 방법

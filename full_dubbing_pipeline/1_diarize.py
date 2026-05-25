@@ -34,7 +34,7 @@ class Segment:
 
 
 def run_pyannote(audio_path: str, hf_token: Optional[str] = None) -> List[Segment]:
-    """Primary diarization via pyannote 3.1."""
+    """Primary diarization via pyannote 3.1 (standalone — single backend)."""
     from pyannote.audio import Pipeline
     # pyannote.audio 3.x renamed use_auth_token → token
     try:
@@ -58,6 +58,35 @@ def run_pyannote(audio_path: str, hf_token: Optional[str] = None) -> List[Segmen
         if turn.end - turn.start < 0.3:
             continue
         out.append(Segment(spk_str, round(turn.start, 3), round(turn.end, 3)))
+    return out
+
+
+def run_fusion_daemon(audio_path: str, fusion_url: str,
+                      num_speakers: Optional[int] = None,
+                      min_duration: float = 0.5) -> List[Segment]:
+    """4-way fusion diarize via HTTP daemon (DiariZen + NeMo + pyannote x2).
+
+    Requires fusion_diarize_daemon.py running with 4 backends:
+      - DiariZen 8913 / NeMo 8923 / pyannote_c1 8933 / pyannote_3.1 8943
+
+    Returns segments with ACCURATE speaker labels (avoids SPK_99/98/97 outliers
+    if the orchestrator-side LATENTSYNC_OUTLIER_OFF=1 env is set).
+    """
+    import requests
+    r = requests.post(f'{fusion_url}/diarize',
+                     json={'vocals_wav': audio_path,
+                           'num_speakers': num_speakers,
+                           'min_duration': min_duration},
+                     timeout=1800).json()
+    if not r.get('success'):
+        raise RuntimeError(f'Fusion daemon failed: {r.get("error")}')
+    print(f'  [fusion] {len(r["segments"])} segs, {r["n_speakers"]} speakers')
+    out = []
+    for s in r['segments']:
+        dur = s['end'] - s['start']
+        if dur < 0.3:
+            continue
+        out.append(Segment(s['speaker'], round(s['start'], 3), round(s['end'], 3)))
     return out
 
 
@@ -349,14 +378,22 @@ def main():
     ap.add_argument("--language", default="en", help="ASR language code")
     ap.add_argument("--hf-token", default=os.environ.get("HF_TOKEN", ""),
                    help="HuggingFace token (for pyannote)")
+    ap.add_argument("--fusion-url", default=os.environ.get("FUSION_URL", ""),
+                   help="4-way fusion daemon URL (e.g. http://127.0.0.1:8903). "
+                        "If set: use accurate 4-way fusion (DiariZen+NeMo+pyannote×2). "
+                        "If empty: fallback to standalone pyannote 3.1 (faster but ~2 speakers only).")
     args = ap.parse_args()
 
     print("[1/5] Extracting audio ...", flush=True)
     audio_path = tempfile.mktemp(suffix=".wav")
     extract_audio(args.input, audio_path, sr=44100)
 
-    print("[2/5] Pyannote diarization ...", flush=True)
-    segments = run_pyannote(audio_path, hf_token=args.hf_token or None)
+    if args.fusion_url:
+        print(f"[2/5] 4-way fusion diarize via {args.fusion_url} ...", flush=True)
+        segments = run_fusion_daemon(audio_path, args.fusion_url)
+    else:
+        print("[2/5] Pyannote 3.1 standalone diarize (no fusion daemon) ...", flush=True)
+        segments = run_pyannote(audio_path, hf_token=args.hf_token or None)
     print(f'   {len(segments)} initial segments, {len(set(s.speaker for s in segments))} speakers')
 
     print("[3/5] WhisperX word transcription ...", flush=True)
