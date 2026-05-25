@@ -197,3 +197,12 @@ _archive_baselines/
 nul
 full_dubbing_pipeline.zip
 
+# ========================
+# 26. 분석/디버그 디렉토리 (per-video, repo에 안 올림)
+# ========================
+test5_analysis/
+test4_analysis/
+_diag/
+patches/_v2_template.py
+patches/test_v2_debug.py
+

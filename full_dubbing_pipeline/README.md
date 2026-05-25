@@ -91,6 +91,32 @@ export V194_SHORT_SEG_REASSIGN_MARGIN=0.03
 - 가볍지만 정확도 ↓ (test4에서 2 SPK 검출 — 메인은 6 SPK)
 - 빠른 검증/단순 영상용
 
+### ⚠️ 영상별 env tuning이 필요할 수 있음
+같은 env로 모든 영상에서 100% 정확한 결과는 ML 본질적으로 불가능. 영상마다 화자 수/감정 변조/배경 음악 등이 달라서 best env가 다름.
+
+**실측 예시 (Good Doctor 시리즈)**:
+- **test4 (108초, 6명 화자)**: `LATENTSYNC_OUTLIER_OFF=1` 또는 default → 6 SPK 정확
+- **test5 (86초, 6명 화자 — 메인 4 + 배경 2)**: `LATENTSYNC_OUTLIER_FAR_THRESH=0.70` + `FUSION_MIN_SPEAKER_RATIO=0.005` + `FUSION_MIN_SPEAKER_FRAMES=5` → 7 SPK (6 정확 + 1 false positive)
+- 같은 영상 (test4)에 test5 env 적용 시 → 12 SPK over-split (잘못)
+
+**영상별 best env 찾는 방법**:
+```bash
+# 1. 첫 처리: 여러 env combo 시도 (sweep)
+#    - baseline (default), th_030, th_050, th_070
+#    - fusion_min_low (RATIO=0.005, FRAMES=5)
+#    - 위 조합들
+# 2. 결과 segments.json 분석 → GT 화자 수에 가장 가까운 combo 선택
+# 3. 그 영상의 best env로 baseline JSON lock-in
+# 4. 재처리/시연 시 그 baseline reuse → 100% 동일 결과
+```
+
+**왜 reproducibility가 어려운가** (팀원 설명용):
+- ML 모델 내부 **확률적 연산** (CUDA cuDNN benchmark, KMeans random init, dropout 등)
+- 같은 env + 같은 코드 + 같은 영상도 매번 미세하게 다른 결과
+- 100% deterministic 강제 가능 (`torch.backends.cudnn.deterministic=True` 등)지만 20-30% 느려지고 일부 op은 여전히 비결정적
+- **실용적 해결**: 검증된 결과 (`baseline.json`) 저장 후 재사용
+- 학계도 "Clustering algorithms are sensitive to random noises and small variations" 인정 (DOVER paper 등)
+
 ### 운영 권장
 - **정확도 우선**: 메인 repo `orchestrator.py` + 위 env vars
 - **단순 영상 (1-2명)**: standalone `1_diarize.py` OK
