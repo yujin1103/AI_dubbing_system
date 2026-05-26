@@ -1,0 +1,62 @@
+{
+  "score": 0.5992,
+  "avg_consistency": 0.5992,
+  "main_count": 12,
+  "main_count_gt": 6,
+  "main_match": false,
+  "bg_detected": false,
+  "per_gt_consistency": {
+    "dad_phone": 0.7143,
+    "dialogue": 0.7143,
+    "Brian": 0.5,
+    "Sean": 1.0,
+    "frustrated_dad": 0.3333,
+    "mom": 0.3333
+  },
+  "gt_to_detected_speakers": {
+    "dad_phone": [
+      "SPEAKER_03",
+      "SPEAKER_03",
+      "SPEAKER_03",
+      "SPEAKER_03",
+      "SPEAKER_00",
+      "SPEAKER_03",
+      "SPEAKER_00"
+    ],
+    "dialogue": [
+      "SPEAKER_01",
+      "SPEAKER_01",
+      "SPEAKER_01",
+      "SPEAKER_01",
+      "SPEAKER_01",
+      "SPEAKER_00",
+      "SPEAKER_00"
+    ],
+    "Brian": [
+      "SPEAKER_00",
+      null
+    ],
+    "Sean": [
+      "SPEAKER_00"
+    ],
+    "frustrated_dad": [
+      "SPEAKER_00",
+      "SPEAKER_90",
+      "SPEAKER_89",
+      "SPEAKER_89",
+      "SPEAKER_87",
+      "SPEAKER_02"
+    ],
+    "mom": [
+      "SPEAKER_91",
+      "SPEAKER_88",
+      "SPEAKER_82"
+    ]
+  },
+  "n_detect_segments": 52,
+  "n_gt_segments": 26,
+  "source": {
+    "segments_json": "media/runs/20260525_100711_t4verifyth_7a8c87/meta/t4_verify_th070_chunk_000_segments.json",
+    "gt_json": "media/gt/test4_gt.json"
+  }
+}

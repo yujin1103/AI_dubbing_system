@@ -1,0 +1,403 @@
+{
+  "chunk_name": "test5_v305_full_chunk_000",
+  "video_duration": 86.023583,
+  "tts_sample_rate": 24000,
+  "groups": [
+    {
+      "group_start": 1.96,
+      "group_end": 2.68,
+      "speaker": "SPEAKER_92",
+      "text": "",
+      "from_v190b_asd_gap": true
+    },
+    {
+      "group_start": 2.18,
+      "group_end": 6.300000000000001,
+      "speaker": "SPEAKER_BG_00",
+      "text": "Stop",
+      "from_gap_fill": true
+    },
+    {
+      "group_start": 8.02,
+      "group_end": 9.58,
+      "speaker": "SPEAKER_BG_00",
+      "text": "it",
+      "from_gap_fill": true
+    },
+    {
+      "group_idx": 0,
+      "speaker": "SPEAKER_92",
+      "emotion": "Happy",
+      "text": "일일구에 전화해요",
+      "tts_emotion": "with urgent natural delivery",
+      "tts_context": "",
+      "speed": 1.0,
+      "group_start": 9.76,
+      "group_end": 11.2,
+      "max_allowed_duration": 5.55,
+      "segment_ids": [
+        0
+      ],
+      "wav_path": "/workspace/media/runs/20260526_000402_test5v305f_142120/dubbed/test5_v305_full_chunk_000_segments/group_000_SPEAKER_98.wav",
+      "ref_path": "/tmp/selfref_test5_v305_full_chunk_000_SPEAKER_98_0.wav"
+    },
+    {
+      "group_start": 10.7,
+      "group_end": 11.7,
+      "speaker": "SPEAKER_BG_00",
+      "text": "Oh",
+      "from_gap_fill": true
+    },
+    {
+      "group_start": 12.84,
+      "group_end": 13.44,
+      "speaker": "SPEAKER_92",
+      "text": "",
+      "from_v190b_asd_gap": true
+    },
+    {
+      "group_start": 12.94,
+      "group_end": 15.059999999999999,
+      "speaker": "SPEAKER_BG_00",
+      "text": "I'm",
+      "from_gap_fill": true
+    },
+    {
+      "group_idx": 1,
+      "speaker": "SPEAKER_92",
+      "emotion": "Happy",
+      "text": "제가 볼게요 볼게",
+      "tts_emotion": "with brisk professional focus",
+      "tts_context": "",
+      "speed": 1.0,
+      "group_start": 15.36,
+      "group_end": 16.72,
+      "max_allowed_duration": 0.9100000000000008,
+      "segment_ids": [
+        1
+      ],
+      "wav_path": "/workspace/media/runs/20260526_000402_test5v305f_142120/dubbed/test5_v305_full_chunk_000_segments/group_001_SPEAKER_96.wav",
+      "ref_path": "/workspace/media/runs/20260526_000402_test5v305f_142120/reference/SPEAKER_96_Neutral.wav"
+    },
+    {
+      "group_idx": 3,
+      "speaker": "SPEAKER_92",
+      "emotion": "Neutral",
+      "text": "목정맥 절단",
+      "tts_emotion": "with a tense clinical urgency",
+      "tts_context": "",
+      "speed": 1.0,
+      "group_start": 19.44,
+      "group_end": 20.32,
+      "max_allowed_duration": 0.9899999999999991,
+      "segment_ids": [
+        3
+      ],
+      "wav_path": "/workspace/media/runs/20260526_000402_test5v305f_142120/dubbed/test5_v305_full_chunk_000_segments/group_003_SPEAKER_96.wav",
+      "ref_path": "/workspace/media/runs/20260526_000402_test5v305f_142120/reference/SPEAKER_96_Neutral.wav"
+    },
+    {
+      "group_idx": 4,
+      "speaker": "SPEAKER_92",
+      "emotion": "Angry",
+      "text": "깨끗한 천 있나요, 아무나 좀요",
+      "tts_emotion": "with urgent crowd-directing energy",
+      "tts_context": "",
+      "speed": 1.05,
+      "group_start": 20.48,
+      "group_end": 22.56,
+      "max_allowed_duration": 2.3499999999999988,
+      "segment_ids": [
+        4
+      ],
+      "wav_path": "/workspace/media/runs/20260526_000402_test5v305f_142120/dubbed/test5_v305_full_chunk_000_segments/group_004_SPEAKER_96.wav",
+      "ref_path": "/workspace/media/runs/20260526_000402_test5v305f_142120/reference/SPEAKER_96_Neutral.wav"
+    },
+    {
+      "group_idx": 5,
+      "speaker": "SPEAKER_94",
+      "emotion": "Neutral",
+      "text": "가방에 옷 있어",
+      "tts_emotion": "with a helpful steady tone",
+      "tts_context": "",
+      "speed": 1.0,
+      "group_start": 22.88,
+      "group_end": 24.16,
+      "max_allowed_duration": 1.230000000000001,
+      "segment_ids": [
+        5
+      ],
+      "wav_path": "/workspace/media/runs/20260526_000402_test5v305f_142120/dubbed/test5_v305_full_chunk_000_segments/group_005_SPEAKER_94.wav",
+      "ref_path": "/tmp/selfref_test5_v305_full_chunk_000_SPEAKER_94_5.wav"
+    },
+    {
+      "group_idx": 6,
+      "speaker": "SPEAKER_93",
+      "emotion": "Happy",
+      "text": "좋아",
+      "tts_emotion": "with a bright relieved note",
+      "tts_context": "",
+      "speed": 1.0,
+      "group_start": 24.16,
+      "group_end": 24.64,
+      "max_allowed_duration": 11.07,
+      "segment_ids": [
+        6
+      ],
+      "wav_path": "/workspace/media/runs/20260526_000402_test5v305f_142120/dubbed/test5_v305_full_chunk_000_segments/group_006_SPEAKER_93.wav",
+      "ref_path": "/tmp/selfref_test5_v305_full_chunk_000_SPEAKER_93_6.wav"
+    },
+    {
+      "group_start": 26.08,
+      "group_end": 26.92,
+      "speaker": "SPEAKER_92",
+      "text": "",
+      "from_v190b_asd_gap": true
+    },
+    {
+      "group_start": 26.900000000000002,
+      "group_end": 27.900000000000002,
+      "speaker": "SPEAKER_BG_00",
+      "text": "Oh",
+      "from_gap_fill": true
+    },
+    {
+      "group_start": 28.6,
+      "group_end": 29.36,
+      "speaker": "SPEAKER_92",
+      "text": "",
+      "from_v190b_asd_gap": true
+    },
+    {
+      "group_start": 28.86,
+      "group_end": 29.86,
+      "speaker": "SPEAKER_BG_00",
+      "text": "Oh",
+      "from_gap_fill": true
+    },
+    {
+      "group_start": 29.02,
+      "group_end": 30.74,
+      "speaker": "SPEAKER_BG_00",
+      "text": "oh",
+      "from_gap_fill": true
+    },
+    {
+      "group_start": 29.74,
+      "group_end": 35.62,
+      "speaker": "SPEAKER_92",
+      "text": "oh",
+      "from_gap_fill": true
+    },
+    {
+      "group_idx": 7,
+      "speaker": "SPEAKER_92",
+      "emotion": "Angry",
+      "text": "죽이잖아",
+      "tts_emotion": "with a sharp burst of alarm",
+      "tts_context": "",
+      "speed": 1.05,
+      "group_start": 35.28,
+      "group_end": 36.0,
+      "max_allowed_duration": 2.3499999999999988,
+      "segment_ids": [
+        7
+      ],
+      "wav_path": "/workspace/media/runs/20260526_000402_test5v305f_142120/dubbed/test5_v305_full_chunk_000_segments/group_007_SPEAKER_92.wav",
+      "ref_path": "/workspace/media/runs/20260526_000402_test5v305f_142120/reference/SPEAKER_92_Angry.wav"
+    },
+    {
+      "group_idx": 8,
+      "speaker": "SPEAKER_92",
+      "emotion": "Sad",
+      "text": "살려, 출혈 심해",
+      "tts_emotion": "with urgent defensive conviction",
+      "tts_context": "",
+      "speed": 0.92,
+      "group_start": 37.68,
+      "group_end": 39.2,
+      "max_allowed_duration": 1.709999999999998,
+      "segment_ids": [
+        8
+      ],
+      "wav_path": "/workspace/media/runs/20260526_000402_test5v305f_142120/dubbed/test5_v305_full_chunk_000_segments/group_008_SPEAKER_96.wav",
+      "ref_path": "/workspace/media/runs/20260526_000402_test5v305f_142120/reference/SPEAKER_96_Neutral.wav"
+    },
+    {
+      "group_idx": 9,
+      "speaker": "SPEAKER_92",
+      "emotion": "Neutral",
+      "text": "지금 넣은 위치가 잘못됐어",
+      "tts_emotion": "with crisp corrective urgency",
+      "tts_context": "",
+      "speed": 1.0,
+      "group_start": 39.44,
+      "group_end": 41.36,
+      "max_allowed_duration": 1.95,
+      "segment_ids": [
+        9
+      ],
+      "wav_path": "/workspace/media/runs/20260526_000402_test5v305f_142120/dubbed/test5_v305_full_chunk_000_segments/group_009_SPEAKER_92.wav",
+      "ref_path": "/workspace/media/runs/20260526_000402_test5v305f_142120/reference/SPEAKER_92_Neutral.wav"
+    },
+    {
+      "group_idx": 10,
+      "speaker": "SPEAKER_92",
+      "emotion": "Neutral",
+      "text": "경정맥이 어딘진 알 만큼 해부학은 기억나",
+      "tts_emotion": "with brisk strained confidence",
+      "tts_context": "",
+      "speed": 1.0,
+      "group_start": 41.44,
+      "group_end": 44.56,
+      "max_allowed_duration": 3.0700000000000047,
+      "segment_ids": [
+        10
+      ],
+      "wav_path": "/workspace/media/runs/20260526_000402_test5v305f_142120/dubbed/test5_v305_full_chunk_000_segments/group_010_SPEAKER_96.wav",
+      "ref_path": "/workspace/media/runs/20260526_000402_test5v305f_142120/reference/SPEAKER_96_Neutral.wav"
+    },
+    {
+      "group_idx": 11,
+      "speaker": "SPEAKER_92",
+      "emotion": "Neutral",
+      "text": "그렇지 어른이면 맞는 위치야 애야 성인이 아니야, 애야. 그래서 기도를 누르고 있어서 지금 숨을 못 쉬고 있어",
+      "tts_emotion": "with a subtle wry edge",
+      "tts_context": "",
+      "speed": 1.0,
+      "group_start": 44.56,
+      "group_end": 52.8,
+      "max_allowed_duration": 10.829999999999995,
+      "segment_ids": [
+        10,
+        10,
+        10,
+        10
+      ],
+      "wav_path": "/workspace/media/runs/20260526_000402_test5v305f_142120/dubbed/test5_v305_full_chunk_000_segments/group_011_SPEAKER_92.wav",
+      "ref_path": "/workspace/media/runs/20260526_000402_test5v305f_142120/reference/SPEAKER_92_Neutral.wav"
+    },
+    {
+      "group_start": 52.3,
+      "group_end": 53.3,
+      "speaker": "SPEAKER_92",
+      "text": "Oh",
+      "from_gap_fill": true
+    },
+    {
+      "group_start": 52.62,
+      "group_end": 54.26,
+      "speaker": "SPEAKER_92",
+      "text": "oh",
+      "from_gap_fill": true
+    },
+    {
+      "group_idx": 12,
+      "speaker": "SPEAKER_92",
+      "emotion": "Happy",
+      "text": "압박은 더 위로 해야 해",
+      "tts_emotion": "with a brisk corrective tone",
+      "tts_context": "",
+      "speed": 1.0,
+      "group_start": 55.44,
+      "group_end": 57.04,
+      "max_allowed_duration": 6.5100000000000025,
+      "segment_ids": [
+        11
+      ],
+      "wav_path": "/workspace/media/runs/20260526_000402_test5v305f_142120/dubbed/test5_v305_full_chunk_000_segments/group_012_SPEAKER_92.wav",
+      "ref_path": "/workspace/media/runs/20260526_000402_test5v305f_142120/reference/SPEAKER_92_Neutral.wav"
+    },
+    {
+      "group_start": 57.16,
+      "group_end": 57.84,
+      "speaker": "SPEAKER_92",
+      "text": "",
+      "from_v190b_asd_gap": true
+    },
+    {
+      "group_start": 57.34,
+      "group_end": 58.34,
+      "speaker": "SPEAKER_94",
+      "text": "Oh",
+      "from_gap_fill": true
+    },
+    {
+      "group_start": 62.0,
+      "group_end": 64.445,
+      "speaker": "SPEAKER_92",
+      "text": "바로 거기야 유리",
+      "from_v190_focused": true
+    },
+    {
+      "group_start": 64.445,
+      "group_end": 65.03,
+      "speaker": "SPEAKER_92",
+      "text": "좀",
+      "from_v190_focused": true
+    },
+    {
+      "group_start": 64.85,
+      "group_end": 65.85,
+      "speaker": "SPEAKER_94",
+      "text": "Oh",
+      "from_gap_fill": true
+    },
+    {
+      "group_start": 70.78,
+      "group_end": 72.71000000000001,
+      "speaker": "SPEAKER_94",
+      "text": "유리 유리야",
+      "from_v190_focused": true
+    },
+    {
+      "group_start": 73.98,
+      "group_end": 76.0,
+      "speaker": "SPEAKER_92",
+      "text": "괜찮아요",
+      "from_v190_focused": true
+    },
+    {
+      "group_idx": 16,
+      "speaker": "SPEAKER_88",
+      "emotion": "Neutral",
+      "text": "누구야",
+      "tts_emotion": "with brisk guarded curiosity",
+      "tts_context": "",
+      "speed": 1.0,
+      "group_start": 77.28,
+      "group_end": 77.76,
+      "max_allowed_duration": 1.710000000000005,
+      "segment_ids": [
+        14
+      ],
+      "wav_path": "/workspace/media/runs/20260526_000402_test5v305f_142120/dubbed/test5_v305_full_chunk_000_segments/group_016_SPEAKER_88.wav",
+      "ref_path": "/tmp/selfref_test5_v305_full_chunk_000_SPEAKER_88_16.wav"
+    },
+    {
+      "group_start": 78.32,
+      "group_end": 78.92,
+      "speaker": "SPEAKER_92",
+      "text": "",
+      "from_v190b_asd_gap": true
+    },
+    {
+      "group_idx": 17,
+      "speaker": "SPEAKER_92",
+      "emotion": "Neutral",
+      "text": "안녕하세요 숀 머피 의사입니다 산호세 보나벤처 병원 외과 전공의입니다",
+      "tts_emotion": "with a calm professional tone",
+      "tts_context": "",
+      "speed": 1.0,
+      "group_start": 79.04,
+      "group_end": 84.64,
+      "max_allowed_duration": 6.933582999999996,
+      "segment_ids": [
+        15,
+        16
+      ],
+      "wav_path": "/workspace/media/runs/20260526_000402_test5v305f_142120/dubbed/test5_v305_full_chunk_000_segments/group_017_SPEAKER_92.wav",
+      "ref_path": "/workspace/media/runs/20260526_000402_test5v305f_142120/reference/SPEAKER_92_Neutral.wav"
+    }
+  ]
+}

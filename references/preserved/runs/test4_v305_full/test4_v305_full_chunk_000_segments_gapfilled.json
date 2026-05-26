@@ -1,0 +1,577 @@
+{
+  "chunk_name": "test4_v305_full_chunk_000",
+  "video_duration": 109.275833,
+  "tts_sample_rate": 24000,
+  "groups": [
+    {
+      "group_idx": 0,
+      "speaker": "SPEAKER_02",
+      "emotion": "Neutral",
+      "text": "션 어디야, 이거 들으면 전화해 빨리 전화해 제발, 방금 그건 a mistake",
+      "tts_emotion": "with a calm note of growing concern",
+      "tts_context": "",
+      "speed": 1.0,
+      "group_start": 0.56,
+      "group_end": 6.88,
+      "max_allowed_duration": 5.87,
+      "segment_ids": [
+        0,
+        0,
+        0
+      ],
+      "wav_path": "/workspace/media/runs/20260526_000708_test4v305f_8816ac/dubbed/test4_v305_full_chunk_000_segments/group_000_SPEAKER_02.wav",
+      "ref_path": "/workspace/media/runs/20260526_000708_test4v305f_8816ac/reference/SPEAKER_02_Neutral.wav"
+    },
+    {
+      "group_start": 6.88,
+      "group_end": 10.16,
+      "speaker": "SPEAKER_04",
+      "text": "I agree 새 의사 얘기 아냐, 너 얘기야 낚여",
+      "from_v194_split": true,
+      "word_count": 2
+    },
+    {
+      "group_idx": 4,
+      "speaker": "SPEAKER_05",
+      "emotion": "Neutral",
+      "text": "넌 넘어가",
+      "tts_emotion": "with a subtle edge of disbelief",
+      "tts_context": "",
+      "speed": 1.0,
+      "group_start": 10.16,
+      "group_end": 11.04,
+      "max_allowed_duration": 0.829999999999999,
+      "segment_ids": [
+        1
+      ],
+      "wav_path": "/workspace/media/runs/20260526_000708_test4v305f_8816ac/dubbed/test4_v305_full_chunk_000_segments/group_004_SPEAKER_05.wav",
+      "ref_path": "/tmp/selfref_test4_v305_full_chunk_000_SPEAKER_05_4.wav"
+    },
+    {
+      "group_idx": 5,
+      "speaker": "SPEAKER_01",
+      "emotion": "Happy",
+      "text": "걔들일지도, 아마도",
+      "tts_emotion": "with a bright hint of playful speculation",
+      "tts_context": "",
+      "speed": 1.0,
+      "group_start": 11.04,
+      "group_end": 12.56,
+      "max_allowed_duration": 1.4700000000000013,
+      "segment_ids": [
+        1
+      ],
+      "wav_path": "/workspace/media/runs/20260526_000708_test4v305f_8816ac/dubbed/test4_v305_full_chunk_000_segments/group_005_SPEAKER_01.wav",
+      "ref_path": "/tmp/selfref_test4_v305_full_chunk_000_SPEAKER_01_5.wav"
+    },
+    {
+      "group_idx": 6,
+      "speaker": "SPEAKER_04",
+      "emotion": "Sad",
+      "text": "뭔 실수?",
+      "tts_emotion": "with a puzzled and slightly wary edge",
+      "tts_context": "",
+      "speed": 0.92,
+      "group_start": 12.56,
+      "group_end": 14.0,
+      "max_allowed_duration": 1.3899999999999995,
+      "segment_ids": [
+        1
+      ],
+      "wav_path": "/workspace/media/runs/20260526_000708_test4v305f_8816ac/dubbed/test4_v305_full_chunk_000_segments/group_006_SPEAKER_04.wav",
+      "ref_path": "/workspace/media/runs/20260526_000708_test4v305f_8816ac/reference/SPEAKER_04_Neutral_loop.wav"
+    },
+    {
+      "group_idx": 7,
+      "speaker": "SPEAKER_02",
+      "emotion": "Neutral",
+      "text": "너야 조카를 쐈잖아",
+      "tts_emotion": "in a crisp matter-of-fact manner",
+      "tts_context": "",
+      "speed": 1.0,
+      "group_start": 14.0,
+      "group_end": 15.5,
+      "max_allowed_duration": 1.45,
+      "segment_ids": [
+        1,
+        1
+      ],
+      "wav_path": "/workspace/media/runs/20260526_000708_test4v305f_8816ac/dubbed/test4_v305_full_chunk_000_segments/group_007_SPEAKER_02.wav",
+      "ref_path": "/workspace/media/runs/20260526_000708_test4v305f_8816ac/reference/SPEAKER_02_Neutral.wav"
+    },
+    {
+      "group_idx": 8,
+      "speaker": "SPEAKER_04",
+      "emotion": "Neutral",
+      "text": "에이, 그거 진짜 좀 웃겼잖아",
+      "tts_emotion": "with a breezy and lightly amused shrug",
+      "tts_context": "",
+      "speed": 1.0,
+      "group_start": 15.5,
+      "group_end": 17.5,
+      "max_allowed_duration": 1.95,
+      "segment_ids": [
+        1
+      ],
+      "wav_path": "/workspace/media/runs/20260526_000708_test4v305f_8816ac/dubbed/test4_v305_full_chunk_000_segments/group_008_SPEAKER_04.wav",
+      "ref_path": "/workspace/media/runs/20260526_000708_test4v305f_8816ac/reference/SPEAKER_04_Neutral_loop.wav"
+    },
+    {
+      "group_idx": 9,
+      "speaker": "SPEAKER_02",
+      "emotion": "Neutral",
+      "text": "아주 웃겼지, 근데 그건 무례했어",
+      "tts_emotion": "with a dry conversational push",
+      "tts_context": "",
+      "speed": 1.0,
+      "group_start": 17.5,
+      "group_end": 19.68,
+      "max_allowed_duration": 2.13,
+      "segment_ids": [
+        1,
+        1
+      ],
+      "wav_path": "/workspace/media/runs/20260526_000708_test4v305f_8816ac/dubbed/test4_v305_full_chunk_000_segments/group_009_SPEAKER_02.wav",
+      "ref_path": "/workspace/media/runs/20260526_000708_test4v305f_8816ac/reference/SPEAKER_02_Neutral.wav"
+    },
+    {
+      "group_idx": 10,
+      "speaker": "SPEAKER_04",
+      "emotion": "Neutral",
+      "text": "그분 존중 안 하네요 그분 존중 안 해서겠죠",
+      "tts_emotion": "with a calm but pointed edge",
+      "tts_context": "",
+      "speed": 1.0,
+      "group_start": 19.68,
+      "group_end": 22.56,
+      "max_allowed_duration": 3.1499999999999995,
+      "segment_ids": [
+        1,
+        2
+      ],
+      "wav_path": "/workspace/media/runs/20260526_000708_test4v305f_8816ac/dubbed/test4_v305_full_chunk_000_segments/group_010_SPEAKER_04.wav",
+      "ref_path": "/workspace/media/runs/20260526_000708_test4v305f_8816ac/reference/SPEAKER_04_Neutral_loop.wav"
+    },
+    {
+      "group_idx": 11,
+      "speaker": "SPEAKER_02",
+      "emotion": "Sad",
+      "text": "존중은 존경이나 겁, 난 아니죠",
+      "tts_emotion": "with a steady tone and quiet conviction",
+      "tts_context": "",
+      "speed": 0.92,
+      "group_start": 22.88,
+      "group_end": 27.38,
+      "max_allowed_duration": 4.45,
+      "segment_ids": [
+        3
+      ],
+      "wav_path": "/workspace/media/runs/20260526_000708_test4v305f_8816ac/dubbed/test4_v305_full_chunk_000_segments/group_011_SPEAKER_02.wav",
+      "ref_path": "/workspace/media/runs/20260526_000708_test4v305f_8816ac/reference/SPEAKER_02_Sad.wav"
+    },
+    {
+      "group_start": 27.38,
+      "group_end": 28.255,
+      "speaker": "SPEAKER_05",
+      "text": "글쎄 저도",
+      "from_v190_focused": true
+    },
+    {
+      "group_start": 28.255,
+      "group_end": 28.755,
+      "speaker": "SPEAKER_04",
+      "text": "아닙니다",
+      "from_v190_focused": true
+    },
+    {
+      "group_idx": 13,
+      "speaker": "SPEAKER_01",
+      "emotion": "Sad",
+      "text": "그러죠",
+      "tts_emotion": "with a crisp note of reproach",
+      "tts_context": "",
+      "speed": 0.92,
+      "group_start": 28.88,
+      "group_end": 29.44,
+      "max_allowed_duration": 1.95,
+      "segment_ids": [
+        3
+      ],
+      "wav_path": "/workspace/media/runs/20260526_000708_test4v305f_8816ac/dubbed/test4_v305_full_chunk_000_segments/group_013_SPEAKER_01.wav",
+      "ref_path": "/tmp/selfref_test4_v305_full_chunk_000_SPEAKER_01_13.wav"
+    },
+    {
+      "group_start": 30.88,
+      "group_end": 32.574999999999996,
+      "speaker": "SPEAKER_02",
+      "text": "거기 있는 건",
+      "from_v190_focused": true
+    },
+    {
+      "group_start": 32.574999999999996,
+      "group_end": 34.72,
+      "speaker": "SPEAKER_01",
+      "text": "할아버지가 병원을 세웠기 때문이죠",
+      "from_v190_focused": true
+    },
+    {
+      "group_start": 35.98,
+      "group_end": 37.06,
+      "speaker": "SPEAKER_05",
+      "text": "Okay",
+      "from_gap_fill": true
+    },
+    {
+      "group_idx": 15,
+      "speaker": "SPEAKER_05",
+      "emotion": "Neutral",
+      "text": "이 대화가 딴 데로 샌 건 없던 일로 하죠",
+      "tts_emotion": "with a brisk professional tone",
+      "tts_context": "",
+      "speed": 1.0,
+      "group_start": 37.28,
+      "group_end": 39.76,
+      "max_allowed_duration": 2.429999999999997,
+      "segment_ids": [
+        5
+      ],
+      "wav_path": "/workspace/media/runs/20260526_000708_test4v305f_8816ac/dubbed/test4_v305_full_chunk_000_segments/group_015_SPEAKER_05.wav",
+      "ref_path": "/tmp/selfref_test4_v305_full_chunk_000_SPEAKER_05_15.wav"
+    },
+    {
+      "group_idx": 16,
+      "speaker": "SPEAKER_04",
+      "emotion": "Happy",
+      "text": "대신 더 중요한 데 집중해",
+      "tts_emotion": "with a bright note of practical confidence",
+      "tts_context": "",
+      "speed": 1.0,
+      "group_start": 39.76,
+      "group_end": 41.68,
+      "max_allowed_duration": 1.8700000000000017,
+      "segment_ids": [
+        5
+      ],
+      "wav_path": "/workspace/media/runs/20260526_000708_test4v305f_8816ac/dubbed/test4_v305_full_chunk_000_segments/group_016_SPEAKER_04.wav",
+      "ref_path": "/workspace/media/runs/20260526_000708_test4v305f_8816ac/reference/SPEAKER_04_Neutral_loop.wav"
+    },
+    {
+      "group_idx": 17,
+      "speaker": "SPEAKER_05",
+      "emotion": "Neutral",
+      "text": "네가 지고 있던 그 토론에서는",
+      "tts_emotion": "with a calm matter-of-fact delivery",
+      "tts_context": "",
+      "speed": 1.0,
+      "group_start": 41.68,
+      "group_end": 44.0,
+      "max_allowed_duration": 2.2700000000000005,
+      "segment_ids": [
+        5
+      ],
+      "wav_path": "/workspace/media/runs/20260526_000708_test4v305f_8816ac/dubbed/test4_v305_full_chunk_000_segments/group_017_SPEAKER_05.wav",
+      "ref_path": "/tmp/selfref_test4_v305_full_chunk_000_SPEAKER_05_17.wav"
+    },
+    {
+      "group_idx": 18,
+      "speaker": "SPEAKER_04",
+      "emotion": "Neutral",
+      "text": "이렇게 이겨 넌 그렇게 안 해 개인적으로 받아들이지 마 그걸 원해 네가 주면 걔들한텐 너",
+      "tts_emotion": "in a brisk conversational manner",
+      "tts_context": "",
+      "speed": 1.0,
+      "group_start": 44.0,
+      "group_end": 50.72,
+      "max_allowed_duration": 6.669999999999999,
+      "segment_ids": [
+        5,
+        5,
+        5,
+        6,
+        6,
+        6
+      ],
+      "wav_path": "/workspace/media/runs/20260526_000708_test4v305f_8816ac/dubbed/test4_v305_full_chunk_000_segments/group_018_SPEAKER_04.wav",
+      "ref_path": "/workspace/media/runs/20260526_000708_test4v305f_8816ac/reference/SPEAKER_04_Neutral_loop.wav"
+    },
+    {
+      "group_idx": 19,
+      "speaker": "SPEAKER_05",
+      "emotion": "Neutral",
+      "text": "놓칠 거야",
+      "tts_emotion": "with a calm note of warning",
+      "tts_context": "",
+      "speed": 1.0,
+      "group_start": 50.72,
+      "group_end": 51.52,
+      "max_allowed_duration": 5.389999999999998,
+      "segment_ids": [
+        6
+      ],
+      "wav_path": "/workspace/media/runs/20260526_000708_test4v305f_8816ac/dubbed/test4_v305_full_chunk_000_segments/group_019_SPEAKER_05.wav",
+      "ref_path": "/tmp/selfref_test4_v305_full_chunk_000_SPEAKER_05_19.wav"
+    },
+    {
+      "group_start": 51.52,
+      "group_end": 53.32,
+      "speaker": "SPEAKER_04",
+      "text": "",
+      "from_v190b_asd_gap": true
+    },
+    {
+      "group_start": 53.22,
+      "group_end": 54.3,
+      "speaker": "SPEAKER_05",
+      "text": "Oh",
+      "from_gap_fill": true
+    },
+    {
+      "group_idx": 20,
+      "speaker": "SPEAKER_05",
+      "emotion": "Sad",
+      "text": "산호세 성 보나벤처 병원에 가야 해 거기로 가",
+      "tts_emotion": "with an urgent, worried natural delivery",
+      "tts_context": "",
+      "speed": 0.92,
+      "group_start": 56.16,
+      "group_end": 59.84,
+      "max_allowed_duration": 2.9900000000000064,
+      "segment_ids": [
+        7
+      ],
+      "wav_path": "/workspace/media/runs/20260526_000708_test4v305f_8816ac/dubbed/test4_v305_full_chunk_000_segments/group_020_SPEAKER_05.wav",
+      "ref_path": "/workspace/media/runs/20260526_000708_test4v305f_8816ac/reference/SPEAKER_05_Sad_loop.wav"
+    },
+    {
+      "group_idx": 22,
+      "speaker": "SPEAKER_05",
+      "emotion": "Neutral",
+      "text": "좋아",
+      "tts_emotion": "with a small note of approval",
+      "tts_context": "",
+      "speed": 1.0,
+      "group_start": 60.48,
+      "group_end": 60.72,
+      "max_allowed_duration": 8.27,
+      "segment_ids": [
+        8
+      ],
+      "wav_path": "/workspace/media/runs/20260526_000708_test4v305f_8816ac/dubbed/test4_v305_full_chunk_000_segments/group_022_SPEAKER_05.wav",
+      "ref_path": "/tmp/selfref_test4_v305_full_chunk_000_SPEAKER_05_22.wav"
+    },
+    {
+      "group_idx": 23,
+      "speaker": "SPEAKER_04",
+      "emotion": "Neutral",
+      "text": "어서 타",
+      "tts_emotion": "with a brisk, practical cue",
+      "tts_context": "",
+      "speed": 1.0,
+      "group_start": 68.8,
+      "group_end": 69.36,
+      "max_allowed_duration": 0.5100000000000022,
+      "segment_ids": [
+        9
+      ],
+      "wav_path": "/workspace/media/runs/20260526_000708_test4v305f_8816ac/dubbed/test4_v305_full_chunk_000_segments/group_023_SPEAKER_04.wav",
+      "ref_path": "/workspace/media/runs/20260526_000708_test4v305f_8816ac/reference/SPEAKER_04_Neutral_loop.wav"
+    },
+    {
+      "group_idx": 24,
+      "speaker": "SPEAKER_03",
+      "emotion": "Neutral",
+      "text": "일단 들어와 평범한 사람처럼 굴어",
+      "tts_emotion": "with a quick, matter-of-fact delivery",
+      "tts_context": "",
+      "speed": 1.0,
+      "group_start": 69.36,
+      "group_end": 72.0,
+      "max_allowed_duration": 2.8299999999999956,
+      "segment_ids": [
+        9,
+        9
+      ],
+      "wav_path": "/workspace/media/runs/20260526_000708_test4v305f_8816ac/dubbed/test4_v305_full_chunk_000_segments/group_024_SPEAKER_03.wav",
+      "ref_path": "/tmp/selfref_test4_v305_full_chunk_000_SPEAKER_03_24.wav"
+    },
+    {
+      "group_idx": 25,
+      "speaker": "SPEAKER_00",
+      "emotion": "Sad",
+      "text": "할 줄 몰라",
+      "tts_emotion": "with a frustrated note of disbelief",
+      "tts_context": "",
+      "speed": 0.92,
+      "group_start": 72.24,
+      "group_end": 73.12,
+      "max_allowed_duration": 1.3099999999999994,
+      "segment_ids": [
+        10
+      ],
+      "wav_path": "/workspace/media/runs/20260526_000708_test4v305f_8816ac/dubbed/test4_v305_full_chunk_000_segments/group_025_SPEAKER_00.wav",
+      "ref_path": "/tmp/selfref_test4_v305_full_chunk_000_SPEAKER_00_25.wav"
+    },
+    {
+      "group_idx": 26,
+      "speaker": "SPEAKER_01",
+      "emotion": "Angry",
+      "text": "말이 돼",
+      "tts_emotion": "with a sharp burst of angry disbelief",
+      "tts_context": "",
+      "speed": 1.05,
+      "group_start": 73.6,
+      "group_end": 74.32,
+      "max_allowed_duration": 0.6699999999999988,
+      "segment_ids": [
+        11
+      ],
+      "wav_path": "/workspace/media/runs/20260526_000708_test4v305f_8816ac/dubbed/test4_v305_full_chunk_000_segments/group_026_SPEAKER_01.wav",
+      "ref_path": "/tmp/selfref_test4_v305_full_chunk_000_SPEAKER_01_26.wav"
+    },
+    {
+      "group_idx": 27,
+      "speaker": "SPEAKER_03",
+      "emotion": "Angry",
+      "text": "어쩌라고",
+      "tts_emotion": "with a clipped edge of frustration",
+      "tts_context": "",
+      "speed": 1.05,
+      "group_start": 74.32,
+      "group_end": 75.12,
+      "max_allowed_duration": 2.0300000000000127,
+      "segment_ids": [
+        11
+      ],
+      "wav_path": "/workspace/media/runs/20260526_000708_test4v305f_8816ac/dubbed/test4_v305_full_chunk_000_segments/group_027_SPEAKER_03.wav",
+      "ref_path": "/workspace/media/runs/20260526_000708_test4v305f_8816ac/reference/SPEAKER_03_Angry_loop.wav"
+    },
+    {
+      "group_idx": 28,
+      "speaker": "SPEAKER_03",
+      "emotion": "Neutral",
+      "text": "여긴 세 번째 쫓겨난 학교야",
+      "tts_emotion": "with a tense matter-of-fact frustration",
+      "tts_context": "",
+      "speed": 1.0,
+      "group_start": 76.4,
+      "group_end": 78.16,
+      "max_allowed_duration": 1.7099999999999909,
+      "segment_ids": [
+        12
+      ],
+      "wav_path": "/workspace/media/runs/20260526_000708_test4v305f_8816ac/dubbed/test4_v305_full_chunk_000_segments/group_028_SPEAKER_03.wav",
+      "ref_path": "/tmp/selfref_test4_v305_full_chunk_000_SPEAKER_03_28.wav"
+    },
+    {
+      "group_idx": 29,
+      "speaker": "SPEAKER_00",
+      "emotion": "Angry",
+      "text": "다른 데 찾아",
+      "tts_emotion": "with a curt push of irritation",
+      "tts_context": "",
+      "speed": 1.05,
+      "group_start": 78.16,
+      "group_end": 79.2,
+      "max_allowed_duration": 0.9900000000000062,
+      "segment_ids": [
+        12
+      ],
+      "wav_path": "/workspace/media/runs/20260526_000708_test4v305f_8816ac/dubbed/test4_v305_full_chunk_000_segments/group_029_SPEAKER_00.wav",
+      "ref_path": "/tmp/selfref_test4_v305_full_chunk_000_SPEAKER_00_29.wav"
+    },
+    {
+      "group_idx": 30,
+      "speaker": "SPEAKER_03",
+      "emotion": "Neutral",
+      "text": "학교는 소용없어 걔들 변해 걔들이 걜 감당 못해도 이해돼 우리도 뻔히 우리도 못 버텨",
+      "tts_emotion": "with a flat note of bitter certainty",
+      "tts_context": "",
+      "speed": 1.0,
+      "group_start": 79.2,
+      "group_end": 85.6,
+      "max_allowed_duration": 2.0299999999999985,
+      "segment_ids": [
+        12,
+        12
+      ],
+      "wav_path": "/workspace/media/runs/20260526_000708_test4v305f_8816ac/dubbed/test4_v305_full_chunk_000_segments/group_030_SPEAKER_03.wav",
+      "ref_path": "/tmp/selfref_test4_v305_full_chunk_000_SPEAKER_03_30.wav"
+    },
+    {
+      "group_idx": 32,
+      "speaker": "SPEAKER_01",
+      "emotion": "Sad",
+      "text": "이번엔 뭐야",
+      "tts_emotion": "with an irritated snap of concern",
+      "tts_context": "",
+      "speed": 0.92,
+      "group_start": 85.6,
+      "group_end": 86.72,
+      "max_allowed_duration": 1.0700000000000045,
+      "segment_ids": [
+        12
+      ],
+      "wav_path": "/workspace/media/runs/20260526_000708_test4v305f_8816ac/dubbed/test4_v305_full_chunk_000_segments/group_032_SPEAKER_01.wav",
+      "ref_path": "/tmp/selfref_test4_v305_full_chunk_000_SPEAKER_01_32.wav"
+    },
+    {
+      "group_idx": 33,
+      "speaker": "SPEAKER_03",
+      "emotion": "Neutral",
+      "text": "무슨 일이야 걔 아프잖아",
+      "tts_emotion": "with a firm note of urgency",
+      "tts_context": "",
+      "speed": 1.0,
+      "group_start": 86.72,
+      "group_end": 89.12,
+      "max_allowed_duration": 1.3099999999999994,
+      "segment_ids": [
+        12
+      ],
+      "wav_path": "/workspace/media/runs/20260526_000708_test4v305f_8816ac/dubbed/test4_v305_full_chunk_000_segments/group_033_SPEAKER_03.wav",
+      "ref_path": "/tmp/selfref_test4_v305_full_chunk_000_SPEAKER_03_33.wav"
+    },
+    {
+      "group_start": 89.44,
+      "group_end": 90.32,
+      "speaker": "SPEAKER_03",
+      "text": "",
+      "from_v190b_asd_gap": true
+    },
+    {
+      "group_start": 90.22,
+      "group_end": 91.38,
+      "speaker": "SPEAKER_00",
+      "text": "Yeah",
+      "from_gap_fill": true
+    },
+    {
+      "group_start": 92.24,
+      "group_end": 94.43499999999999,
+      "speaker": "SPEAKER_03",
+      "text": "너 뭐 했어 션,",
+      "from_v190_focused": true
+    },
+    {
+      "group_start": 94.43499999999999,
+      "group_end": 95.27,
+      "speaker": "SPEAKER_04",
+      "text": "너",
+      "from_v190_focused": true
+    },
+    {
+      "group_start": 95.89999999999999,
+      "group_end": 97.52,
+      "speaker": "SPEAKER_03",
+      "text": "진짜 멍청하네 토끼야",
+      "from_v190_focused": true
+    },
+    {
+      "group_start": 97.02,
+      "group_end": 98.5,
+      "speaker": "SPEAKER_03",
+      "text": "Oh",
+      "from_gap_fill": true
+    }
+  ]
+}

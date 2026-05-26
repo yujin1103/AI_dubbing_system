@@ -1,0 +1,52 @@
+{
+  "score": 1.1667,
+  "avg_consistency": 0.8667,
+  "main_count": 4,
+  "main_count_gt": 4,
+  "main_match": true,
+  "bg_detected": true,
+  "per_gt_consistency": {
+    "엄마": 0.6667,
+    "아빠": 1.0,
+    "BG": 1.0,
+    "의사": 0.6667,
+    "션": 1.0
+  },
+  "gt_to_detected_speakers": {
+    "엄마": [
+      "SPEAKER_BG_00",
+      "SPEAKER_BG_00",
+      "SPEAKER_94"
+    ],
+    "아빠": [
+      "SPEAKER_BG_00",
+      "SPEAKER_BG_00"
+    ],
+    "BG": [
+      "SPEAKER_BG_00"
+    ],
+    "의사": [
+      "SPEAKER_92",
+      "SPEAKER_92",
+      "SPEAKER_93",
+      "SPEAKER_92",
+      "SPEAKER_92",
+      "SPEAKER_88"
+    ],
+    "션": [
+      "SPEAKER_92",
+      "SPEAKER_92",
+      "SPEAKER_92",
+      "SPEAKER_92",
+      "SPEAKER_92",
+      "SPEAKER_92",
+      "SPEAKER_92"
+    ]
+  },
+  "n_detect_segments": 36,
+  "n_gt_segments": 19,
+  "source": {
+    "segments_json": "media/runs/20260526_000402_test5v305f_142120/meta/test5_v305_full_chunk_000_segments_gapfilled.json",
+    "gt_json": "media/gt/test5_gt.json"
+  }
+}

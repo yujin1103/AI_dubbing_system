@@ -25,6 +25,8 @@ meta/
 bef/
 .external/
 runs/
+!references/preserved/runs/
+!references/preserved/runs/**
 configs/runs/
 
 # webapp 빌드 산출물
