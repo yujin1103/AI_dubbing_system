@@ -151,6 +151,19 @@ def step_diarize(config: dict) -> None:
             **diarization_kwargs,
         )
         return
+    if engine in {"fusion_4way", "preserved_fusion"}:
+        # 검증된 4-way fusion daemon (port 8903) 호출. test4/test5 sweep best 적용.
+        from preserved_fusion import diarize_with_4way_fusion
+
+        diarize_with_4way_fusion(
+            input_audio,
+            output_rttm,
+            num_speakers=deep_get(config, ("diarization", "num_speakers")),
+            min_duration=float(deep_get(config, ("diarization", "min_duration"), 0.3)),
+            fusion_url=deep_get(config, ("diarization", "fusion_url")),
+            timeout=int(deep_get(config, ("diarization", "fusion_timeout"), 600)),
+        )
+        return
     if engine != "diarizen":
         raise ValueError(f"Unsupported diarization.engine: {engine}")
     diarize_audio(input_audio, output_rttm, **diarization_kwargs)
@@ -203,12 +216,43 @@ def step_cut_chunks(config: dict) -> None:
 
 
 def step_run_asr(config: dict) -> None:
+    # 검증된 boost subchunk 옵션 (test5: 141 → 156 words, +15 fresh, Adam x2 detect)
+    boost_cfg = deep_get(config, ("asr", "boost_subchunk")) or None
     transcribe_chunks(
         require_value(config, ("paths", "speaker_chunks_json")),
         require_value(config, ("paths", "asr_json")),
         model_dir=require_value(config, ("models", "asr")),
         device=str(deep_get(config, ("runtime", "device"), "cuda:0")),
         dtype=str(deep_get(config, ("runtime", "dtype"), "float16")),
+        boost_subchunk=boost_cfg,
+    )
+
+
+def step_apply_preserved_repair(config: dict) -> None:
+    # E:\TTS_capstone 검증된 8 repair patches 일괄 호출.
+    # config.preserved_repair.run_dir = run 디렉토리 (meta/ + vocals/ 필요).
+    # config.preserved_repair.gap_fill = {main_merge, bg_merge, sim_match, pad}.
+    # config.preserved_repair.skip = ['word_level_split', ...] (optional).
+    repair_cfg = deep_get(config, ("preserved_repair",)) or {}
+    if not bool(repair_cfg.get("enabled", False)):
+        logger.info("Skipping preserved_repair (preserved_repair.enabled=false)")
+        return
+    run_dir = repair_cfg.get("run_dir")
+    if not run_dir:
+        logger.warning("preserved_repair.run_dir not set; skipping")
+        return
+    from apply_repair_patches import apply_all
+    gf = repair_cfg.get("gap_fill") or {}
+    apply_all(
+        str(resolve_project_path(run_dir)),
+        gap_fill_args={
+            "main_merge": float(gf.get("main_merge", 0.45)),
+            "bg_merge": float(gf.get("bg_merge", 0.30)),
+            "sim_match": float(gf.get("sim_match", 0.45)),
+            "pad": float(gf.get("pad", 0.5)),
+        },
+        skip=repair_cfg.get("skip") or [],
+        venv_python=repair_cfg.get("venv_python") or "/opt/venv_diarizen/bin/python",
     )
 
 
@@ -411,6 +455,7 @@ STEP_FUNCTIONS: list[tuple[str, Callable[[dict], None]]] = [
     ("redirect_nonspeech", step_redirect_nonspeech),
     ("diarize", step_diarize),
     ("rttm_to_json", step_rttm_to_json),
+    ("apply_preserved_repair", step_apply_preserved_repair),
     ("merge_chunks", step_merge_chunks),
     ("cut_chunks", step_cut_chunks),
     ("extract_emotion", step_extract_emotion),

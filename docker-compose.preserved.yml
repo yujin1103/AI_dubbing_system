@@ -1,0 +1,79 @@
+## ============================================================
+##  Preserved environment from E:\TTS_capstone
+##  단일 dubbing_pipeline 컨테이너 — 모든 venv (system + venv_asr + venv_lipsync)
+##  와 모든 daemon (4-way fusion + ASR + TTS) 이 한 컨테이너 안에서 동작.
+##
+##  팀원 docker-compose.yml (9 services) 와 별개로 보존 환경 그대로 띄우는 옵션.
+##
+##  빌드:
+##    docker build -f docker/Dockerfile.preserved-base -t tts_base:latest .
+##    docker build -f docker/Dockerfile.preserved-pipeline -t dubbing_pipeline:latest .
+##    docker compose -f docker-compose.preserved.yml up -d
+##
+##  daemons 기동 (컨테이너 안):
+##    docker exec dubbing_pipeline bash /workspace/src/daemons/start_daemons.sh
+##
+##  파이프라인 실행 (검증된 best config):
+##    docker exec dubbing_pipeline /opt/venv_diarizen/bin/python /workspace/src/pipeline.py \
+##        --config configs/preserved_test4.json --input-video media/input/test4.mp4
+## ============================================================
+
+services:
+  tts_base:
+    build:
+      context: .
+      dockerfile: docker/Dockerfile.preserved-base
+    image: tts_base:latest
+    profiles: ["base"]
+
+  dubbing_pipeline:
+    build:
+      context: .
+      dockerfile: docker/Dockerfile.preserved-pipeline
+    image: dubbing_pipeline:latest
+    container_name: dubbing_pipeline
+    shm_size: "4gb"
+    ipc: host
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: 1
+              capabilities: [gpu]
+        limits:
+          memory: 50g
+    entrypoint: sleep
+    command: infinity
+    environment:
+      - NVIDIA_VISIBLE_DEVICES=all
+      - NVIDIA_DRIVER_CAPABILITIES=compute,utility
+      - HF_TOKEN=${HF_TOKEN}
+      - PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True,max_split_size_mb:512
+      - NVIDIA_TF32_OVERRIDE=1
+      - CUBLAS_WORKSPACE_CONFIG=:4096:8
+      - HF_HOME=/workspace/media/model_cache/huggingface
+      - HUGGINGFACE_HUB_CACHE=/workspace/media/model_cache/huggingface/hub
+      - MODELSCOPE_CACHE=/workspace/media/model_cache/modelscope
+      - TORCH_HOME=/workspace/media/model_cache/torch
+      - VECTORENGINE_API_KEY=${VECTORENGINE_API_KEY}
+      - VECTORENGINE_BASE_URL=https://api.vectorengine.ai
+      - VECTORENGINE_MODEL=gpt-5.4
+      # daemon URLs (4-way fusion)
+      - FUSION_URL=http://127.0.0.1:8903
+      - FUSION_DIARIZEN_URL=http://127.0.0.1:8913
+      - FUSION_NEMO_URL=http://127.0.0.1:8923
+      - FUSION_PYANNOTE_URL=http://127.0.0.1:8933
+      - FUSION_PYANNOTE2_URL=http://127.0.0.1:8943
+      - ASR_URL=http://127.0.0.1:8902
+      - TTS_URL=http://127.0.0.1:8901
+    volumes:
+      - ./:/workspace
+    ports:
+      - "8901:8901"   # CosyVoice3 TTS
+      - "8902:8902"   # Qwen3-ASR
+      - "8903:8903"   # fusion endpoint
+      - "8913:8913"   # DiariZen
+      - "8923:8923"   # NeMo
+      - "8933:8933"   # pyannote community-1
+      - "8943:8943"   # pyannote 3.1

@@ -209,14 +209,92 @@ def _visual_reconcile(chunks: list[Chunk], *, asd_tracks_json: str, sim_threshol
     return out
 
 
+def _preserved_repair_patches(
+    chunks: list[Chunk],
+    *,
+    run_dir: str,
+    main_merge: float = 0.45,
+    bg_merge: float = 0.30,
+    sim_match: float = 0.45,
+    pad: float = 0.5,
+    skip: list[str] | None = None,
+    venv_python: str | None = None,
+) -> list[Chunk]:
+    # E:\TTS_capstone 에서 검증된 8 patches 일괄 호출 wrapper.
+    # subprocess 로 src/apply_repair_patches.py 실행 → 결과 segments_gapfilled.json
+    # 로드 → chunks 변환. run_dir 안에 meta/ 폴더가 있어야 함.
+    #
+    # test4 best: main_merge=0.99 bg_merge=0.30 sim_match=0.10 pad=0.5
+    # test5 best: main_merge=0.40 bg_merge=0.30 sim_match=0.45 pad=0.5
+    import os
+    import subprocess
+    from pathlib import Path
+
+    run_path = Path(run_dir)
+    if not (run_path / "meta").exists():
+        logger.warning("preserved_repair_patches: %s/meta not found, skipping", run_dir)
+        return chunks
+
+    here = Path(__file__).parent
+    apply_script = here / "apply_repair_patches.py"
+    if not apply_script.exists():
+        logger.warning("apply_repair_patches.py not found at %s", apply_script)
+        return chunks
+
+    python = venv_python or os.environ.get(
+        "PATCHES_VENV_PYTHON", "/opt/venv_diarizen/bin/python"
+    )
+    cmd = [
+        python, str(apply_script), str(run_path),
+        "--main-merge", str(main_merge),
+        "--bg-merge", str(bg_merge),
+        "--sim-match", str(sim_match),
+        "--pad", str(pad),
+    ]
+    if skip:
+        cmd += ["--skip", *skip]
+    logger.info("preserved_repair_patches: running %s", " ".join(cmd))
+    rc = subprocess.run(cmd).returncode
+    if rc != 0:
+        logger.error("preserved_repair_patches failed (rc=%s)", rc)
+        return chunks
+
+    # gapfilled 결과 로드 → chunks 변환
+    gapfilled_files = sorted((run_path / "meta").glob("*_segments_gapfilled.json"))
+    if not gapfilled_files:
+        logger.warning("preserved_repair_patches: no segments_gapfilled.json produced")
+        return chunks
+    merged: list[Chunk] = []
+    import json
+    for gp in gapfilled_files:
+        with open(gp, encoding="utf-8") as f:
+            data = json.load(f)
+        for seg in data.get("groups", []):
+            merged.append({
+                "chunk_id": seg.get("group_id") or f"{gp.stem}_g{len(merged):04d}",
+                "speaker": seg.get("speaker", ""),
+                "start": float(seg.get("group_start", 0.0)),
+                "end": float(seg.get("group_end", 0.0)),
+                "duration": float(seg.get("group_end", 0.0)) - float(seg.get("group_start", 0.0)),
+                "text": seg.get("text", ""),
+                "preserved_repair": True,
+            })
+    logger.info("preserved_repair_patches: %s chunks -> %s gapfilled segments", len(chunks), len(merged))
+    return merged
+
+
 # 실패유형별 교정 모듈 등록부. Phase가 진행되며 채워진다.
-#   embed_reassign     — 화자 임베딩으로 짧은/오염 청크를 올바른 화자에 재배정 (기존 화자 간 이동)
-#   embed_split        — 한 화자에 두 인물이 병합된 경우 임베딩 부분군집으로 분리 (과병합 교정)
-#   visual_reconcile   — 얼굴 보이는(실사) 클립에서 audio 화자를 얼굴 신원으로 분할 (분할 전용·증거 게이트)
+#   embed_reassign            — 화자 임베딩으로 짧은/오염 청크를 올바른 화자에 재배정 (기존 화자 간 이동)
+#   embed_split               — 한 화자에 두 인물이 병합된 경우 임베딩 부분군집으로 분리 (과병합 교정)
+#   visual_reconcile          — 얼굴 보이는(실사) 클립에서 audio 화자를 얼굴 신원으로 분할 (분할 전용·증거 게이트)
+#   preserved_repair_patches  — E:\TTS_capstone 검증된 8 patches 일괄 호출 (word_split + focused_nemo
+#                               + visual_asd + face_cluster_match + gap_fill + postprocess_reassign_text).
+#                               test4/test5 sweep best config 검증 완료 (score 0.998 / 1.167).
 REPAIR_MODULES: dict[str, RepairModule] = {
     "embed_reassign": _embed_reassign,
     "embed_split": _embed_split,
     "visual_reconcile": _visual_reconcile,
+    "preserved_repair_patches": _preserved_repair_patches,
 }
 
 

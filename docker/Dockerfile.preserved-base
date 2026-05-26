@@ -1,0 +1,37 @@
+# ============================================================
+#  SM_120 (RTX 5080 Blackwell) 네이티브 지원 베이스 이미지
+# ============================================================
+FROM nvcr.io/nvidia/pytorch:26.02-py3
+
+ENV DEBIAN_FRONTEND=noninteractive
+ENV PYTHONUNBUFFERED=1
+
+# 시스템 패키지
+# - rubberband-cli: 고품질 time-stretch (한국어 TTS 길이 조정용)
+#   phase-vocoder(librosa)의 "같은 구 반복/기계음" 아티팩트 방지
+RUN apt-get update && apt-get install -y \
+    ffmpeg sox libsox-fmt-all ninja-build \
+    rubberband-cli \
+    && rm -rf /var/lib/apt/lists/*
+
+# ── torchao 제거 ──
+RUN pip uninstall -y torchao 2>/dev/null || true
+
+# ── torchvision & torchcodec ──
+RUN pip install --no-cache-dir --force-reinstall torchvision --no-deps
+RUN pip install --no-cache-dir torchcodec
+
+# ── [핵심] Flash Attention 2 빌드 (sm_120 전용) ──
+RUN sed -i 's/^\([[:space:]]*\)raise RuntimeError(CUDA_MISMATCH_MESSAGE.*/\1pass/g' /usr/local/lib/python3.12/dist-packages/torch/utils/cpp_extension.py
+
+# 2. 강제 컴파일(FORCE_BUILD) + OOM 방지(MAX_JOBS=1)
+RUN pip install --no-cache-dir packaging && \
+    FLASH_ATTENTION_FORCE_BUILD="TRUE" \
+    MAX_JOBS=1 \
+    TORCH_CUDA_ARCH_LIST="12.0" \
+    pip install --no-cache-dir flash-attn --no-build-isolation
+
+# ── numpy & matplotlib 고정 ──
+RUN pip install --no-cache-dir --force-reinstall matplotlib "numpy==2.3.5"
+
+WORKDIR /app

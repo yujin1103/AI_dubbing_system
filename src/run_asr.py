@@ -39,6 +39,71 @@ def _get_result_attr(result: object, attr: str, default: Any = None) -> Any:
     return getattr(result, attr, default)
 
 
+def _boost_subchunk_chunks(
+    chunk_records: list[dict[str, Any]],
+    *,
+    volume: float,
+    win_sec: float,
+    hop_sec: float,
+    boost_area: tuple[float, float] | None,
+    workdir: Path,
+) -> list[dict[str, Any]]:
+    # E:\TTS_capstone 의 boost_subchunk_asr.py 검증 로직:
+    #   짧은 외침 (Adam! 같은) 을 잡기 위해 volume 3x boost + sub-chunk (4s window,
+    #   3s hop, 1s overlap) 로 분할 → 보강 transcripts 생성.
+    # test5: 141 → 156 words (+15 fresh, Adam x2 detect).
+    #
+    # 여기서는 boost된 wav를 새 chunk_records로 추가만 한다 — 메인 transcribe
+    # 호출이 그 위에서 그대로 동작. 다운스트림은 chunk_id (suffix _boost)로 구분.
+    import subprocess
+    if not boost_area:
+        return list(chunk_records)
+    area_start, area_end = boost_area
+    workdir.mkdir(parents=True, exist_ok=True)
+
+    extra: list[dict[str, Any]] = []
+    for rec in chunk_records:
+        start = float(rec.get("start", 0.0))
+        end = float(rec.get("end", 0.0))
+        if end <= area_start or start >= area_end:
+            continue  # outside boost area
+        wav = resolve_project_path(rec["wav"])
+        # 4s window, 3s hop sub-chunks
+        t = max(start, area_start)
+        idx = 0
+        while t < min(end, area_end):
+            sub_start = t
+            sub_end = min(t + win_sec, end, area_end)
+            if sub_end - sub_start < 0.5:
+                break
+            sub_wav = workdir / f"{Path(wav).stem}_boost_{idx:03d}.wav"
+            # ffmpeg: cut + boost
+            cmd = [
+                "ffmpeg", "-y", "-loglevel", "error",
+                "-ss", f"{sub_start - start:.3f}",
+                "-t", f"{sub_end - sub_start:.3f}",
+                "-i", str(wav),
+                "-filter:a", f"volume={volume}",
+                str(sub_wav),
+            ]
+            rc = subprocess.run(cmd).returncode
+            if rc == 0 and sub_wav.exists():
+                extra.append({
+                    **rec,
+                    "chunk_id": f"{rec['chunk_id']}_boost{idx:03d}",
+                    "wav": str(sub_wav),
+                    "start": sub_start,
+                    "end": sub_end,
+                    "duration": sub_end - sub_start,
+                    "from_boost": True,
+                })
+            idx += 1
+            t += hop_sec
+    logger.info("boost_subchunk: produced %s extra sub-chunks (volume=%s, win=%s, hop=%s, area=%s)",
+                len(extra), volume, win_sec, hop_sec, boost_area)
+    return list(chunk_records) + extra
+
+
 def transcribe_chunks(
     chunk_json: str | Path,
     output_json: str | Path,
@@ -50,6 +115,7 @@ def transcribe_chunks(
     max_new_tokens: int = 256,
     language: str | None = None,
     features_json: str | Path | None = None,
+    boost_subchunk: dict[str, Any] | None = None,
 ) -> list[dict[str, Any]]:
     _prepare_qwen_asr_imports()
 
@@ -64,6 +130,20 @@ def transcribe_chunks(
     if not chunk_records:
         save_json([], output_json)
         return []
+
+    if boost_subchunk:
+        # boost area=(0,30), volume=3.0, win=4s, hop=3s (1s overlap)
+        chunk_records = _boost_subchunk_chunks(
+            chunk_records,
+            volume=float(boost_subchunk.get("volume", 3.0)),
+            win_sec=float(boost_subchunk.get("win_sec", 4.0)),
+            hop_sec=float(boost_subchunk.get("hop_sec", 3.0)),
+            boost_area=(
+                float(boost_subchunk.get("area_start", 0.0)),
+                float(boost_subchunk.get("area_end", 30.0)),
+            ) if boost_subchunk.get("enabled", True) else None,
+            workdir=resolve_project_path(boost_subchunk.get("workdir", "audio/boost_subchunks")),
+        )
 
     if features_json:
         chunk_features = analyze_chunk_records(chunk_records, output_json=features_json)
