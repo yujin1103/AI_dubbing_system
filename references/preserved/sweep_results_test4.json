@@ -1,0 +1,2442 @@
+[
+  {
+    "score": 0.9976190476190476,
+    "avg_consistency": 0.7976190476190476,
+    "main_count": 6,
+    "main_match": true,
+    "bg_detected": false,
+    "per_gt_consistency": {
+      "dad_phone": 0.5714285714285714,
+      "dialogue": 0.7142857142857143,
+      "Brian": 0.5,
+      "Sean": 1.0,
+      "frustrated_dad": 1.0,
+      "mom": 1.0
+    },
+    "gt_to_spks": {
+      "dad_phone": [
+        "SPEAKER_02",
+        "SPEAKER_01",
+        "SPEAKER_02",
+        "SPEAKER_02",
+        "SPEAKER_02",
+        "SPEAKER_04",
+        "SPEAKER_01"
+      ],
+      "dialogue": [
+        "SPEAKER_04",
+        "SPEAKER_04",
+        "SPEAKER_04",
+        "SPEAKER_04",
+        "SPEAKER_05",
+        "SPEAKER_05",
+        "SPEAKER_04"
+      ],
+      "Brian": [
+        "SPEAKER_05",
+        null
+      ],
+      "Sean": [
+        "SPEAKER_05"
+      ],
+      "frustrated_dad": [
+        "SPEAKER_03",
+        "SPEAKER_03",
+        "SPEAKER_03",
+        "SPEAKER_03",
+        "SPEAKER_03",
+        "SPEAKER_03"
+      ],
+      "mom": [
+        "SPEAKER_00",
+        "SPEAKER_00",
+        "SPEAKER_00"
+      ]
+    },
+    "config": {
+      "main_merge": 0.99,
+      "bg_merge": 0.3,
+      "sim_match": 0.1,
+      "pad": 0.5
+    }
+  },
+  {
+    "score": 0.9976190476190476,
+    "avg_consistency": 0.7976190476190476,
+    "main_count": 6,
+    "main_match": true,
+    "bg_detected": false,
+    "per_gt_consistency": {
+      "dad_phone": 0.5714285714285714,
+      "dialogue": 0.7142857142857143,
+      "Brian": 0.5,
+      "Sean": 1.0,
+      "frustrated_dad": 1.0,
+      "mom": 1.0
+    },
+    "gt_to_spks": {
+      "dad_phone": [
+        "SPEAKER_02",
+        "SPEAKER_01",
+        "SPEAKER_02",
+        "SPEAKER_02",
+        "SPEAKER_02",
+        "SPEAKER_04",
+        "SPEAKER_01"
+      ],
+      "dialogue": [
+        "SPEAKER_04",
+        "SPEAKER_04",
+        "SPEAKER_04",
+        "SPEAKER_04",
+        "SPEAKER_05",
+        "SPEAKER_05",
+        "SPEAKER_04"
+      ],
+      "Brian": [
+        "SPEAKER_05",
+        null
+      ],
+      "Sean": [
+        "SPEAKER_05"
+      ],
+      "frustrated_dad": [
+        "SPEAKER_03",
+        "SPEAKER_03",
+        "SPEAKER_03",
+        "SPEAKER_03",
+        "SPEAKER_03",
+        "SPEAKER_03"
+      ],
+      "mom": [
+        "SPEAKER_00",
+        "SPEAKER_00",
+        "SPEAKER_00"
+      ]
+    },
+    "config": {
+      "main_merge": 0.99,
+      "bg_merge": 0.3,
+      "sim_match": 0.3,
+      "pad": 0.5
+    }
+  },
+  {
+    "score": 0.9976190476190476,
+    "avg_consistency": 0.7976190476190476,
+    "main_count": 6,
+    "main_match": true,
+    "bg_detected": false,
+    "per_gt_consistency": {
+      "dad_phone": 0.5714285714285714,
+      "dialogue": 0.7142857142857143,
+      "Brian": 0.5,
+      "Sean": 1.0,
+      "frustrated_dad": 1.0,
+      "mom": 1.0
+    },
+    "gt_to_spks": {
+      "dad_phone": [
+        "SPEAKER_02",
+        "SPEAKER_01",
+        "SPEAKER_02",
+        "SPEAKER_02",
+        "SPEAKER_02",
+        "SPEAKER_04",
+        "SPEAKER_01"
+      ],
+      "dialogue": [
+        "SPEAKER_04",
+        "SPEAKER_04",
+        "SPEAKER_04",
+        "SPEAKER_04",
+        "SPEAKER_05",
+        "SPEAKER_05",
+        "SPEAKER_04"
+      ],
+      "Brian": [
+        "SPEAKER_05",
+        null
+      ],
+      "Sean": [
+        "SPEAKER_05"
+      ],
+      "frustrated_dad": [
+        "SPEAKER_03",
+        "SPEAKER_03",
+        "SPEAKER_03",
+        "SPEAKER_03",
+        "SPEAKER_03",
+        "SPEAKER_03"
+      ],
+      "mom": [
+        "SPEAKER_00",
+        "SPEAKER_00",
+        "SPEAKER_00"
+      ]
+    },
+    "config": {
+      "main_merge": 0.99,
+      "bg_merge": 0.4,
+      "sim_match": 0.1,
+      "pad": 0.5
+    }
+  },
+  {
+    "score": 0.9976190476190476,
+    "avg_consistency": 0.7976190476190476,
+    "main_count": 6,
+    "main_match": true,
+    "bg_detected": false,
+    "per_gt_consistency": {
+      "dad_phone": 0.5714285714285714,
+      "dialogue": 0.7142857142857143,
+      "Brian": 0.5,
+      "Sean": 1.0,
+      "frustrated_dad": 1.0,
+      "mom": 1.0
+    },
+    "gt_to_spks": {
+      "dad_phone": [
+        "SPEAKER_02",
+        "SPEAKER_01",
+        "SPEAKER_02",
+        "SPEAKER_02",
+        "SPEAKER_02",
+        "SPEAKER_04",
+        "SPEAKER_01"
+      ],
+      "dialogue": [
+        "SPEAKER_04",
+        "SPEAKER_04",
+        "SPEAKER_04",
+        "SPEAKER_04",
+        "SPEAKER_05",
+        "SPEAKER_05",
+        "SPEAKER_04"
+      ],
+      "Brian": [
+        "SPEAKER_05",
+        null
+      ],
+      "Sean": [
+        "SPEAKER_05"
+      ],
+      "frustrated_dad": [
+        "SPEAKER_03",
+        "SPEAKER_03",
+        "SPEAKER_03",
+        "SPEAKER_03",
+        "SPEAKER_03",
+        "SPEAKER_03"
+      ],
+      "mom": [
+        "SPEAKER_00",
+        "SPEAKER_00",
+        "SPEAKER_00"
+      ]
+    },
+    "config": {
+      "main_merge": 0.99,
+      "bg_merge": 0.4,
+      "sim_match": 0.3,
+      "pad": 0.5
+    }
+  },
+  {
+    "score": 0.942063492063492,
+    "avg_consistency": 0.7420634920634921,
+    "main_count": 6,
+    "main_match": true,
+    "bg_detected": false,
+    "per_gt_consistency": {
+      "dad_phone": 0.5714285714285714,
+      "dialogue": 0.7142857142857143,
+      "Brian": 0.5,
+      "Sean": 1.0,
+      "frustrated_dad": 1.0,
+      "mom": 0.6666666666666666
+    },
+    "gt_to_spks": {
+      "dad_phone": [
+        "SPEAKER_02",
+        "SPEAKER_01",
+        "SPEAKER_02",
+        "SPEAKER_02",
+        "SPEAKER_02",
+        "SPEAKER_04",
+        "SPEAKER_01"
+      ],
+      "dialogue": [
+        "SPEAKER_04",
+        "SPEAKER_04",
+        "SPEAKER_04",
+        "SPEAKER_04",
+        "SPEAKER_05",
+        "SPEAKER_05",
+        "SPEAKER_04"
+      ],
+      "Brian": [
+        "SPEAKER_05",
+        null
+      ],
+      "Sean": [
+        "SPEAKER_05"
+      ],
+      "frustrated_dad": [
+        "SPEAKER_03",
+        "SPEAKER_03",
+        "SPEAKER_03",
+        "SPEAKER_03",
+        "SPEAKER_03",
+        "SPEAKER_03"
+      ],
+      "mom": [
+        "SPEAKER_00",
+        "SPEAKER_00",
+        "SPEAKER_BG_02"
+      ]
+    },
+    "config": {
+      "main_merge": 0.99,
+      "bg_merge": 0.3,
+      "sim_match": 0.45,
+      "pad": 0.5
+    }
+  },
+  {
+    "score": 0.942063492063492,
+    "avg_consistency": 0.7420634920634921,
+    "main_count": 6,
+    "main_match": true,
+    "bg_detected": false,
+    "per_gt_consistency": {
+      "dad_phone": 0.5714285714285714,
+      "dialogue": 0.7142857142857143,
+      "Brian": 0.5,
+      "Sean": 1.0,
+      "frustrated_dad": 1.0,
+      "mom": 0.6666666666666666
+    },
+    "gt_to_spks": {
+      "dad_phone": [
+        "SPEAKER_02",
+        "SPEAKER_01",
+        "SPEAKER_02",
+        "SPEAKER_02",
+        "SPEAKER_02",
+        "SPEAKER_04",
+        "SPEAKER_01"
+      ],
+      "dialogue": [
+        "SPEAKER_04",
+        "SPEAKER_04",
+        "SPEAKER_04",
+        "SPEAKER_04",
+        "SPEAKER_05",
+        "SPEAKER_05",
+        "SPEAKER_04"
+      ],
+      "Brian": [
+        "SPEAKER_05",
+        null
+      ],
+      "Sean": [
+        "SPEAKER_05"
+      ],
+      "frustrated_dad": [
+        "SPEAKER_03",
+        "SPEAKER_03",
+        "SPEAKER_03",
+        "SPEAKER_03",
+        "SPEAKER_03",
+        "SPEAKER_03"
+      ],
+      "mom": [
+        "SPEAKER_00",
+        "SPEAKER_00",
+        "SPEAKER_BG_02"
+      ]
+    },
+    "config": {
+      "main_merge": 0.99,
+      "bg_merge": 0.3,
+      "sim_match": 0.55,
+      "pad": 0.5
+    }
+  },
+  {
+    "score": 0.942063492063492,
+    "avg_consistency": 0.7420634920634921,
+    "main_count": 6,
+    "main_match": true,
+    "bg_detected": false,
+    "per_gt_consistency": {
+      "dad_phone": 0.5714285714285714,
+      "dialogue": 0.7142857142857143,
+      "Brian": 0.5,
+      "Sean": 1.0,
+      "frustrated_dad": 1.0,
+      "mom": 0.6666666666666666
+    },
+    "gt_to_spks": {
+      "dad_phone": [
+        "SPEAKER_02",
+        "SPEAKER_01",
+        "SPEAKER_02",
+        "SPEAKER_02",
+        "SPEAKER_02",
+        "SPEAKER_04",
+        "SPEAKER_01"
+      ],
+      "dialogue": [
+        "SPEAKER_04",
+        "SPEAKER_04",
+        "SPEAKER_04",
+        "SPEAKER_04",
+        "SPEAKER_05",
+        "SPEAKER_05",
+        "SPEAKER_04"
+      ],
+      "Brian": [
+        "SPEAKER_05",
+        null
+      ],
+      "Sean": [
+        "SPEAKER_05"
+      ],
+      "frustrated_dad": [
+        "SPEAKER_03",
+        "SPEAKER_03",
+        "SPEAKER_03",
+        "SPEAKER_03",
+        "SPEAKER_03",
+        "SPEAKER_03"
+      ],
+      "mom": [
+        "SPEAKER_00",
+        "SPEAKER_00",
+        "SPEAKER_BG_02"
+      ]
+    },
+    "config": {
+      "main_merge": 0.99,
+      "bg_merge": 0.4,
+      "sim_match": 0.45,
+      "pad": 0.5
+    }
+  },
+  {
+    "score": 0.942063492063492,
+    "avg_consistency": 0.7420634920634921,
+    "main_count": 6,
+    "main_match": true,
+    "bg_detected": false,
+    "per_gt_consistency": {
+      "dad_phone": 0.5714285714285714,
+      "dialogue": 0.7142857142857143,
+      "Brian": 0.5,
+      "Sean": 1.0,
+      "frustrated_dad": 1.0,
+      "mom": 0.6666666666666666
+    },
+    "gt_to_spks": {
+      "dad_phone": [
+        "SPEAKER_02",
+        "SPEAKER_01",
+        "SPEAKER_02",
+        "SPEAKER_02",
+        "SPEAKER_02",
+        "SPEAKER_04",
+        "SPEAKER_01"
+      ],
+      "dialogue": [
+        "SPEAKER_04",
+        "SPEAKER_04",
+        "SPEAKER_04",
+        "SPEAKER_04",
+        "SPEAKER_05",
+        "SPEAKER_05",
+        "SPEAKER_04"
+      ],
+      "Brian": [
+        "SPEAKER_05",
+        null
+      ],
+      "Sean": [
+        "SPEAKER_05"
+      ],
+      "frustrated_dad": [
+        "SPEAKER_03",
+        "SPEAKER_03",
+        "SPEAKER_03",
+        "SPEAKER_03",
+        "SPEAKER_03",
+        "SPEAKER_03"
+      ],
+      "mom": [
+        "SPEAKER_00",
+        "SPEAKER_00",
+        "SPEAKER_BG_02"
+      ]
+    },
+    "config": {
+      "main_merge": 0.99,
+      "bg_merge": 0.4,
+      "sim_match": 0.55,
+      "pad": 0.5
+    }
+  },
+  {
+    "score": 0.8452380952380952,
+    "avg_consistency": 0.8452380952380952,
+    "main_count": 2,
+    "main_match": false,
+    "bg_detected": false,
+    "per_gt_consistency": {
+      "dad_phone": 0.8571428571428571,
+      "dialogue": 0.7142857142857143,
+      "Brian": 0.5,
+      "Sean": 1.0,
+      "frustrated_dad": 1.0,
+      "mom": 1.0
+    },
+    "gt_to_spks": {
+      "dad_phone": [
+        "SPEAKER_01",
+        "SPEAKER_01",
+        "SPEAKER_01",
+        "SPEAKER_01",
+        "SPEAKER_01",
+        "SPEAKER_04",
+        "SPEAKER_01"
+      ],
+      "dialogue": [
+        "SPEAKER_04",
+        "SPEAKER_04",
+        "SPEAKER_04",
+        "SPEAKER_04",
+        "SPEAKER_01",
+        "SPEAKER_01",
+        "SPEAKER_04"
+      ],
+      "Brian": [
+        "SPEAKER_01",
+        null
+      ],
+      "Sean": [
+        "SPEAKER_01"
+      ],
+      "frustrated_dad": [
+        "SPEAKER_01",
+        "SPEAKER_01",
+        "SPEAKER_01",
+        "SPEAKER_01",
+        "SPEAKER_01",
+        "SPEAKER_01"
+      ],
+      "mom": [
+        "SPEAKER_01",
+        "SPEAKER_01",
+        "SPEAKER_01"
+      ]
+    },
+    "config": {
+      "main_merge": 0.4,
+      "bg_merge": 0.3,
+      "sim_match": 0.1,
+      "pad": 0.5
+    }
+  },
+  {
+    "score": 0.8452380952380952,
+    "avg_consistency": 0.8452380952380952,
+    "main_count": 2,
+    "main_match": false,
+    "bg_detected": false,
+    "per_gt_consistency": {
+      "dad_phone": 0.8571428571428571,
+      "dialogue": 0.7142857142857143,
+      "Brian": 0.5,
+      "Sean": 1.0,
+      "frustrated_dad": 1.0,
+      "mom": 1.0
+    },
+    "gt_to_spks": {
+      "dad_phone": [
+        "SPEAKER_01",
+        "SPEAKER_01",
+        "SPEAKER_01",
+        "SPEAKER_01",
+        "SPEAKER_01",
+        "SPEAKER_04",
+        "SPEAKER_01"
+      ],
+      "dialogue": [
+        "SPEAKER_04",
+        "SPEAKER_04",
+        "SPEAKER_04",
+        "SPEAKER_04",
+        "SPEAKER_01",
+        "SPEAKER_01",
+        "SPEAKER_04"
+      ],
+      "Brian": [
+        "SPEAKER_01",
+        null
+      ],
+      "Sean": [
+        "SPEAKER_01"
+      ],
+      "frustrated_dad": [
+        "SPEAKER_01",
+        "SPEAKER_01",
+        "SPEAKER_01",
+        "SPEAKER_01",
+        "SPEAKER_01",
+        "SPEAKER_01"
+      ],
+      "mom": [
+        "SPEAKER_01",
+        "SPEAKER_01",
+        "SPEAKER_01"
+      ]
+    },
+    "config": {
+      "main_merge": 0.4,
+      "bg_merge": 0.3,
+      "sim_match": 0.3,
+      "pad": 0.5
+    }
+  },
+  {
+    "score": 0.8452380952380952,
+    "avg_consistency": 0.8452380952380952,
+    "main_count": 2,
+    "main_match": false,
+    "bg_detected": false,
+    "per_gt_consistency": {
+      "dad_phone": 0.8571428571428571,
+      "dialogue": 0.7142857142857143,
+      "Brian": 0.5,
+      "Sean": 1.0,
+      "frustrated_dad": 1.0,
+      "mom": 1.0
+    },
+    "gt_to_spks": {
+      "dad_phone": [
+        "SPEAKER_01",
+        "SPEAKER_01",
+        "SPEAKER_01",
+        "SPEAKER_01",
+        "SPEAKER_01",
+        "SPEAKER_04",
+        "SPEAKER_01"
+      ],
+      "dialogue": [
+        "SPEAKER_04",
+        "SPEAKER_04",
+        "SPEAKER_04",
+        "SPEAKER_04",
+        "SPEAKER_01",
+        "SPEAKER_01",
+        "SPEAKER_04"
+      ],
+      "Brian": [
+        "SPEAKER_01",
+        null
+      ],
+      "Sean": [
+        "SPEAKER_01"
+      ],
+      "frustrated_dad": [
+        "SPEAKER_01",
+        "SPEAKER_01",
+        "SPEAKER_01",
+        "SPEAKER_01",
+        "SPEAKER_01",
+        "SPEAKER_01"
+      ],
+      "mom": [
+        "SPEAKER_01",
+        "SPEAKER_01",
+        "SPEAKER_01"
+      ]
+    },
+    "config": {
+      "main_merge": 0.4,
+      "bg_merge": 0.4,
+      "sim_match": 0.1,
+      "pad": 0.5
+    }
+  },
+  {
+    "score": 0.8452380952380952,
+    "avg_consistency": 0.8452380952380952,
+    "main_count": 2,
+    "main_match": false,
+    "bg_detected": false,
+    "per_gt_consistency": {
+      "dad_phone": 0.8571428571428571,
+      "dialogue": 0.7142857142857143,
+      "Brian": 0.5,
+      "Sean": 1.0,
+      "frustrated_dad": 1.0,
+      "mom": 1.0
+    },
+    "gt_to_spks": {
+      "dad_phone": [
+        "SPEAKER_01",
+        "SPEAKER_01",
+        "SPEAKER_01",
+        "SPEAKER_01",
+        "SPEAKER_01",
+        "SPEAKER_04",
+        "SPEAKER_01"
+      ],
+      "dialogue": [
+        "SPEAKER_04",
+        "SPEAKER_04",
+        "SPEAKER_04",
+        "SPEAKER_04",
+        "SPEAKER_01",
+        "SPEAKER_01",
+        "SPEAKER_04"
+      ],
+      "Brian": [
+        "SPEAKER_01",
+        null
+      ],
+      "Sean": [
+        "SPEAKER_01"
+      ],
+      "frustrated_dad": [
+        "SPEAKER_01",
+        "SPEAKER_01",
+        "SPEAKER_01",
+        "SPEAKER_01",
+        "SPEAKER_01",
+        "SPEAKER_01"
+      ],
+      "mom": [
+        "SPEAKER_01",
+        "SPEAKER_01",
+        "SPEAKER_01"
+      ]
+    },
+    "config": {
+      "main_merge": 0.4,
+      "bg_merge": 0.4,
+      "sim_match": 0.3,
+      "pad": 0.5
+    }
+  },
+  {
+    "score": 0.8452380952380952,
+    "avg_consistency": 0.8452380952380952,
+    "main_count": 2,
+    "main_match": false,
+    "bg_detected": false,
+    "per_gt_consistency": {
+      "dad_phone": 0.8571428571428571,
+      "dialogue": 0.7142857142857143,
+      "Brian": 0.5,
+      "Sean": 1.0,
+      "frustrated_dad": 1.0,
+      "mom": 1.0
+    },
+    "gt_to_spks": {
+      "dad_phone": [
+        "SPEAKER_01",
+        "SPEAKER_01",
+        "SPEAKER_01",
+        "SPEAKER_01",
+        "SPEAKER_01",
+        "SPEAKER_04",
+        "SPEAKER_01"
+      ],
+      "dialogue": [
+        "SPEAKER_04",
+        "SPEAKER_04",
+        "SPEAKER_04",
+        "SPEAKER_04",
+        "SPEAKER_01",
+        "SPEAKER_01",
+        "SPEAKER_04"
+      ],
+      "Brian": [
+        "SPEAKER_01",
+        null
+      ],
+      "Sean": [
+        "SPEAKER_01"
+      ],
+      "frustrated_dad": [
+        "SPEAKER_01",
+        "SPEAKER_01",
+        "SPEAKER_01",
+        "SPEAKER_01",
+        "SPEAKER_01",
+        "SPEAKER_01"
+      ],
+      "mom": [
+        "SPEAKER_01",
+        "SPEAKER_01",
+        "SPEAKER_01"
+      ]
+    },
+    "config": {
+      "main_merge": 0.45,
+      "bg_merge": 0.3,
+      "sim_match": 0.1,
+      "pad": 0.5
+    }
+  },
+  {
+    "score": 0.8452380952380952,
+    "avg_consistency": 0.8452380952380952,
+    "main_count": 2,
+    "main_match": false,
+    "bg_detected": false,
+    "per_gt_consistency": {
+      "dad_phone": 0.8571428571428571,
+      "dialogue": 0.7142857142857143,
+      "Brian": 0.5,
+      "Sean": 1.0,
+      "frustrated_dad": 1.0,
+      "mom": 1.0
+    },
+    "gt_to_spks": {
+      "dad_phone": [
+        "SPEAKER_01",
+        "SPEAKER_01",
+        "SPEAKER_01",
+        "SPEAKER_01",
+        "SPEAKER_01",
+        "SPEAKER_04",
+        "SPEAKER_01"
+      ],
+      "dialogue": [
+        "SPEAKER_04",
+        "SPEAKER_04",
+        "SPEAKER_04",
+        "SPEAKER_04",
+        "SPEAKER_01",
+        "SPEAKER_01",
+        "SPEAKER_04"
+      ],
+      "Brian": [
+        "SPEAKER_01",
+        null
+      ],
+      "Sean": [
+        "SPEAKER_01"
+      ],
+      "frustrated_dad": [
+        "SPEAKER_01",
+        "SPEAKER_01",
+        "SPEAKER_01",
+        "SPEAKER_01",
+        "SPEAKER_01",
+        "SPEAKER_01"
+      ],
+      "mom": [
+        "SPEAKER_01",
+        "SPEAKER_01",
+        "SPEAKER_01"
+      ]
+    },
+    "config": {
+      "main_merge": 0.45,
+      "bg_merge": 0.3,
+      "sim_match": 0.3,
+      "pad": 0.5
+    }
+  },
+  {
+    "score": 0.8452380952380952,
+    "avg_consistency": 0.8452380952380952,
+    "main_count": 2,
+    "main_match": false,
+    "bg_detected": false,
+    "per_gt_consistency": {
+      "dad_phone": 0.8571428571428571,
+      "dialogue": 0.7142857142857143,
+      "Brian": 0.5,
+      "Sean": 1.0,
+      "frustrated_dad": 1.0,
+      "mom": 1.0
+    },
+    "gt_to_spks": {
+      "dad_phone": [
+        "SPEAKER_01",
+        "SPEAKER_01",
+        "SPEAKER_01",
+        "SPEAKER_01",
+        "SPEAKER_01",
+        "SPEAKER_04",
+        "SPEAKER_01"
+      ],
+      "dialogue": [
+        "SPEAKER_04",
+        "SPEAKER_04",
+        "SPEAKER_04",
+        "SPEAKER_04",
+        "SPEAKER_01",
+        "SPEAKER_01",
+        "SPEAKER_04"
+      ],
+      "Brian": [
+        "SPEAKER_01",
+        null
+      ],
+      "Sean": [
+        "SPEAKER_01"
+      ],
+      "frustrated_dad": [
+        "SPEAKER_01",
+        "SPEAKER_01",
+        "SPEAKER_01",
+        "SPEAKER_01",
+        "SPEAKER_01",
+        "SPEAKER_01"
+      ],
+      "mom": [
+        "SPEAKER_01",
+        "SPEAKER_01",
+        "SPEAKER_01"
+      ]
+    },
+    "config": {
+      "main_merge": 0.45,
+      "bg_merge": 0.4,
+      "sim_match": 0.1,
+      "pad": 0.5
+    }
+  },
+  {
+    "score": 0.8452380952380952,
+    "avg_consistency": 0.8452380952380952,
+    "main_count": 2,
+    "main_match": false,
+    "bg_detected": false,
+    "per_gt_consistency": {
+      "dad_phone": 0.8571428571428571,
+      "dialogue": 0.7142857142857143,
+      "Brian": 0.5,
+      "Sean": 1.0,
+      "frustrated_dad": 1.0,
+      "mom": 1.0
+    },
+    "gt_to_spks": {
+      "dad_phone": [
+        "SPEAKER_01",
+        "SPEAKER_01",
+        "SPEAKER_01",
+        "SPEAKER_01",
+        "SPEAKER_01",
+        "SPEAKER_04",
+        "SPEAKER_01"
+      ],
+      "dialogue": [
+        "SPEAKER_04",
+        "SPEAKER_04",
+        "SPEAKER_04",
+        "SPEAKER_04",
+        "SPEAKER_01",
+        "SPEAKER_01",
+        "SPEAKER_04"
+      ],
+      "Brian": [
+        "SPEAKER_01",
+        null
+      ],
+      "Sean": [
+        "SPEAKER_01"
+      ],
+      "frustrated_dad": [
+        "SPEAKER_01",
+        "SPEAKER_01",
+        "SPEAKER_01",
+        "SPEAKER_01",
+        "SPEAKER_01",
+        "SPEAKER_01"
+      ],
+      "mom": [
+        "SPEAKER_01",
+        "SPEAKER_01",
+        "SPEAKER_01"
+      ]
+    },
+    "config": {
+      "main_merge": 0.45,
+      "bg_merge": 0.4,
+      "sim_match": 0.3,
+      "pad": 0.5
+    }
+  },
+  {
+    "score": 0.8452380952380952,
+    "avg_consistency": 0.8452380952380952,
+    "main_count": 3,
+    "main_match": false,
+    "bg_detected": false,
+    "per_gt_consistency": {
+      "dad_phone": 0.8571428571428571,
+      "dialogue": 0.7142857142857143,
+      "Brian": 0.5,
+      "Sean": 1.0,
+      "frustrated_dad": 1.0,
+      "mom": 1.0
+    },
+    "gt_to_spks": {
+      "dad_phone": [
+        "SPEAKER_01",
+        "SPEAKER_01",
+        "SPEAKER_01",
+        "SPEAKER_01",
+        "SPEAKER_01",
+        "SPEAKER_04",
+        "SPEAKER_01"
+      ],
+      "dialogue": [
+        "SPEAKER_04",
+        "SPEAKER_04",
+        "SPEAKER_04",
+        "SPEAKER_04",
+        "SPEAKER_00",
+        "SPEAKER_00",
+        "SPEAKER_04"
+      ],
+      "Brian": [
+        "SPEAKER_00",
+        null
+      ],
+      "Sean": [
+        "SPEAKER_00"
+      ],
+      "frustrated_dad": [
+        "SPEAKER_00",
+        "SPEAKER_00",
+        "SPEAKER_00",
+        "SPEAKER_00",
+        "SPEAKER_00",
+        "SPEAKER_00"
+      ],
+      "mom": [
+        "SPEAKER_00",
+        "SPEAKER_00",
+        "SPEAKER_00"
+      ]
+    },
+    "config": {
+      "main_merge": 0.5,
+      "bg_merge": 0.3,
+      "sim_match": 0.1,
+      "pad": 0.5
+    }
+  },
+  {
+    "score": 0.8452380952380952,
+    "avg_consistency": 0.8452380952380952,
+    "main_count": 3,
+    "main_match": false,
+    "bg_detected": false,
+    "per_gt_consistency": {
+      "dad_phone": 0.8571428571428571,
+      "dialogue": 0.7142857142857143,
+      "Brian": 0.5,
+      "Sean": 1.0,
+      "frustrated_dad": 1.0,
+      "mom": 1.0
+    },
+    "gt_to_spks": {
+      "dad_phone": [
+        "SPEAKER_01",
+        "SPEAKER_01",
+        "SPEAKER_01",
+        "SPEAKER_01",
+        "SPEAKER_01",
+        "SPEAKER_04",
+        "SPEAKER_01"
+      ],
+      "dialogue": [
+        "SPEAKER_04",
+        "SPEAKER_04",
+        "SPEAKER_04",
+        "SPEAKER_04",
+        "SPEAKER_00",
+        "SPEAKER_00",
+        "SPEAKER_04"
+      ],
+      "Brian": [
+        "SPEAKER_00",
+        null
+      ],
+      "Sean": [
+        "SPEAKER_00"
+      ],
+      "frustrated_dad": [
+        "SPEAKER_00",
+        "SPEAKER_00",
+        "SPEAKER_00",
+        "SPEAKER_00",
+        "SPEAKER_00",
+        "SPEAKER_00"
+      ],
+      "mom": [
+        "SPEAKER_00",
+        "SPEAKER_00",
+        "SPEAKER_00"
+      ]
+    },
+    "config": {
+      "main_merge": 0.5,
+      "bg_merge": 0.3,
+      "sim_match": 0.3,
+      "pad": 0.5
+    }
+  },
+  {
+    "score": 0.8452380952380952,
+    "avg_consistency": 0.8452380952380952,
+    "main_count": 3,
+    "main_match": false,
+    "bg_detected": false,
+    "per_gt_consistency": {
+      "dad_phone": 0.8571428571428571,
+      "dialogue": 0.7142857142857143,
+      "Brian": 0.5,
+      "Sean": 1.0,
+      "frustrated_dad": 1.0,
+      "mom": 1.0
+    },
+    "gt_to_spks": {
+      "dad_phone": [
+        "SPEAKER_01",
+        "SPEAKER_01",
+        "SPEAKER_01",
+        "SPEAKER_01",
+        "SPEAKER_01",
+        "SPEAKER_04",
+        "SPEAKER_01"
+      ],
+      "dialogue": [
+        "SPEAKER_04",
+        "SPEAKER_04",
+        "SPEAKER_04",
+        "SPEAKER_04",
+        "SPEAKER_00",
+        "SPEAKER_00",
+        "SPEAKER_04"
+      ],
+      "Brian": [
+        "SPEAKER_00",
+        null
+      ],
+      "Sean": [
+        "SPEAKER_00"
+      ],
+      "frustrated_dad": [
+        "SPEAKER_00",
+        "SPEAKER_00",
+        "SPEAKER_00",
+        "SPEAKER_00",
+        "SPEAKER_00",
+        "SPEAKER_00"
+      ],
+      "mom": [
+        "SPEAKER_00",
+        "SPEAKER_00",
+        "SPEAKER_00"
+      ]
+    },
+    "config": {
+      "main_merge": 0.5,
+      "bg_merge": 0.4,
+      "sim_match": 0.1,
+      "pad": 0.5
+    }
+  },
+  {
+    "score": 0.8452380952380952,
+    "avg_consistency": 0.8452380952380952,
+    "main_count": 3,
+    "main_match": false,
+    "bg_detected": false,
+    "per_gt_consistency": {
+      "dad_phone": 0.8571428571428571,
+      "dialogue": 0.7142857142857143,
+      "Brian": 0.5,
+      "Sean": 1.0,
+      "frustrated_dad": 1.0,
+      "mom": 1.0
+    },
+    "gt_to_spks": {
+      "dad_phone": [
+        "SPEAKER_01",
+        "SPEAKER_01",
+        "SPEAKER_01",
+        "SPEAKER_01",
+        "SPEAKER_01",
+        "SPEAKER_04",
+        "SPEAKER_01"
+      ],
+      "dialogue": [
+        "SPEAKER_04",
+        "SPEAKER_04",
+        "SPEAKER_04",
+        "SPEAKER_04",
+        "SPEAKER_00",
+        "SPEAKER_00",
+        "SPEAKER_04"
+      ],
+      "Brian": [
+        "SPEAKER_00",
+        null
+      ],
+      "Sean": [
+        "SPEAKER_00"
+      ],
+      "frustrated_dad": [
+        "SPEAKER_00",
+        "SPEAKER_00",
+        "SPEAKER_00",
+        "SPEAKER_00",
+        "SPEAKER_00",
+        "SPEAKER_00"
+      ],
+      "mom": [
+        "SPEAKER_00",
+        "SPEAKER_00",
+        "SPEAKER_00"
+      ]
+    },
+    "config": {
+      "main_merge": 0.5,
+      "bg_merge": 0.4,
+      "sim_match": 0.3,
+      "pad": 0.5
+    }
+  },
+  {
+    "score": 0.8452380952380952,
+    "avg_consistency": 0.8452380952380952,
+    "main_count": 4,
+    "main_match": false,
+    "bg_detected": false,
+    "per_gt_consistency": {
+      "dad_phone": 0.8571428571428571,
+      "dialogue": 0.7142857142857143,
+      "Brian": 0.5,
+      "Sean": 1.0,
+      "frustrated_dad": 1.0,
+      "mom": 1.0
+    },
+    "gt_to_spks": {
+      "dad_phone": [
+        "SPEAKER_01",
+        "SPEAKER_01",
+        "SPEAKER_01",
+        "SPEAKER_01",
+        "SPEAKER_01",
+        "SPEAKER_04",
+        "SPEAKER_01"
+      ],
+      "dialogue": [
+        "SPEAKER_04",
+        "SPEAKER_04",
+        "SPEAKER_04",
+        "SPEAKER_04",
+        "SPEAKER_05",
+        "SPEAKER_05",
+        "SPEAKER_04"
+      ],
+      "Brian": [
+        "SPEAKER_05",
+        null
+      ],
+      "Sean": [
+        "SPEAKER_05"
+      ],
+      "frustrated_dad": [
+        "SPEAKER_00",
+        "SPEAKER_00",
+        "SPEAKER_00",
+        "SPEAKER_00",
+        "SPEAKER_00",
+        "SPEAKER_00"
+      ],
+      "mom": [
+        "SPEAKER_00",
+        "SPEAKER_00",
+        "SPEAKER_00"
+      ]
+    },
+    "config": {
+      "main_merge": 0.55,
+      "bg_merge": 0.3,
+      "sim_match": 0.1,
+      "pad": 0.5
+    }
+  },
+  {
+    "score": 0.8452380952380952,
+    "avg_consistency": 0.8452380952380952,
+    "main_count": 4,
+    "main_match": false,
+    "bg_detected": false,
+    "per_gt_consistency": {
+      "dad_phone": 0.8571428571428571,
+      "dialogue": 0.7142857142857143,
+      "Brian": 0.5,
+      "Sean": 1.0,
+      "frustrated_dad": 1.0,
+      "mom": 1.0
+    },
+    "gt_to_spks": {
+      "dad_phone": [
+        "SPEAKER_01",
+        "SPEAKER_01",
+        "SPEAKER_01",
+        "SPEAKER_01",
+        "SPEAKER_01",
+        "SPEAKER_04",
+        "SPEAKER_01"
+      ],
+      "dialogue": [
+        "SPEAKER_04",
+        "SPEAKER_04",
+        "SPEAKER_04",
+        "SPEAKER_04",
+        "SPEAKER_05",
+        "SPEAKER_05",
+        "SPEAKER_04"
+      ],
+      "Brian": [
+        "SPEAKER_05",
+        null
+      ],
+      "Sean": [
+        "SPEAKER_05"
+      ],
+      "frustrated_dad": [
+        "SPEAKER_00",
+        "SPEAKER_00",
+        "SPEAKER_00",
+        "SPEAKER_00",
+        "SPEAKER_00",
+        "SPEAKER_00"
+      ],
+      "mom": [
+        "SPEAKER_00",
+        "SPEAKER_00",
+        "SPEAKER_00"
+      ]
+    },
+    "config": {
+      "main_merge": 0.55,
+      "bg_merge": 0.3,
+      "sim_match": 0.3,
+      "pad": 0.5
+    }
+  },
+  {
+    "score": 0.8452380952380952,
+    "avg_consistency": 0.8452380952380952,
+    "main_count": 4,
+    "main_match": false,
+    "bg_detected": false,
+    "per_gt_consistency": {
+      "dad_phone": 0.8571428571428571,
+      "dialogue": 0.7142857142857143,
+      "Brian": 0.5,
+      "Sean": 1.0,
+      "frustrated_dad": 1.0,
+      "mom": 1.0
+    },
+    "gt_to_spks": {
+      "dad_phone": [
+        "SPEAKER_01",
+        "SPEAKER_01",
+        "SPEAKER_01",
+        "SPEAKER_01",
+        "SPEAKER_01",
+        "SPEAKER_04",
+        "SPEAKER_01"
+      ],
+      "dialogue": [
+        "SPEAKER_04",
+        "SPEAKER_04",
+        "SPEAKER_04",
+        "SPEAKER_04",
+        "SPEAKER_05",
+        "SPEAKER_05",
+        "SPEAKER_04"
+      ],
+      "Brian": [
+        "SPEAKER_05",
+        null
+      ],
+      "Sean": [
+        "SPEAKER_05"
+      ],
+      "frustrated_dad": [
+        "SPEAKER_00",
+        "SPEAKER_00",
+        "SPEAKER_00",
+        "SPEAKER_00",
+        "SPEAKER_00",
+        "SPEAKER_00"
+      ],
+      "mom": [
+        "SPEAKER_00",
+        "SPEAKER_00",
+        "SPEAKER_00"
+      ]
+    },
+    "config": {
+      "main_merge": 0.55,
+      "bg_merge": 0.4,
+      "sim_match": 0.1,
+      "pad": 0.5
+    }
+  },
+  {
+    "score": 0.8452380952380952,
+    "avg_consistency": 0.8452380952380952,
+    "main_count": 4,
+    "main_match": false,
+    "bg_detected": false,
+    "per_gt_consistency": {
+      "dad_phone": 0.8571428571428571,
+      "dialogue": 0.7142857142857143,
+      "Brian": 0.5,
+      "Sean": 1.0,
+      "frustrated_dad": 1.0,
+      "mom": 1.0
+    },
+    "gt_to_spks": {
+      "dad_phone": [
+        "SPEAKER_01",
+        "SPEAKER_01",
+        "SPEAKER_01",
+        "SPEAKER_01",
+        "SPEAKER_01",
+        "SPEAKER_04",
+        "SPEAKER_01"
+      ],
+      "dialogue": [
+        "SPEAKER_04",
+        "SPEAKER_04",
+        "SPEAKER_04",
+        "SPEAKER_04",
+        "SPEAKER_05",
+        "SPEAKER_05",
+        "SPEAKER_04"
+      ],
+      "Brian": [
+        "SPEAKER_05",
+        null
+      ],
+      "Sean": [
+        "SPEAKER_05"
+      ],
+      "frustrated_dad": [
+        "SPEAKER_00",
+        "SPEAKER_00",
+        "SPEAKER_00",
+        "SPEAKER_00",
+        "SPEAKER_00",
+        "SPEAKER_00"
+      ],
+      "mom": [
+        "SPEAKER_00",
+        "SPEAKER_00",
+        "SPEAKER_00"
+      ]
+    },
+    "config": {
+      "main_merge": 0.55,
+      "bg_merge": 0.4,
+      "sim_match": 0.3,
+      "pad": 0.5
+    }
+  },
+  {
+    "score": 0.7896825396825397,
+    "avg_consistency": 0.7896825396825397,
+    "main_count": 2,
+    "main_match": false,
+    "bg_detected": false,
+    "per_gt_consistency": {
+      "dad_phone": 0.8571428571428571,
+      "dialogue": 0.7142857142857143,
+      "Brian": 0.5,
+      "Sean": 1.0,
+      "frustrated_dad": 1.0,
+      "mom": 0.6666666666666666
+    },
+    "gt_to_spks": {
+      "dad_phone": [
+        "SPEAKER_01",
+        "SPEAKER_01",
+        "SPEAKER_01",
+        "SPEAKER_01",
+        "SPEAKER_01",
+        "SPEAKER_04",
+        "SPEAKER_01"
+      ],
+      "dialogue": [
+        "SPEAKER_04",
+        "SPEAKER_04",
+        "SPEAKER_04",
+        "SPEAKER_04",
+        "SPEAKER_01",
+        "SPEAKER_01",
+        "SPEAKER_04"
+      ],
+      "Brian": [
+        "SPEAKER_01",
+        null
+      ],
+      "Sean": [
+        "SPEAKER_01"
+      ],
+      "frustrated_dad": [
+        "SPEAKER_01",
+        "SPEAKER_01",
+        "SPEAKER_01",
+        "SPEAKER_01",
+        "SPEAKER_01",
+        "SPEAKER_01"
+      ],
+      "mom": [
+        "SPEAKER_01",
+        "SPEAKER_01",
+        "SPEAKER_BG_02"
+      ]
+    },
+    "config": {
+      "main_merge": 0.4,
+      "bg_merge": 0.3,
+      "sim_match": 0.45,
+      "pad": 0.5
+    }
+  },
+  {
+    "score": 0.7896825396825397,
+    "avg_consistency": 0.7896825396825397,
+    "main_count": 2,
+    "main_match": false,
+    "bg_detected": false,
+    "per_gt_consistency": {
+      "dad_phone": 0.8571428571428571,
+      "dialogue": 0.7142857142857143,
+      "Brian": 0.5,
+      "Sean": 1.0,
+      "frustrated_dad": 1.0,
+      "mom": 0.6666666666666666
+    },
+    "gt_to_spks": {
+      "dad_phone": [
+        "SPEAKER_01",
+        "SPEAKER_01",
+        "SPEAKER_01",
+        "SPEAKER_01",
+        "SPEAKER_01",
+        "SPEAKER_04",
+        "SPEAKER_01"
+      ],
+      "dialogue": [
+        "SPEAKER_04",
+        "SPEAKER_04",
+        "SPEAKER_04",
+        "SPEAKER_04",
+        "SPEAKER_01",
+        "SPEAKER_01",
+        "SPEAKER_04"
+      ],
+      "Brian": [
+        "SPEAKER_01",
+        null
+      ],
+      "Sean": [
+        "SPEAKER_01"
+      ],
+      "frustrated_dad": [
+        "SPEAKER_01",
+        "SPEAKER_01",
+        "SPEAKER_01",
+        "SPEAKER_01",
+        "SPEAKER_01",
+        "SPEAKER_01"
+      ],
+      "mom": [
+        "SPEAKER_01",
+        "SPEAKER_01",
+        "SPEAKER_BG_02"
+      ]
+    },
+    "config": {
+      "main_merge": 0.4,
+      "bg_merge": 0.3,
+      "sim_match": 0.55,
+      "pad": 0.5
+    }
+  },
+  {
+    "score": 0.7896825396825397,
+    "avg_consistency": 0.7896825396825397,
+    "main_count": 2,
+    "main_match": false,
+    "bg_detected": false,
+    "per_gt_consistency": {
+      "dad_phone": 0.8571428571428571,
+      "dialogue": 0.7142857142857143,
+      "Brian": 0.5,
+      "Sean": 1.0,
+      "frustrated_dad": 1.0,
+      "mom": 0.6666666666666666
+    },
+    "gt_to_spks": {
+      "dad_phone": [
+        "SPEAKER_01",
+        "SPEAKER_01",
+        "SPEAKER_01",
+        "SPEAKER_01",
+        "SPEAKER_01",
+        "SPEAKER_04",
+        "SPEAKER_01"
+      ],
+      "dialogue": [
+        "SPEAKER_04",
+        "SPEAKER_04",
+        "SPEAKER_04",
+        "SPEAKER_04",
+        "SPEAKER_01",
+        "SPEAKER_01",
+        "SPEAKER_04"
+      ],
+      "Brian": [
+        "SPEAKER_01",
+        null
+      ],
+      "Sean": [
+        "SPEAKER_01"
+      ],
+      "frustrated_dad": [
+        "SPEAKER_01",
+        "SPEAKER_01",
+        "SPEAKER_01",
+        "SPEAKER_01",
+        "SPEAKER_01",
+        "SPEAKER_01"
+      ],
+      "mom": [
+        "SPEAKER_01",
+        "SPEAKER_01",
+        "SPEAKER_BG_02"
+      ]
+    },
+    "config": {
+      "main_merge": 0.4,
+      "bg_merge": 0.4,
+      "sim_match": 0.45,
+      "pad": 0.5
+    }
+  },
+  {
+    "score": 0.7896825396825397,
+    "avg_consistency": 0.7896825396825397,
+    "main_count": 2,
+    "main_match": false,
+    "bg_detected": false,
+    "per_gt_consistency": {
+      "dad_phone": 0.8571428571428571,
+      "dialogue": 0.7142857142857143,
+      "Brian": 0.5,
+      "Sean": 1.0,
+      "frustrated_dad": 1.0,
+      "mom": 0.6666666666666666
+    },
+    "gt_to_spks": {
+      "dad_phone": [
+        "SPEAKER_01",
+        "SPEAKER_01",
+        "SPEAKER_01",
+        "SPEAKER_01",
+        "SPEAKER_01",
+        "SPEAKER_04",
+        "SPEAKER_01"
+      ],
+      "dialogue": [
+        "SPEAKER_04",
+        "SPEAKER_04",
+        "SPEAKER_04",
+        "SPEAKER_04",
+        "SPEAKER_01",
+        "SPEAKER_01",
+        "SPEAKER_04"
+      ],
+      "Brian": [
+        "SPEAKER_01",
+        null
+      ],
+      "Sean": [
+        "SPEAKER_01"
+      ],
+      "frustrated_dad": [
+        "SPEAKER_01",
+        "SPEAKER_01",
+        "SPEAKER_01",
+        "SPEAKER_01",
+        "SPEAKER_01",
+        "SPEAKER_01"
+      ],
+      "mom": [
+        "SPEAKER_01",
+        "SPEAKER_01",
+        "SPEAKER_BG_02"
+      ]
+    },
+    "config": {
+      "main_merge": 0.4,
+      "bg_merge": 0.4,
+      "sim_match": 0.55,
+      "pad": 0.5
+    }
+  },
+  {
+    "score": 0.7896825396825397,
+    "avg_consistency": 0.7896825396825397,
+    "main_count": 2,
+    "main_match": false,
+    "bg_detected": false,
+    "per_gt_consistency": {
+      "dad_phone": 0.8571428571428571,
+      "dialogue": 0.7142857142857143,
+      "Brian": 0.5,
+      "Sean": 1.0,
+      "frustrated_dad": 1.0,
+      "mom": 0.6666666666666666
+    },
+    "gt_to_spks": {
+      "dad_phone": [
+        "SPEAKER_01",
+        "SPEAKER_01",
+        "SPEAKER_01",
+        "SPEAKER_01",
+        "SPEAKER_01",
+        "SPEAKER_04",
+        "SPEAKER_01"
+      ],
+      "dialogue": [
+        "SPEAKER_04",
+        "SPEAKER_04",
+        "SPEAKER_04",
+        "SPEAKER_04",
+        "SPEAKER_01",
+        "SPEAKER_01",
+        "SPEAKER_04"
+      ],
+      "Brian": [
+        "SPEAKER_01",
+        null
+      ],
+      "Sean": [
+        "SPEAKER_01"
+      ],
+      "frustrated_dad": [
+        "SPEAKER_01",
+        "SPEAKER_01",
+        "SPEAKER_01",
+        "SPEAKER_01",
+        "SPEAKER_01",
+        "SPEAKER_01"
+      ],
+      "mom": [
+        "SPEAKER_01",
+        "SPEAKER_01",
+        "SPEAKER_BG_02"
+      ]
+    },
+    "config": {
+      "main_merge": 0.45,
+      "bg_merge": 0.3,
+      "sim_match": 0.45,
+      "pad": 0.5
+    }
+  },
+  {
+    "score": 0.7896825396825397,
+    "avg_consistency": 0.7896825396825397,
+    "main_count": 2,
+    "main_match": false,
+    "bg_detected": false,
+    "per_gt_consistency": {
+      "dad_phone": 0.8571428571428571,
+      "dialogue": 0.7142857142857143,
+      "Brian": 0.5,
+      "Sean": 1.0,
+      "frustrated_dad": 1.0,
+      "mom": 0.6666666666666666
+    },
+    "gt_to_spks": {
+      "dad_phone": [
+        "SPEAKER_01",
+        "SPEAKER_01",
+        "SPEAKER_01",
+        "SPEAKER_01",
+        "SPEAKER_01",
+        "SPEAKER_04",
+        "SPEAKER_01"
+      ],
+      "dialogue": [
+        "SPEAKER_04",
+        "SPEAKER_04",
+        "SPEAKER_04",
+        "SPEAKER_04",
+        "SPEAKER_01",
+        "SPEAKER_01",
+        "SPEAKER_04"
+      ],
+      "Brian": [
+        "SPEAKER_01",
+        null
+      ],
+      "Sean": [
+        "SPEAKER_01"
+      ],
+      "frustrated_dad": [
+        "SPEAKER_01",
+        "SPEAKER_01",
+        "SPEAKER_01",
+        "SPEAKER_01",
+        "SPEAKER_01",
+        "SPEAKER_01"
+      ],
+      "mom": [
+        "SPEAKER_01",
+        "SPEAKER_01",
+        "SPEAKER_BG_02"
+      ]
+    },
+    "config": {
+      "main_merge": 0.45,
+      "bg_merge": 0.3,
+      "sim_match": 0.55,
+      "pad": 0.5
+    }
+  },
+  {
+    "score": 0.7896825396825397,
+    "avg_consistency": 0.7896825396825397,
+    "main_count": 2,
+    "main_match": false,
+    "bg_detected": false,
+    "per_gt_consistency": {
+      "dad_phone": 0.8571428571428571,
+      "dialogue": 0.7142857142857143,
+      "Brian": 0.5,
+      "Sean": 1.0,
+      "frustrated_dad": 1.0,
+      "mom": 0.6666666666666666
+    },
+    "gt_to_spks": {
+      "dad_phone": [
+        "SPEAKER_01",
+        "SPEAKER_01",
+        "SPEAKER_01",
+        "SPEAKER_01",
+        "SPEAKER_01",
+        "SPEAKER_04",
+        "SPEAKER_01"
+      ],
+      "dialogue": [
+        "SPEAKER_04",
+        "SPEAKER_04",
+        "SPEAKER_04",
+        "SPEAKER_04",
+        "SPEAKER_01",
+        "SPEAKER_01",
+        "SPEAKER_04"
+      ],
+      "Brian": [
+        "SPEAKER_01",
+        null
+      ],
+      "Sean": [
+        "SPEAKER_01"
+      ],
+      "frustrated_dad": [
+        "SPEAKER_01",
+        "SPEAKER_01",
+        "SPEAKER_01",
+        "SPEAKER_01",
+        "SPEAKER_01",
+        "SPEAKER_01"
+      ],
+      "mom": [
+        "SPEAKER_01",
+        "SPEAKER_01",
+        "SPEAKER_BG_02"
+      ]
+    },
+    "config": {
+      "main_merge": 0.45,
+      "bg_merge": 0.4,
+      "sim_match": 0.45,
+      "pad": 0.5
+    }
+  },
+  {
+    "score": 0.7896825396825397,
+    "avg_consistency": 0.7896825396825397,
+    "main_count": 2,
+    "main_match": false,
+    "bg_detected": false,
+    "per_gt_consistency": {
+      "dad_phone": 0.8571428571428571,
+      "dialogue": 0.7142857142857143,
+      "Brian": 0.5,
+      "Sean": 1.0,
+      "frustrated_dad": 1.0,
+      "mom": 0.6666666666666666
+    },
+    "gt_to_spks": {
+      "dad_phone": [
+        "SPEAKER_01",
+        "SPEAKER_01",
+        "SPEAKER_01",
+        "SPEAKER_01",
+        "SPEAKER_01",
+        "SPEAKER_04",
+        "SPEAKER_01"
+      ],
+      "dialogue": [
+        "SPEAKER_04",
+        "SPEAKER_04",
+        "SPEAKER_04",
+        "SPEAKER_04",
+        "SPEAKER_01",
+        "SPEAKER_01",
+        "SPEAKER_04"
+      ],
+      "Brian": [
+        "SPEAKER_01",
+        null
+      ],
+      "Sean": [
+        "SPEAKER_01"
+      ],
+      "frustrated_dad": [
+        "SPEAKER_01",
+        "SPEAKER_01",
+        "SPEAKER_01",
+        "SPEAKER_01",
+        "SPEAKER_01",
+        "SPEAKER_01"
+      ],
+      "mom": [
+        "SPEAKER_01",
+        "SPEAKER_01",
+        "SPEAKER_BG_02"
+      ]
+    },
+    "config": {
+      "main_merge": 0.45,
+      "bg_merge": 0.4,
+      "sim_match": 0.55,
+      "pad": 0.5
+    }
+  },
+  {
+    "score": 0.7896825396825397,
+    "avg_consistency": 0.7896825396825397,
+    "main_count": 3,
+    "main_match": false,
+    "bg_detected": false,
+    "per_gt_consistency": {
+      "dad_phone": 0.8571428571428571,
+      "dialogue": 0.7142857142857143,
+      "Brian": 0.5,
+      "Sean": 1.0,
+      "frustrated_dad": 1.0,
+      "mom": 0.6666666666666666
+    },
+    "gt_to_spks": {
+      "dad_phone": [
+        "SPEAKER_01",
+        "SPEAKER_01",
+        "SPEAKER_01",
+        "SPEAKER_01",
+        "SPEAKER_01",
+        "SPEAKER_04",
+        "SPEAKER_01"
+      ],
+      "dialogue": [
+        "SPEAKER_04",
+        "SPEAKER_04",
+        "SPEAKER_04",
+        "SPEAKER_04",
+        "SPEAKER_00",
+        "SPEAKER_00",
+        "SPEAKER_04"
+      ],
+      "Brian": [
+        "SPEAKER_00",
+        null
+      ],
+      "Sean": [
+        "SPEAKER_00"
+      ],
+      "frustrated_dad": [
+        "SPEAKER_00",
+        "SPEAKER_00",
+        "SPEAKER_00",
+        "SPEAKER_00",
+        "SPEAKER_00",
+        "SPEAKER_00"
+      ],
+      "mom": [
+        "SPEAKER_00",
+        "SPEAKER_00",
+        "SPEAKER_BG_02"
+      ]
+    },
+    "config": {
+      "main_merge": 0.5,
+      "bg_merge": 0.3,
+      "sim_match": 0.45,
+      "pad": 0.5
+    }
+  },
+  {
+    "score": 0.7896825396825397,
+    "avg_consistency": 0.7896825396825397,
+    "main_count": 3,
+    "main_match": false,
+    "bg_detected": false,
+    "per_gt_consistency": {
+      "dad_phone": 0.8571428571428571,
+      "dialogue": 0.7142857142857143,
+      "Brian": 0.5,
+      "Sean": 1.0,
+      "frustrated_dad": 1.0,
+      "mom": 0.6666666666666666
+    },
+    "gt_to_spks": {
+      "dad_phone": [
+        "SPEAKER_01",
+        "SPEAKER_01",
+        "SPEAKER_01",
+        "SPEAKER_01",
+        "SPEAKER_01",
+        "SPEAKER_04",
+        "SPEAKER_01"
+      ],
+      "dialogue": [
+        "SPEAKER_04",
+        "SPEAKER_04",
+        "SPEAKER_04",
+        "SPEAKER_04",
+        "SPEAKER_00",
+        "SPEAKER_00",
+        "SPEAKER_04"
+      ],
+      "Brian": [
+        "SPEAKER_00",
+        null
+      ],
+      "Sean": [
+        "SPEAKER_00"
+      ],
+      "frustrated_dad": [
+        "SPEAKER_00",
+        "SPEAKER_00",
+        "SPEAKER_00",
+        "SPEAKER_00",
+        "SPEAKER_00",
+        "SPEAKER_00"
+      ],
+      "mom": [
+        "SPEAKER_00",
+        "SPEAKER_00",
+        "SPEAKER_BG_02"
+      ]
+    },
+    "config": {
+      "main_merge": 0.5,
+      "bg_merge": 0.3,
+      "sim_match": 0.55,
+      "pad": 0.5
+    }
+  },
+  {
+    "score": 0.7896825396825397,
+    "avg_consistency": 0.7896825396825397,
+    "main_count": 3,
+    "main_match": false,
+    "bg_detected": false,
+    "per_gt_consistency": {
+      "dad_phone": 0.8571428571428571,
+      "dialogue": 0.7142857142857143,
+      "Brian": 0.5,
+      "Sean": 1.0,
+      "frustrated_dad": 1.0,
+      "mom": 0.6666666666666666
+    },
+    "gt_to_spks": {
+      "dad_phone": [
+        "SPEAKER_01",
+        "SPEAKER_01",
+        "SPEAKER_01",
+        "SPEAKER_01",
+        "SPEAKER_01",
+        "SPEAKER_04",
+        "SPEAKER_01"
+      ],
+      "dialogue": [
+        "SPEAKER_04",
+        "SPEAKER_04",
+        "SPEAKER_04",
+        "SPEAKER_04",
+        "SPEAKER_00",
+        "SPEAKER_00",
+        "SPEAKER_04"
+      ],
+      "Brian": [
+        "SPEAKER_00",
+        null
+      ],
+      "Sean": [
+        "SPEAKER_00"
+      ],
+      "frustrated_dad": [
+        "SPEAKER_00",
+        "SPEAKER_00",
+        "SPEAKER_00",
+        "SPEAKER_00",
+        "SPEAKER_00",
+        "SPEAKER_00"
+      ],
+      "mom": [
+        "SPEAKER_00",
+        "SPEAKER_00",
+        "SPEAKER_BG_02"
+      ]
+    },
+    "config": {
+      "main_merge": 0.5,
+      "bg_merge": 0.4,
+      "sim_match": 0.45,
+      "pad": 0.5
+    }
+  },
+  {
+    "score": 0.7896825396825397,
+    "avg_consistency": 0.7896825396825397,
+    "main_count": 3,
+    "main_match": false,
+    "bg_detected": false,
+    "per_gt_consistency": {
+      "dad_phone": 0.8571428571428571,
+      "dialogue": 0.7142857142857143,
+      "Brian": 0.5,
+      "Sean": 1.0,
+      "frustrated_dad": 1.0,
+      "mom": 0.6666666666666666
+    },
+    "gt_to_spks": {
+      "dad_phone": [
+        "SPEAKER_01",
+        "SPEAKER_01",
+        "SPEAKER_01",
+        "SPEAKER_01",
+        "SPEAKER_01",
+        "SPEAKER_04",
+        "SPEAKER_01"
+      ],
+      "dialogue": [
+        "SPEAKER_04",
+        "SPEAKER_04",
+        "SPEAKER_04",
+        "SPEAKER_04",
+        "SPEAKER_00",
+        "SPEAKER_00",
+        "SPEAKER_04"
+      ],
+      "Brian": [
+        "SPEAKER_00",
+        null
+      ],
+      "Sean": [
+        "SPEAKER_00"
+      ],
+      "frustrated_dad": [
+        "SPEAKER_00",
+        "SPEAKER_00",
+        "SPEAKER_00",
+        "SPEAKER_00",
+        "SPEAKER_00",
+        "SPEAKER_00"
+      ],
+      "mom": [
+        "SPEAKER_00",
+        "SPEAKER_00",
+        "SPEAKER_BG_02"
+      ]
+    },
+    "config": {
+      "main_merge": 0.5,
+      "bg_merge": 0.4,
+      "sim_match": 0.55,
+      "pad": 0.5
+    }
+  },
+  {
+    "score": 0.7896825396825397,
+    "avg_consistency": 0.7896825396825397,
+    "main_count": 4,
+    "main_match": false,
+    "bg_detected": false,
+    "per_gt_consistency": {
+      "dad_phone": 0.8571428571428571,
+      "dialogue": 0.7142857142857143,
+      "Brian": 0.5,
+      "Sean": 1.0,
+      "frustrated_dad": 1.0,
+      "mom": 0.6666666666666666
+    },
+    "gt_to_spks": {
+      "dad_phone": [
+        "SPEAKER_01",
+        "SPEAKER_01",
+        "SPEAKER_01",
+        "SPEAKER_01",
+        "SPEAKER_01",
+        "SPEAKER_04",
+        "SPEAKER_01"
+      ],
+      "dialogue": [
+        "SPEAKER_04",
+        "SPEAKER_04",
+        "SPEAKER_04",
+        "SPEAKER_04",
+        "SPEAKER_05",
+        "SPEAKER_05",
+        "SPEAKER_04"
+      ],
+      "Brian": [
+        "SPEAKER_05",
+        null
+      ],
+      "Sean": [
+        "SPEAKER_05"
+      ],
+      "frustrated_dad": [
+        "SPEAKER_00",
+        "SPEAKER_00",
+        "SPEAKER_00",
+        "SPEAKER_00",
+        "SPEAKER_00",
+        "SPEAKER_00"
+      ],
+      "mom": [
+        "SPEAKER_00",
+        "SPEAKER_00",
+        "SPEAKER_BG_02"
+      ]
+    },
+    "config": {
+      "main_merge": 0.55,
+      "bg_merge": 0.3,
+      "sim_match": 0.45,
+      "pad": 0.5
+    }
+  },
+  {
+    "score": 0.7896825396825397,
+    "avg_consistency": 0.7896825396825397,
+    "main_count": 4,
+    "main_match": false,
+    "bg_detected": false,
+    "per_gt_consistency": {
+      "dad_phone": 0.8571428571428571,
+      "dialogue": 0.7142857142857143,
+      "Brian": 0.5,
+      "Sean": 1.0,
+      "frustrated_dad": 1.0,
+      "mom": 0.6666666666666666
+    },
+    "gt_to_spks": {
+      "dad_phone": [
+        "SPEAKER_01",
+        "SPEAKER_01",
+        "SPEAKER_01",
+        "SPEAKER_01",
+        "SPEAKER_01",
+        "SPEAKER_04",
+        "SPEAKER_01"
+      ],
+      "dialogue": [
+        "SPEAKER_04",
+        "SPEAKER_04",
+        "SPEAKER_04",
+        "SPEAKER_04",
+        "SPEAKER_05",
+        "SPEAKER_05",
+        "SPEAKER_04"
+      ],
+      "Brian": [
+        "SPEAKER_05",
+        null
+      ],
+      "Sean": [
+        "SPEAKER_05"
+      ],
+      "frustrated_dad": [
+        "SPEAKER_00",
+        "SPEAKER_00",
+        "SPEAKER_00",
+        "SPEAKER_00",
+        "SPEAKER_00",
+        "SPEAKER_00"
+      ],
+      "mom": [
+        "SPEAKER_00",
+        "SPEAKER_00",
+        "SPEAKER_BG_02"
+      ]
+    },
+    "config": {
+      "main_merge": 0.55,
+      "bg_merge": 0.3,
+      "sim_match": 0.55,
+      "pad": 0.5
+    }
+  },
+  {
+    "score": 0.7896825396825397,
+    "avg_consistency": 0.7896825396825397,
+    "main_count": 4,
+    "main_match": false,
+    "bg_detected": false,
+    "per_gt_consistency": {
+      "dad_phone": 0.8571428571428571,
+      "dialogue": 0.7142857142857143,
+      "Brian": 0.5,
+      "Sean": 1.0,
+      "frustrated_dad": 1.0,
+      "mom": 0.6666666666666666
+    },
+    "gt_to_spks": {
+      "dad_phone": [
+        "SPEAKER_01",
+        "SPEAKER_01",
+        "SPEAKER_01",
+        "SPEAKER_01",
+        "SPEAKER_01",
+        "SPEAKER_04",
+        "SPEAKER_01"
+      ],
+      "dialogue": [
+        "SPEAKER_04",
+        "SPEAKER_04",
+        "SPEAKER_04",
+        "SPEAKER_04",
+        "SPEAKER_05",
+        "SPEAKER_05",
+        "SPEAKER_04"
+      ],
+      "Brian": [
+        "SPEAKER_05",
+        null
+      ],
+      "Sean": [
+        "SPEAKER_05"
+      ],
+      "frustrated_dad": [
+        "SPEAKER_00",
+        "SPEAKER_00",
+        "SPEAKER_00",
+        "SPEAKER_00",
+        "SPEAKER_00",
+        "SPEAKER_00"
+      ],
+      "mom": [
+        "SPEAKER_00",
+        "SPEAKER_00",
+        "SPEAKER_BG_02"
+      ]
+    },
+    "config": {
+      "main_merge": 0.55,
+      "bg_merge": 0.4,
+      "sim_match": 0.45,
+      "pad": 0.5
+    }
+  },
+  {
+    "score": 0.7896825396825397,
+    "avg_consistency": 0.7896825396825397,
+    "main_count": 4,
+    "main_match": false,
+    "bg_detected": false,
+    "per_gt_consistency": {
+      "dad_phone": 0.8571428571428571,
+      "dialogue": 0.7142857142857143,
+      "Brian": 0.5,
+      "Sean": 1.0,
+      "frustrated_dad": 1.0,
+      "mom": 0.6666666666666666
+    },
+    "gt_to_spks": {
+      "dad_phone": [
+        "SPEAKER_01",
+        "SPEAKER_01",
+        "SPEAKER_01",
+        "SPEAKER_01",
+        "SPEAKER_01",
+        "SPEAKER_04",
+        "SPEAKER_01"
+      ],
+      "dialogue": [
+        "SPEAKER_04",
+        "SPEAKER_04",
+        "SPEAKER_04",
+        "SPEAKER_04",
+        "SPEAKER_05",
+        "SPEAKER_05",
+        "SPEAKER_04"
+      ],
+      "Brian": [
+        "SPEAKER_05",
+        null
+      ],
+      "Sean": [
+        "SPEAKER_05"
+      ],
+      "frustrated_dad": [
+        "SPEAKER_00",
+        "SPEAKER_00",
+        "SPEAKER_00",
+        "SPEAKER_00",
+        "SPEAKER_00",
+        "SPEAKER_00"
+      ],
+      "mom": [
+        "SPEAKER_00",
+        "SPEAKER_00",
+        "SPEAKER_BG_02"
+      ]
+    },
+    "config": {
+      "main_merge": 0.55,
+      "bg_merge": 0.4,
+      "sim_match": 0.55,
+      "pad": 0.5
+    }
+  }
+]

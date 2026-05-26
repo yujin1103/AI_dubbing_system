@@ -1,0 +1,171 @@
+{
+  "main_count": 6,
+  "bg_count": 0,
+  "main_speakers": [
+    "mom",
+    "dad_phone",
+    "dialogue",
+    "frustrated_dad",
+    "Brian",
+    "Sean"
+  ],
+  "_source": "BEST_BASELINE_v194.json (v195, manually validated by user)",
+  "segments": [
+    {
+      "start": 0.657,
+      "end": 6.899,
+      "speaker": "dad_phone",
+      "text": "Sean, where are you? I... Call me as soon as you can, please. That was a mistake"
+    },
+    {
+      "start": 7.059,
+      "end": 11.2,
+      "speaker": "dialogue",
+      "text": "I agree. This is not about the new doctor. This is about you. They're baiting yo"
+    },
+    {
+      "start": 11.68,
+      "end": 12.02,
+      "speaker": "dad_phone",
+      "text": "Maybe."
+    },
+    {
+      "start": 12.04,
+      "end": 14.041,
+      "speaker": "dialogue",
+      "text": "Maybe what? What mistake are you talking about?"
+    },
+    {
+      "start": 14.041,
+      "end": 15.641,
+      "speaker": "dad_phone",
+      "text": "Your shot at Andrew's nephew."
+    },
+    {
+      "start": 15.701,
+      "end": 16.561,
+      "speaker": "dialogue",
+      "text": "Oh, come on. It was funny."
+    },
+    {
+      "start": 16.561,
+      "end": 19.622,
+      "speaker": "dad_phone",
+      "text": "Very funny. It was also disrespectful."
+    },
+    {
+      "start": 19.622,
+      "end": 22.543,
+      "speaker": "dialogue",
+      "text": "Well, you don't show him respect. I assume it's because you don't respect him."
+    },
+    {
+      "start": 22.823,
+      "end": 27.324,
+      "speaker": "dad_phone",
+      "text": "You show someone respect because you respect them or because you're afraid of th"
+    },
+    {
+      "start": 27.344,
+      "end": 28.205,
+      "speaker": "dialogue",
+      "text": "Well, neither do I."
+    },
+    {
+      "start": 28.205,
+      "end": 29.365,
+      "speaker": "dad_phone",
+      "text": "You should."
+    },
+    {
+      "start": 30.915,
+      "end": 34.577,
+      "speaker": "dad_phone",
+      "text": "You're only in that room because your grandfather founded this hospital."
+    },
+    {
+      "start": 34.597,
+      "end": 46.404,
+      "speaker": "dialogue",
+      "text": "I'm going to pretend that this conversation didn't take this tangent and instead"
+    },
+    {
+      "start": 47.024,
+      "end": 51.347,
+      "speaker": "dialogue",
+      "text": "You do not make it about you. That is what they want. And if you give it to them"
+    },
+    {
+      "start": 56.189,
+      "end": 58.671,
+      "speaker": "Brian",
+      "text": "need to get to San Jose St. Bonaventure Hospital."
+    },
+    {
+      "start": 59.191,
+      "end": 59.871,
+      "speaker": "Sean",
+      "text": "That's where we're going."
+    },
+    {
+      "start": 59.871,
+      "end": 60.692,
+      "speaker": "Brian",
+      "text": "Good."
+    },
+    {
+      "start": 68.702,
+      "end": 71.985,
+      "speaker": "frustrated_dad",
+      "text": "How hard can it be to just act like a normal human being?"
+    },
+    {
+      "start": 72.265,
+      "end": 73.146,
+      "speaker": "mom",
+      "text": "doesn't know how."
+    },
+    {
+      "start": 73.626,
+      "end": 75.087,
+      "speaker": "frustrated_dad",
+      "text": "Bull. What are we supposed to do"
+    },
+    {
+      "start": 76.408,
+      "end": 78.69,
+      "speaker": "frustrated_dad",
+      "text": "This is the third school he's been thrown out of."
+    },
+    {
+      "start": 78.69,
+      "end": 79.471,
+      "speaker": "mom",
+      "text": "Find another school."
+    },
+    {
+      "start": 79.471,
+      "end": 81.332,
+      "speaker": "frustrated_dad",
+      "text": "No, we won't, because nothing's going to change."
+    },
+    {
+      "start": 81.893,
+      "end": 88.338,
+      "speaker": "frustrated_dad",
+      "text": "They can't handle him, and I don't blame them, because obviously, we can't handl"
+    },
+    {
+      "start": 88.338,
+      "end": 91.14,
+      "speaker": "mom",
+      "text": "You're hurting him."
+    },
+    {
+      "start": 91.14,
+      "end": 97.506,
+      "speaker": "frustrated_dad",
+      "text": "What did you do? John! No! You stopped petting that stupid rabbit!"
+    }
+  ]
+}

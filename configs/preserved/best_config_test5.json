@@ -1,0 +1,32 @@
+{
+  "note": "test5.mp4 best sweep config (GT main_count=4: 엄마/아빠/의사/션, bg_count=1). Score 1.167.",
+  "source": "GT sweep 2026-05-25",
+  "gap_fill": {
+    "main_merge": 0.40,
+    "bg_merge": 0.30,
+    "sim_match": 0.45,
+    "pad": 0.5
+  },
+  "diarize_env": {
+    "LATENTSYNC_OUTLIER_FAR_THRESH": "0.70"
+  },
+  "boost_subchunk_asr": {
+    "BOOST_AREA_START": 0,
+    "BOOST_AREA_END": 30,
+    "WIN": 4.0,
+    "HOP": 3.0,
+    "VOLUME": 3.0,
+    "note": "test5: 141 -> 156 words (+15 fresh, Adam x2 detect)"
+  },
+  "consistency": {
+    "엄마": 0.6666666666666666,
+    "아빠": 1.0,
+    "BG": 1.0,
+    "의사": 0.6666666666666666,
+    "션": 1.0
+  },
+  "main_count": 4,
+  "main_match": true,
+  "bg_detected": true,
+  "avg_consistency": 0.87
+}

@@ -37,7 +37,9 @@ webapp/frontend/*.tsbuildinfo
 third_party/
 
 # 문서 및 작업 메모 (이 레포는 코드 본체만 추적)
-docs/
+docs/*
+!docs/preserved/
+!docs/preserved/**
 DESIGN.md
 checklist.md
 context-notes.md
@@ -45,6 +47,22 @@ conv.md
 next_steps.md
 tmp-ui-*.png
 .gstack-design-review-*.png
+
+# media 영상 산출물 (input/runs 등 대용량) — 단 media/gt/ 는 GT JSON 보존
+media/input/
+media/runs/
+media/output/
+media/dubbed/
+media/chunks/
+media/vocals/
+media/cache/
+media/model_cache/
+media/audio_cache/
+media/aihub*/
+media/lora/
+media/training_outputs/
+media/reports/
+!media/gt/
 
 # 디자인 참고 자료
 stitch_modern_slick_interface/

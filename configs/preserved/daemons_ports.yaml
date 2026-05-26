@@ -1,0 +1,50 @@
+daemons:
+  fusion_diarize:
+    port: 8903
+    venv: venv_diarizen
+    script: src/daemons/fusion_diarize_daemon.py
+    note: 4-way fusion endpoint (consumes diarizen/nemo/pyannote-c1/pyannote-3.1)
+
+  diarizen:
+    port: 8913
+    venv: venv_diarizen
+    script: src/daemons/diarize_daemon.py
+    model: WavLM-large-s80-md-v2
+
+  nemo:
+    port: 8923
+    venv: venv_diarizen
+    script: src/daemons/nemo_diarize_daemon.py
+    model: TitaNet-Large
+
+  pyannote_community:
+    port: 8933
+    venv: venv_diarizen
+    script: src/daemons/pyannote_diarize_daemon.py
+    model: pyannote/speaker-diarization-community-1
+
+  pyannote_31:
+    port: 8943
+    venv: venv_diarizen
+    script: src/daemons/pyannote_diarize_daemon.py
+    model: pyannote/speaker-diarization-3.1
+
+  asr_qwen3:
+    port: 8902
+    venv: venv_asr
+    script: src/daemons/asr_daemon.py
+    model: Qwen/Qwen3-ASR-1.7B
+    aligner: Qwen/Qwen3-ForcedAligner-0.6B
+
+  tts_cosyvoice3:
+    port: 8901
+    venv: venv_lipsync
+    script: src/daemons/cosyvoice_daemon.py
+    model: iic/CosyVoice3-0.5B
+    inference_api: inference_instruct2
+    note: fade-in/out applied (fixed 2026-05-15)
+
+gpu:
+  total_vram_gb: 16
+  shared_among_daemons: true
+  parallel_inference: true
