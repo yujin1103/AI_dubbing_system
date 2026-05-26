@@ -228,6 +228,31 @@ def step_run_asr(config: dict) -> None:
     )
 
 
+def step_face_clustering(config: dict) -> None:
+    # 신규 face service 에서 LightASD + face cluster + SPK remap. config 로 on/off.
+    fc_cfg = deep_get(config, ("pipeline", "face_clustering"), {}) or {}
+    if not bool(fc_cfg.get("enabled", False)):
+        logger.info("Skipping face_clustering (pipeline.face_clustering.enabled=false)")
+        return
+    from face_clustering import cluster_faces_in_run
+
+    cluster_faces_in_run(
+        require_value(config, ("paths", "chunks_dir")),
+        deep_get(config, ("paths", "diarization_stabilized_json"))
+        or require_value(config, ("paths", "diarization_json")),
+        deep_get(config, ("paths", "face_clusters_json"),
+                 "meta/{input_stem}/face_clusters.json"),
+        deep_get(config, ("paths", "diarization_face_matched_json"),
+                 "meta/{input_stem}/diarization_face_matched.json"),
+        light_asd_dir=str(fc_cfg.get("light_asd_dir", "/opt/Light-ASD")),
+        venv_python=str(fc_cfg.get("venv_python", "/usr/bin/python")),
+        face_sim_threshold=float(fc_cfg.get("face_sim_threshold", 0.4)),
+        min_speak_score=float(fc_cfg.get("min_speak_score", 0.5)),
+        dominant_ratio=float(fc_cfg.get("dominant_ratio", 0.5)),
+        min_evidence_frames=int(fc_cfg.get("min_evidence_frames", 5)),
+    )
+
+
 def step_apply_preserved_repair(config: dict) -> None:
     # E:\TTS_capstone 검증된 8 repair patches 일괄 호출.
     # config.preserved_repair.run_dir = run 디렉토리 (meta/ + vocals/ 필요).
@@ -455,6 +480,7 @@ STEP_FUNCTIONS: list[tuple[str, Callable[[dict], None]]] = [
     ("redirect_nonspeech", step_redirect_nonspeech),
     ("diarize", step_diarize),
     ("rttm_to_json", step_rttm_to_json),
+    ("face_clustering", step_face_clustering),
     ("apply_preserved_repair", step_apply_preserved_repair),
     ("merge_chunks", step_merge_chunks),
     ("cut_chunks", step_cut_chunks),

@@ -12,6 +12,7 @@ STEP_SERVICE: dict[StepName, str] = {
     "redirect_nonspeech": "separator",  # silero-vad 가 separator 컨테이너에 설치되어 있음
     "diarize": "diarizer",
     "rttm_to_json": "controller",
+    "face_clustering": "face",
     "merge_chunks": "controller",
     "cut_chunks": "controller",
     "extract_emotion": "speaker",

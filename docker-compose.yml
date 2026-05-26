@@ -51,6 +51,19 @@ services:
     env_file:
       - .env
 
+  # face / ASD 서비스 — LightASD speaking score + face clustering (insightface ArcFace).
+  # 검증된 보존 v305f 의 face_clusters 결과 재현용. diarize 결과를 face cluster 기반 SPK 로 remap.
+  # 모델 weight: /opt/Light-ASD/weight/finetuning_TalkSet.model — 호스트에서 마운트하거나 build 후 다운로드.
+  face:
+    <<: *service-defaults
+    image: movie-dubbing/face:local
+    build:
+      context: .
+      dockerfile: docker/Dockerfile.face
+    gpus: all
+    ipc: host
+    shm_size: "4gb"
+
   speaker:
     <<: *service-defaults
     image: movie-dubbing/speaker:local

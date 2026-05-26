@@ -1,0 +1,59 @@
+# ============================================================
+#  Face / ASD service — LightASD (Active Speaker Detection)
+#  + face clustering (insightface ArcFace) + LightASD speaking score
+#
+#  목적: chunk video → face tracks → speaking face → SPK remap
+#  검증: test4_v305f 가 이 단계를 거쳐 main 6명 detect (face_clusters: 16 tracks → 16 clusters)
+#
+#  GPU: 16GB 공유 (단일 GPU lock 으로 동시 1개 service 만 실행)
+# ============================================================
+FROM nvcr.io/nvidia/pytorch:26.02-py3
+
+ENV DEBIAN_FRONTEND=noninteractive
+ENV PYTHONUNBUFFERED=1
+
+# 1. 시스템 패키지 (ffmpeg + git for repo clone)
+RUN apt-get update && apt-get install -y \
+    ffmpeg git wget \
+    && rm -rf /var/lib/apt/lists/*
+
+# 2. LightASD repo clone (Junhua-Liao/Light-ASD)
+#    weight 파일은 호스트에서 mount 또는 별도 다운로드:
+#       wget -O /opt/Light-ASD/weight/finetuning_TalkSet.model \
+#           https://github.com/Junhua-Liao/Light-ASD/releases/download/v1.0/finetuning_TalkSet.model
+RUN git clone --depth=1 https://github.com/Junhua-Liao/Light-ASD.git /opt/Light-ASD && \
+    mkdir -p /opt/Light-ASD/weight && \
+    rm -rf /opt/Light-ASD/.git
+
+# 3. LightASD 의존성 (PyTorch 기반 ASD)
+RUN pip install --no-cache-dir \
+    "opencv-python==4.9.0.80" \
+    "scenedetect==0.6.1" \
+    "scipy>=1.10" \
+    "python_speech_features==0.6" \
+    "filterpy" \
+    "tqdm" \
+    "soundfile" \
+    "librosa==0.10.1" \
+    "ffmpeg-python==0.2.0"
+
+# 4. face detection + clustering (insightface ArcFace + mediapipe)
+RUN pip install --no-cache-dir \
+    "mediapipe>=0.10.13,<0.11" \
+    "face-alignment==1.4.1" \
+    "insightface==0.7.3" \
+    "scikit-image" \
+    "imageio==2.31.1" \
+    "decord==0.6.0"
+
+# 5. torchvision (LightASD 시각 처리)
+RUN pip install --no-cache-dir --force-reinstall --no-deps torchvision
+
+# 6. numpy 호환성 (LightASD는 1.x 기대, NGC PyTorch 2.x는 numpy 2.x 가능)
+RUN pip install --no-cache-dir "numpy<2"
+
+WORKDIR /workspace/project
+ENV PYTHONPATH=/workspace/project/src
+ENV LIGHT_ASD_DIR=/opt/Light-ASD
+
+CMD ["sleep", "infinity"]

@@ -5,13 +5,15 @@ from typing import Any, Literal, Optional
 
 from pydantic import BaseModel, Field
 
-# 16단계 파이프라인 step 이름 — src/pipeline.py:STEP_FUNCTIONS 와 동기 유지
+# 17단계 파이프라인 step 이름 — src/pipeline.py:STEP_FUNCTIONS 와 동기 유지
+# (face_clustering 은 신규 face service. 보존 v305f 의 face_clusters 결과 재현용.)
 PIPELINE_STEPS: tuple[str, ...] = (
     "extract_audio",
     "separate_audio",
     "redirect_nonspeech",
     "diarize",
     "rttm_to_json",
+    "face_clustering",
     "merge_chunks",
     "cut_chunks",
     "extract_emotion",
@@ -26,7 +28,8 @@ PIPELINE_STEPS: tuple[str, ...] = (
 )
 
 StepName = Literal[
-    "extract_audio", "separate_audio", "redirect_nonspeech", "diarize", "rttm_to_json", "merge_chunks",
+    "extract_audio", "separate_audio", "redirect_nonspeech", "diarize", "rttm_to_json",
+    "face_clustering", "merge_chunks",
     "cut_chunks", "extract_emotion", "run_asr", "translate", "build_timeline",
     "generate_tts_instructions", "run_tts", "validate_tts", "compose_audio", "mux",
 ]
