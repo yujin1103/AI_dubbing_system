@@ -52,6 +52,45 @@ import preserved_fusion; print(preserved_fusion.DEFAULT_FUSION_URL)
 → ✓ apply_repair_patches.PATCH_ORDER: 6 modules  
 → ✓ preserved_fusion.DEFAULT_FUSION_URL: http://127.0.0.1:8903
 
+## ✅ E2E 통합 검증 (2026-05-26)
+
+보존된 test4/test5 v305f run dir 를 임시 복사 → 우리 통합된 `src/apply_repair_patches.py`
+호출 (gap_fill 단계만, 기존 face_matched 결과 위에서) → 결과 segments_gapfilled.json
+GT 비교. 보존 결과와 **정확히 동일한 수치** 달성.
+
+### 환경
+- `dubbing_pipeline` 컨테이너 (start_daemons.sh 로 cosy/asr/diarize 기동)
+- ASR daemon (port 8902) 정상 → gap-fill ASR (gap > 1.5s 구간 ASR 보강) 동작
+
+### 결과 비교
+| Run | 보존 score | E2E score | 일치 | 핵심 |
+|---|---|---|---|---|
+| **test4** | 0.9976 | **0.9976** | ✓ 정확 동일 | mom 1.00 / Sean 1.00 / frustrated_dad 1.00 |
+| **test5** | 1.1667 | **1.1667** | ✓ 정확 동일 | 아빠 1.00 / 션 1.00 / BG 1.00, main=4 ✓, BG ✓ |
+
+### 검증 명령
+```bash
+# test4 (best config: mm=0.99 bm=0.30 sm=0.10)
+docker exec dubbing_pipeline /opt/venv_diarizen/bin/python \
+    src/apply_repair_patches.py /tmp/test4_e2e \
+    --main-merge 0.99 --bg-merge 0.30 --sim-match 0.10 --pad 0.5 \
+    --skip word_level_split focused_nemo_split visual_asd_reassign \
+           face_cluster_match postprocess_reassign_text
+
+# test5 (best config: mm=0.40 bm=0.30 sm=0.45)
+docker exec dubbing_pipeline /opt/venv_diarizen/bin/python \
+    src/apply_repair_patches.py /tmp/test5_e2e \
+    --main-merge 0.40 --bg-merge 0.30 --sim-match 0.45 --pad 0.5 \
+    --skip word_level_split focused_nemo_split visual_asd_reassign \
+           face_cluster_match postprocess_reassign_text
+```
+
+### 보존 결과 파일
+- `references/preserved/validation/e2e_integration/val_e2e_test4_with_asr.json`
+- `references/preserved/validation/e2e_integration/val_e2e_test5.json`
+
+→ **통합 코드가 보존 결과를 정확히 재현 = Phase 1 완료, 검증 통과.**
+
 ## ⏳ 남은 작업 (Phase 2~5)
 
 ### Phase 2: 실제 end-to-end 검증 (다음 세션)
