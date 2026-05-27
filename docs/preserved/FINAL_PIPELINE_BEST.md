@@ -13,7 +13,25 @@
 
 → outlier 활성으로 **test5 0.4048 → 1.1381 (2.8배)**, **보존 1.1667 의 97.5% 도달** ★
 
-## test4 최종 best (score 0.7897)
+## ★★ test4 FINAL FINAL — `OUTLIER_FAR_THRESH=0.50` 발견으로 main=6 도달 (score 0.9897, 보존 0.9976 의 99.2%)
+
+이전 best (thr=0.40) 의 0.7897 한계를 `LATENTSYNC_OUTLIER_FAR_THRESH=0.50` 로 해결.
+
+| thr 값 | raw main | best mm | score | main_match | 비고 |
+|---|---|---|---|---|---|
+| OFF=1 | 5 | mm=0.50 | 0.7897 | ✗ | over-merge |
+| 0.30 | 5 | mm=0.50 | 0.9167 (trivial) | ✗ | main=3 |
+| 0.40 | 7 | mm 무관 | 0.7897 | ✗ | main 5↔7 jump |
+| **0.50** | **9** | **0.50-0.60** | **0.9897 ★** | **✓ main=6** | gap_fill 으로 9→6 정확 |
+| 보존 v305f | (8?) | mm=0.99 | 0.9976 | ✓ main=6 | |
+
+### test4 thr=0.50 + mm=0.50 final 결과
+- score **0.9897** = avg_consistency 0.7897 + 0.2 (main_match bonus)
+- main=**6 ✓**, BG=False (보존 동일)
+- 화자별: Sean **1.00**, frustrated_dad **1.00**, dad_phone 0.86, dialogue 0.71, mom 0.67, Brian 0.50
+- **보존 0.9976 의 99.2% 도달** (갭 0.008)
+
+## test4 최종 best (score 0.7897) — 이전 best (참고)
 
 **구성**: 4-way fusion (DiariZen + NeMo + pyannote-3.1, 실효 3-way) + OUTLIER_FAR_THRESH=0.40 + raw (mm 후처리 불필요)
 
