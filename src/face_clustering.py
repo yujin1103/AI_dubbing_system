@@ -53,10 +53,15 @@ LIGHT_ASD_DIR_DEFAULT = os.environ.get("LIGHT_ASD_DIR", "/opt/Light-ASD")
 LIGHT_ASD_WEIGHT = "weight/finetuning_TalkSet.model"
 
 
-def _run_lightasd(video_path: str, light_asd_dir: str, python_bin: str) -> dict[str, Any] | None:
-    # asd_runner.py 의 LightASD subprocess 호출 로직 (간소화 버전).
-    # 입력 chunk mp4 → LightASD demo 폴더에 복사 → Columbia_test.py 실행 →
-    # pywork/{tracks,scores}.pckl 로드 → tracks 리턴.
+def _run_lightasd(
+    video_path: str,
+    light_asd_dir: str,
+    python_bin: str,
+    *,
+    keep_work_dir: bool = True,
+) -> tuple[dict[str, Any] | None, str | None]:
+    # asd_runner.py 의 LightASD subprocess 호출. video_25fps 보존 (face crop 용).
+    # 반환: (tracks_dict, video_25fps_path) — work_dir 도 보존 (keep_work_dir=True).
     video_name = Path(video_path).stem
     work_dir = tempfile.mkdtemp(prefix=f"asd_{video_name}_")
     demo_dir = os.path.join(work_dir, "demo")
@@ -79,27 +84,29 @@ def _run_lightasd(video_path: str, light_asd_dir: str, python_bin: str) -> dict[
         )
         if result.returncode != 0:
             logger.error("LightASD failed: %s", result.stderr[-500:])
-            shutil.rmtree(work_dir, ignore_errors=True)
-            return None
+            if not keep_work_dir:
+                shutil.rmtree(work_dir, ignore_errors=True)
+            return None, None
     except subprocess.TimeoutExpired:
         logger.error("LightASD timeout (30min)")
-        shutil.rmtree(work_dir, ignore_errors=True)
-        return None
+        if not keep_work_dir:
+            shutil.rmtree(work_dir, ignore_errors=True)
+        return None, None
 
     pywork = os.path.join(demo_dir, video_name, "pywork")
     tracks_pkl = os.path.join(pywork, "tracks.pckl")
     scores_pkl = os.path.join(pywork, "scores.pckl")
     if not (os.path.exists(tracks_pkl) and os.path.exists(scores_pkl)):
         logger.error("LightASD output files missing: %s", pywork)
-        shutil.rmtree(work_dir, ignore_errors=True)
-        return None
+        if not keep_work_dir:
+            shutil.rmtree(work_dir, ignore_errors=True)
+        return None, None
 
     with open(tracks_pkl, "rb") as f:
         tracks_raw = pickle.load(f)
     with open(scores_pkl, "rb") as f:
         scores_raw = pickle.load(f)
 
-    # fps + n_frames 추정 (LightASD 가 25fps 로 변환)
     video_25fps = os.path.join(demo_dir, video_name, "pyavi", "video.avi")
     fps = 25.0
     n_frames = 0
@@ -127,15 +134,50 @@ def _run_lightasd(video_path: str, light_asd_dir: str, python_bin: str) -> dict[
             "frames": [int(x) for x in frames],
             "bboxes": [[float(c) for c in b] for b in bboxes],
             "scores": [float(s) for s in scores],
+            "work_dir": work_dir,
+            "video_25fps": video_25fps,
         })
 
-    shutil.rmtree(work_dir, ignore_errors=True)
-    return {"fps": fps, "n_frames": n_frames, "tracks": tracks}
+    return {"fps": fps, "n_frames": n_frames, "tracks": tracks, "work_dir": work_dir}, video_25fps
+
+
+def _extract_face_embedding(face_app, video_path: str, frame_idx: int, bbox: list[float]):
+    # video_25fps 의 frame_idx 위치에서 bbox crop → ArcFace embedding 512-dim.
+    import cv2
+    import numpy as np
+    cap = cv2.VideoCapture(video_path)
+    cap.set(cv2.CAP_PROP_POS_FRAMES, frame_idx)
+    ok, frame = cap.read()
+    cap.release()
+    if not ok or frame is None:
+        return None
+    h, w = frame.shape[:2]
+    x1, y1, x2, y2 = [max(0, int(c)) for c in bbox]
+    x2 = min(w, x2)
+    y2 = min(h, y2)
+    if x2 <= x1 or y2 <= y1:
+        return None
+    # bbox padding 20% (face_app det가 더 잘 잡음)
+    pad = int(0.2 * max(x2 - x1, y2 - y1))
+    x1p = max(0, x1 - pad)
+    y1p = max(0, y1 - pad)
+    x2p = min(w, x2 + pad)
+    y2p = min(h, y2 + pad)
+    crop = frame[y1p:y2p, x1p:x2p]
+    if crop.size == 0:
+        return None
+    faces = face_app.get(crop)
+    if not faces:
+        return None
+    # 가장 큰 face의 embedding
+    best = max(faces, key=lambda f: (f.bbox[2] - f.bbox[0]) * (f.bbox[3] - f.bbox[1]))
+    emb = best.normed_embedding  # 512-dim, L2-normalized
+    return emb
 
 
 def _cluster_face_tracks(tracks: list[dict], sim_threshold: float) -> dict[int, int]:
-    # 얼굴 embedding 기반 cluster (cosine greedy, ArcFace 1-vec per track).
-    # insightface 가 import 가능해야 함 (face 컨테이너에 설치됨).
+    # ArcFace embedding 기반 cluster (cosine greedy, sim ≥ threshold = 같은 인물).
+    # 각 track 의 가장 큰 face frame 1개에서 embedding 추출 → 기존 centroid 와 비교.
     try:
         import numpy as np
         from insightface.app import FaceAnalysis
@@ -143,10 +185,80 @@ def _cluster_face_tracks(tracks: list[dict], sim_threshold: float) -> dict[int, 
         logger.warning("insightface 없음 — track_id 단독 cluster 로 처리")
         return {t["track_id"]: t["track_id"] for t in tracks}
 
-    # 각 track의 첫 번째 bbox 에서 face crop → ArcFace embedding
-    # 여기서는 단순화: track 길이 기반 1-to-1 매핑 (face cluster 구현은
-    # 향후 chunk video 에서 직접 face crop 으로 보강).
-    return {t["track_id"]: t["track_id"] for t in tracks}
+    # insightface FaceAnalysis 초기화 (GPU)
+    try:
+        face_app = FaceAnalysis(
+            name="buffalo_l",
+            providers=["CUDAExecutionProvider", "CPUExecutionProvider"],
+        )
+        face_app.prepare(ctx_id=0, det_size=(640, 640))
+    except Exception as exc:
+        logger.warning("FaceAnalysis init 실패 (%s) — placeholder cluster", exc)
+        return {t["track_id"]: t["track_id"] for t in tracks}
+
+    # 각 track 의 대표 embedding 추출 (가장 큰 face area frame)
+    track_embs: dict[int, np.ndarray] = {}
+    for t in tracks:
+        if not t.get("frames"):
+            continue
+        # 가장 큰 bbox area 의 frame 선택
+        best_i = 0
+        best_area = -1.0
+        for i, b in enumerate(t["bboxes"]):
+            area = (b[2] - b[0]) * (b[3] - b[1])
+            if area > best_area:
+                best_area = area
+                best_i = i
+        frame_idx = int(t["frames"][best_i])
+        bbox = t["bboxes"][best_i]
+        video_path = t.get("video_25fps")
+        if not video_path or not os.path.exists(video_path):
+            continue
+        emb = _extract_face_embedding(face_app, video_path, frame_idx, bbox)
+        if emb is None:
+            continue
+        track_embs[t["track_id"]] = np.asarray(emb, dtype=np.float32)
+
+    if not track_embs:
+        logger.warning("ArcFace embedding 추출 0 — placeholder cluster")
+        return {t["track_id"]: t["track_id"] for t in tracks}
+
+    # cosine greedy clustering
+    centroids: list[np.ndarray] = []
+    members: list[list[np.ndarray]] = []
+    cluster_of: dict[int, int] = {}
+    for tid, emb in track_embs.items():
+        if not centroids:
+            centroids.append(emb)
+            members.append([emb])
+            cluster_of[tid] = 0
+            continue
+        sims = [float(np.dot(emb, c)) for c in centroids]
+        best = int(np.argmax(sims))
+        if sims[best] >= sim_threshold:
+            members[best].append(emb)
+            cen = np.mean(members[best], axis=0)
+            cen = cen / (np.linalg.norm(cen) + 1e-8)
+            centroids[best] = cen
+            cluster_of[tid] = best
+        else:
+            centroids.append(emb)
+            members.append([emb])
+            cluster_of[tid] = len(centroids) - 1
+
+    # embedding 추출 실패한 track 은 별도 cluster
+    unique_offset = len(centroids)
+    for t in tracks:
+        tid = t["track_id"]
+        if tid not in cluster_of:
+            cluster_of[tid] = unique_offset
+            unique_offset += 1
+
+    logger.info(
+        "ArcFace clustering: %s tracks → %s clusters (sim ≥ %s)",
+        len(tracks), len(centroids), sim_threshold,
+    )
+    return cluster_of
 
 
 def _compute_dominant_speaker(
@@ -222,12 +334,16 @@ def cluster_faces_in_run(
 
     all_tracks: list[dict] = []
     all_fps = 25.0
+    work_dirs: list[str] = []
     for video in chunk_videos:
-        asd = _run_lightasd(str(video), light_asd_dir, venv_python)
+        asd, _video_25fps = _run_lightasd(str(video), light_asd_dir, venv_python,
+                                          keep_work_dir=True)
         if asd is None:
             logger.warning("LightASD failed for %s — skipping its tracks", video)
             continue
         all_fps = float(asd.get("fps") or 25.0)
+        if asd.get("work_dir"):
+            work_dirs.append(asd["work_dir"])
         for t in asd.get("tracks", []):
             all_tracks.append(t)
 
@@ -321,6 +437,9 @@ def cluster_faces_in_run(
         "face_clustering: %s chunks, %s tracks, %s clusters, %s SPK reassigned",
         len(chunk_videos), len(all_tracks), face_summary["n_clusters"], n_reassign,
     )
+    # work_dirs cleanup (face embedding 끝나고 video.avi 더 이상 필요 없음)
+    for wd in work_dirs:
+        shutil.rmtree(wd, ignore_errors=True)
     return {
         "chunks": len(chunk_videos),
         "tracks": len(all_tracks),
