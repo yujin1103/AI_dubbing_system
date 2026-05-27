@@ -1,0 +1,28 @@
+{
+  "der_strict_pct": 28.63,
+  "der_greedy_pct": 28.63,
+  "missed_pct": 4.11,
+  "false_alarm_pct": 5.23,
+  "speaker_error_pct": 19.29,
+  "greedy_confusion_pct": 19.29,
+  "total_gt_speech_sec": 71.12,
+  "segment_level_correct_pct": 78.78,
+  "per_gt_speaker_accuracy_pct": {
+    "dad_phone": 83.4,
+    "dialogue": 68.9,
+    "Brian": 81.6,
+    "Sean": 95.4,
+    "frustrated_dad": 89.3,
+    "mom": 61.2
+  },
+  "speaker_mapping": {
+    "dad_phone": "SPEAKER_00",
+    "dialogue": "SPEAKER_01",
+    "Brian": "SPEAKER_04",
+    "Sean": "SPEAKER_04",
+    "frustrated_dad": "SPEAKER_03",
+    "mom": "SPEAKER_03"
+  },
+  "collar": 0.25,
+  "skip_overlap": false
+}

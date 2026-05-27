@@ -1,0 +1,26 @@
+{
+  "der_strict_pct": 103.02,
+  "der_greedy_pct": 103.02,
+  "missed_pct": 20.39,
+  "false_alarm_pct": 53.07,
+  "speaker_error_pct": 29.56,
+  "greedy_confusion_pct": 29.56,
+  "total_gt_speech_sec": 41.25,
+  "segment_level_correct_pct": 78.02,
+  "per_gt_speaker_accuracy_pct": {
+    "엄마": 50.0,
+    "아빠": 93.3,
+    "BG": 69.0,
+    "의사": 67.2,
+    "션": 86.4
+  },
+  "speaker_mapping": {
+    "엄마": "SPEAKER_01",
+    "아빠": "SPEAKER_01",
+    "BG": "SPEAKER_BG_00",
+    "의사": "SPEAKER_01",
+    "션": "SPEAKER_01"
+  },
+  "collar": 0.25,
+  "skip_overlap": false
+}
