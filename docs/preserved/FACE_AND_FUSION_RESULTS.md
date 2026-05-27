@@ -28,6 +28,45 @@
 
 **결론**: ArcFace clustering 자체는 보존 v305f 동등 수준 (15/20 clusters). 단 GT 점수는 단독 적용으로 향상 X. 진짜 효과는 **face_cluster + gap_fill + 4-way fusion 결합** 필요.
 
+## Phase B — fusion (2-way + 4-way 비교)
+
+### 4-way fusion (DiariZen + NeMo + pyannote-c1 + pyannote-3.1)
+**4 sub-daemon 띄움 후 fusion endpoint 호출.**
+- pyannote daemons (8933 community-1, 8943 3.1) lazy load — 첫 호출 시 ~3분 대기
+- fusion daemon log: `[Fusion] 3-model: dz=38, nm=36, pyann=0 → fused=40` — pyannote-c1 응답 segments=0 (community-1 HF cache 없어 fallback). pyannote-3.1만 cascade fuse.
+- **실효 3-way** (DiariZen + NeMo + pyannote-3.1)
+
+| Test4 | score | main | mom | dad_phone | dialogue | frustrated_dad | Sean | Brian |
+|---|---|---|---|---|---|---|---|---|
+| raw | 0.7302 | 5 | 0.33 | 0.57 | 0.71 | 1.00 | 1.00 | 0.50 |
+| fusion 2-way | 0.6825 | 5 | 0.67 ★ | 0.86 ★ | 0.57 | 0.50 | 1.00 | 0.50 |
+| **fusion 4-way (실효 3-way)** | **0.7302** | 5 | **0.67** | **1.00** ★★ | 0.71 | 0.50 | 1.00 | 0.50 |
+| 보존 v305f | 0.9976 | 6 | 1.00 | 0.57 | 0.71 | 1.00 | 1.00 | 0.50 |
+
+→ **4-way (실효 3-way) 추가 향상**:
+- dad_phone 0.86 → **1.00** (pyannote-3.1 효과)
+- dialogue 0.57 → 0.71 (2-way 손실 복구)
+- mom 0.67 유지
+
+| Test5 | score | main | bg | 엄마 | 아빠 | 의사 | 션 | BG |
+|---|---|---|---|---|---|---|---|---|
+| raw | 0.2429 | 10 | ✗ | 0.33 | 0.00 | 0.17 | 0.71 | 0.00 |
+| fusion 2-way | 0.2429 | 12 | ✗ | 0.33 | 0.00 | 0.17 | 0.71 | 0.00 |
+| **fusion 4-way** | **0.2429** | 12 | ✗ | 0.33 | 0.00 | 0.17 | 0.71 | 0.00 |
+| 보존 v305f | 1.1667 | 4 | ✓ | 0.67 | 1.00 | 0.67 | 1.00 | 1.00 |
+
+→ test5 fusion 4-way 효과 없음 (raw 동일). **over-merge gap_fill 후처리** 가 test5 핵심.
+
+### 시간
+| Test | 단일 DiariZen e2e | 2-way fusion | 4-way fusion |
+|---|---|---|---|
+| test4 | 17분 54초 | 12분 29초 | **11분 40초** ✓ |
+| test5 | 7분 24초 | 7분 39초 | 7분 33초 |
+
+### Daemon 자원 (4-way 동시)
+- GPU 12.5 / 16.3 GiB (DiariZen + NeMo + cosy + asr, pyannote x2는 lazy)
+- pyannote 첫 호출 시 추가 ~4GB (총 ~16GB 한계 직전)
+
 ## Phase B — 2-way fusion (DiariZen + NeMo)
 
 ### 환경
