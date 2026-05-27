@@ -369,19 +369,16 @@ def cluster_faces_in_run(
         if cnt:
             cluster_dominant_spk[cid] = cnt.most_common(1)[0][0]
 
-    # SPK remap: 각 segment 시간대에 dominant face cluster 의 SPK 가 다르면 reassign
-    remapped: list[dict] = []
-    n_reassign = 0
-    for seg in segments:
+    # segment 별 best face cluster 매핑 (재사용)
+    seg_best_cluster: dict[int, int] = {}
+    for idx, seg in enumerate(segments):
         start = float(seg.get("start", seg.get("group_start", 0.0)))
         end = float(seg.get("end", seg.get("group_end", 0.0)))
         cur_spk = str(seg.get("speaker", ""))
         if cur_spk.startswith("SPEAKER_BG"):
-            remapped.append(dict(seg))
             continue
         f_start = int(start * all_fps)
         f_end = int(end * all_fps)
-        # 가장 speaking 강한 track
         track_scores = []
         for t in all_tracks:
             frames = t.get("frames") or []
@@ -395,21 +392,69 @@ def cluster_faces_in_run(
                 avg_sc = sum(sc for fr, sc in zip(frames, scores) if f_start <= fr <= f_end) \
                          / max(mask_n, 1)
                 track_scores.append((avg_sc, cid))
-        if not track_scores:
+        if track_scores:
+            track_scores.sort(key=lambda x: -x[0])
+            seg_best_cluster[idx] = track_scores[0][1]
+
+    # SPK split 분석: 한 SPK 의 segments 가 여러 face cluster 에 충분히 분산되면 split
+    # 보존 face_cluster_match.py 의 derive_speaker_remap_from_face_clusters 로직.
+    from collections import defaultdict as _dd
+    spk_cluster_segs: dict[str, dict[int, list[int]]] = _dd(lambda: _dd(list))
+    for idx, cid in seg_best_cluster.items():
+        spk = str(segments[idx].get("speaker", ""))
+        if not spk or spk.startswith("SPEAKER_BG"):
+            continue
+        spk_cluster_segs[spk][cid].append(idx)
+
+    split_label: dict[int, str] = {}    # seg_idx → new SPK label
+    n_split = 0
+    min_split = max(2, int(min_evidence_frames // 2))  # cluster 당 최소 segment 수
+    for spk, cluster_dist in spk_cluster_segs.items():
+        strong = [(cid, idxs) for cid, idxs in cluster_dist.items() if len(idxs) >= min_split]
+        if len(strong) < 2:
+            continue
+        # 가장 큰 cluster 는 원래 라벨 유지, 나머지는 split
+        strong.sort(key=lambda x: -len(x[1]))
+        for k, (cid, idxs) in enumerate(strong):
+            if k == 0:
+                continue
+            new_label = f"{spk}_v{cid}"
+            for i in idxs:
+                split_label[i] = new_label
+            n_split += len(idxs)
+        logger.info("face split: SPK %s → %s sub-speakers (%s clusters)",
+                    spk, len(strong), [c for c, _ in strong])
+
+    # SPK remap (단일 dominant) + split 결합
+    remapped: list[dict] = []
+    n_reassign = 0
+    for idx, seg in enumerate(segments):
+        cur_spk = str(seg.get("speaker", ""))
+        if cur_spk.startswith("SPEAKER_BG"):
             remapped.append(dict(seg))
             continue
-        track_scores.sort(key=lambda x: -x[0])
-        _best_score, best_cid = track_scores[0]
+        ns = dict(seg)
+        # split 우선 (한 SPK 가 여러 face cluster 에 분산된 경우 새 라벨)
+        if idx in split_label:
+            ns["audio_speaker"] = cur_spk
+            ns["speaker"] = split_label[idx]
+            ns["from_face_split"] = True
+            remapped.append(ns)
+            continue
+        # 그 외: dominant SPK 와 다르면 reassign
+        best_cid = seg_best_cluster.get(idx)
+        if best_cid is None:
+            remapped.append(ns)
+            continue
         dom_spk = cluster_dominant_spk.get(best_cid)
         if dom_spk and dom_spk != cur_spk:
-            ns = dict(seg)
             ns["audio_speaker"] = cur_spk
             ns["speaker"] = dom_spk
             ns["from_face_match"] = True
             remapped.append(ns)
             n_reassign += 1
         else:
-            remapped.append(dict(seg))
+            remapped.append(ns)
 
     # write outputs
     face_summary = {
@@ -434,8 +479,8 @@ def cluster_faces_in_run(
         save_json(remapped, output_remapped_json)
 
     logger.info(
-        "face_clustering: %s chunks, %s tracks, %s clusters, %s SPK reassigned",
-        len(chunk_videos), len(all_tracks), face_summary["n_clusters"], n_reassign,
+        "face_clustering: %s chunks, %s tracks, %s clusters, %s SPK reassigned, %s segs split",
+        len(chunk_videos), len(all_tracks), face_summary["n_clusters"], n_reassign, n_split,
     )
     # work_dirs cleanup (face embedding 끝나고 video.avi 더 이상 필요 없음)
     for wd in work_dirs:

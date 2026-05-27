@@ -1,0 +1,62 @@
+{
+  "score": 0.7897,
+  "avg_consistency": 0.7897,
+  "main_count": 3,
+  "main_count_gt": 6,
+  "main_match": false,
+  "bg_detected": false,
+  "per_gt_consistency": {
+    "dad_phone": 0.8571,
+    "dialogue": 0.7143,
+    "Brian": 0.5,
+    "Sean": 1.0,
+    "frustrated_dad": 0.6667,
+    "mom": 1.0
+  },
+  "gt_to_detected_speakers": {
+    "dad_phone": [
+      "SPEAKER_01",
+      "SPEAKER_01",
+      "SPEAKER_01",
+      "SPEAKER_01",
+      "SPEAKER_01",
+      "SPEAKER_00",
+      "SPEAKER_01"
+    ],
+    "dialogue": [
+      "SPEAKER_01",
+      "SPEAKER_00",
+      "SPEAKER_01",
+      "SPEAKER_00",
+      "SPEAKER_01",
+      "SPEAKER_01",
+      "SPEAKER_01"
+    ],
+    "Brian": [
+      "SPEAKER_00",
+      null
+    ],
+    "Sean": [
+      "SPEAKER_00"
+    ],
+    "frustrated_dad": [
+      "SPEAKER_01",
+      "SPEAKER_01",
+      "SPEAKER_00",
+      "SPEAKER_00",
+      "SPEAKER_00",
+      "SPEAKER_00"
+    ],
+    "mom": [
+      "SPEAKER_00",
+      "SPEAKER_00",
+      "SPEAKER_00"
+    ]
+  },
+  "n_detect_segments": 25,
+  "n_gt_segments": 26,
+  "source": {
+    "segments_json": "/workspace/media/runs/20260527_011926_test4fusio_039322/meta/test4_fusion4way_chunk_000_segments_gapfilled.json",
+    "gt_json": "/workspace/media/gt/test4_gt.json"
+  }
+}
