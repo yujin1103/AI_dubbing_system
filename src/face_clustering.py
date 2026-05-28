@@ -425,23 +425,94 @@ def cluster_faces_in_run(
         logger.info("face split: SPK %s → %s sub-speakers (%s clusters)",
                     spk, len(strong), [c for c, _ in strong])
 
-    # SPK remap (단일 dominant) + split 결합
+    # 한 segment 내에서 face cluster 가 변경되면 그 시점에 자동 split.
+    # 영상 무관 자동 — sim_threshold/min_speak_score/min_evidence_frames 만 사용.
+    # min_intra_split_sec = 0.3s (그 이상의 face run 만 의미있는 sub-segment).
+    def _intra_face_split(seg_idx: int, seg: dict) -> list[dict]:
+        start = float(seg.get("start", seg.get("group_start", 0.0)))
+        end = float(seg.get("end", seg.get("group_end", 0.0)))
+        if end - start < 1.5:
+            return [dict(seg)]  # 짧으면 split 불필요
+        f_start = int(start * all_fps)
+        f_end = int(end * all_fps)
+        timeline: list[tuple[int, int]] = []
+        for t in all_tracks:
+            frames = t.get("frames") or []
+            scores = t.get("scores") or []
+            cid = face_clusters.get(t["track_id"], -1)
+            if cid < 0:
+                continue
+            for fr, sc in zip(frames, scores):
+                if f_start <= fr <= f_end and sc >= min_speak_score:
+                    timeline.append((int(fr), int(cid)))
+        if not timeline:
+            return [dict(seg)]
+        timeline.sort()
+        # 같은 cluster 연속 frame 묶음 (≤3 frame gap 허용)
+        runs: list[list[int]] = []
+        for fr, cid in timeline:
+            if runs and runs[-1][0] == cid and fr - runs[-1][2] <= 3:
+                runs[-1][2] = fr
+            else:
+                runs.append([cid, fr, fr])
+        # 짧은 run 제거 (< 0.7s) — camera quick cut 무시
+        min_intra_frames = max(5, int(0.7 * all_fps))
+        runs = [r for r in runs if (r[2] - r[1] + 1) >= min_intra_frames]
+        # 동일 cluster 인접 run 합침
+        merged: list[list[int]] = []
+        for cid, fs, fe in runs:
+            if merged and merged[-1][0] == cid:
+                merged[-1][2] = fe
+            else:
+                merged.append([cid, fs, fe])
+        if len(merged) < 2:
+            return [dict(seg)]
+        # 각 run 을 별도 sub-segment 로 (face dominant SPK 자동 할당)
+        cur_spk = str(seg.get("speaker", ""))
+        out: list[dict] = []
+        for i, (cid, fs, fe) in enumerate(merged):
+            t_start = start if i == 0 else float(fs) / all_fps
+            t_end = end if i == len(merged) - 1 else float(merged[i + 1][1]) / all_fps
+            if t_end - t_start < 0.2:
+                continue
+            dom_spk = cluster_dominant_spk.get(cid, cur_spk)
+            ns = dict(seg)
+            ns["group_start"] = round(t_start, 3)
+            ns["group_end"] = round(t_end, 3)
+            if "start" in ns:
+                ns["start"] = round(t_start, 3)
+            if "end" in ns:
+                ns["end"] = round(t_end, 3)
+            ns["speaker"] = dom_spk
+            ns["from_face_intra_split"] = True
+            ns["audio_speaker"] = cur_spk
+            out.append(ns)
+        return out
+
+    # SPK remap (단일 dominant) + intra-segment face split + split 결합
     remapped: list[dict] = []
     n_reassign = 0
+    n_intra = 0
     for idx, seg in enumerate(segments):
         cur_spk = str(seg.get("speaker", ""))
         if cur_spk.startswith("SPEAKER_BG"):
             remapped.append(dict(seg))
             continue
         ns = dict(seg)
-        # split 우선 (한 SPK 가 여러 face cluster 에 분산된 경우 새 라벨)
+        # 1) intra-segment face split (한 segment 내 face cluster 변경)
+        intra_subs = _intra_face_split(idx, seg)
+        if len(intra_subs) >= 2:
+            n_intra += len(intra_subs) - 1
+            remapped.extend(intra_subs)
+            continue
+        # 2) SPK label split (한 SPK 가 여러 face cluster 에 분산)
         if idx in split_label:
             ns["audio_speaker"] = cur_spk
             ns["speaker"] = split_label[idx]
             ns["from_face_split"] = True
             remapped.append(ns)
             continue
-        # 그 외: dominant SPK 와 다르면 reassign
+        # 3) dominant SPK 와 다르면 reassign
         best_cid = seg_best_cluster.get(idx)
         if best_cid is None:
             remapped.append(ns)
@@ -479,8 +550,8 @@ def cluster_faces_in_run(
         save_json(remapped, output_remapped_json)
 
     logger.info(
-        "face_clustering: %s chunks, %s tracks, %s clusters, %s SPK reassigned, %s segs split",
-        len(chunk_videos), len(all_tracks), face_summary["n_clusters"], n_reassign, n_split,
+        "face_clustering: %s chunks, %s tracks, %s clusters, %s SPK reassigned, %s SPK-split segs, %s intra-face splits",
+        len(chunk_videos), len(all_tracks), face_summary["n_clusters"], n_reassign, n_split, n_intra,
     )
     # work_dirs cleanup (face embedding 끝나고 video.avi 더 이상 필요 없음)
     for wd in work_dirs:
