@@ -66,14 +66,17 @@ def recommend_config(stats: dict) -> dict:
         thr = 0.40  # default
 
     # gap_fill main_merge — outlier vs main 비율 기반 (영상 무관)
-    #   - outlier 가 main 보다 많음: 매우 over-split → 강한 over-merge (mm=0.40)
-    #   - outlier ≥ main 절반: 적당 over-merge (mm=0.50)
-    #   - outlier 1-2개: 약한 over-merge (mm=0.55)
-    #   - outlier 0: 보존 default (mm=0.99)
-    if n_outlier > n_main:
-        mm = 0.40  # 매우 over-merge (test5 case)
+    #   - main 1-2 + outlier 많음: 매우 over-split → mm=0.40
+    #   - main 3+ + outlier 많음: 적당 over-merge → mm=0.50 (test5 fresh case)
+    #   - outlier ≥ main 절반: mm=0.50 (test4 case)
+    #   - outlier 1-2개: 약한 over-merge → mm=0.55
+    #   - outlier 0: 보존 default → mm=0.99
+    if n_outlier > n_main and n_main <= 2:
+        mm = 0.40  # main 매우 적음 + outlier 많음 (trivial 위험)
+    elif n_outlier > n_main and n_main >= 3:
+        mm = 0.50  # main 적당히 있음 + outlier 많음 (test5 fresh case)
     elif n_outlier >= max(1, n_main // 2):
-        mm = 0.50  # 적당 over-merge (test4 thr=0.50 case)
+        mm = 0.50  # outlier ≥ main 절반 (test4 case)
     elif n_outlier >= 1:
         mm = 0.55  # 약한 over-merge
     else:
