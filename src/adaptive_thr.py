@@ -65,13 +65,19 @@ def recommend_config(stats: dict) -> dict:
     else:
         thr = 0.40  # default
 
-    # gap_fill main_merge — outlier 많으면 약하게 over-merge, 적으면 강하게 유지
-    if n_outlier >= 3:
-        mm = 0.50  # outlier 흡수
+    # gap_fill main_merge — outlier vs main 비율 기반 (영상 무관)
+    #   - outlier 가 main 보다 많음: 매우 over-split → 강한 over-merge (mm=0.40)
+    #   - outlier ≥ main 절반: 적당 over-merge (mm=0.50)
+    #   - outlier 1-2개: 약한 over-merge (mm=0.55)
+    #   - outlier 0: 보존 default (mm=0.99)
+    if n_outlier > n_main:
+        mm = 0.40  # 매우 over-merge (test5 case)
+    elif n_outlier >= max(1, n_main // 2):
+        mm = 0.50  # 적당 over-merge (test4 thr=0.50 case)
     elif n_outlier >= 1:
-        mm = 0.55
+        mm = 0.55  # 약한 over-merge
     else:
-        mm = 0.99  # 보존 default (outlier 없으면 그대로)
+        mm = 0.99  # 보존 default
 
     # bg_merge / sim_match — outlier 있으면 BG cluster 활성
     bm = 0.30
