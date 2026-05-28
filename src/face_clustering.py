@@ -527,12 +527,32 @@ def cluster_faces_in_run(
         else:
             remapped.append(ns)
 
-    # write outputs
+    # speaker_face_count: SPK → {track_id_str: frame_count} (보존 face_cluster_match
+    # 호환 schema). 각 audio SPK 가 어느 face track 의 frame 들에 얼마나 등장했는지.
+    speaker_track_count: dict[str, dict[str, int]] = defaultdict(lambda: defaultdict(int))
+    for seg in segments:
+        start = float(seg.get("start", seg.get("group_start", 0.0)))
+        end = float(seg.get("end", seg.get("group_end", 0.0)))
+        spk = str(seg.get("speaker", ""))
+        if not spk or spk.startswith("SPEAKER_BG"):
+            continue
+        f_start = int(start * all_fps)
+        f_end = int(end * all_fps)
+        for t in all_tracks:
+            frames = t.get("frames") or []
+            scores = t.get("scores") or []
+            n_speak = sum(
+                1 for fr, sc in zip(frames, scores)
+                if f_start <= fr <= f_end and sc >= min_speak_score
+            )
+            if n_speak > 0:
+                speaker_track_count[spk][str(t["track_id"])] += n_speak
+
+    # write outputs (보존 face_cluster_match.py 호환 schema)
     face_summary = {
         "face_clusters": {str(t["track_id"]): int(face_clusters.get(t["track_id"], -1))
                           for t in all_tracks},
-        "speaker_face_count": {spk: {str(cid): int(cnt[cid]) for cid in cnt}
-                               for spk, cnt in cluster_spk.items() if cnt},
+        "speaker_face_count": {spk: dict(cnt) for spk, cnt in speaker_track_count.items()},
         "fps": all_fps,
         "n_tracks": len(all_tracks),
         "n_clusters": len(set(face_clusters.values())),
