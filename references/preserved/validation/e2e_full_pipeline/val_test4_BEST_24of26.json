@@ -1,0 +1,62 @@
+{
+  "score": 0.869,
+  "avg_consistency": 0.869,
+  "main_count": 4,
+  "main_count_gt": 6,
+  "main_match": false,
+  "bg_detected": false,
+  "per_gt_consistency": {
+    "dad_phone": 1.0,
+    "dialogue": 0.7143,
+    "Brian": 0.5,
+    "Sean": 1.0,
+    "frustrated_dad": 1.0,
+    "mom": 1.0
+  },
+  "gt_to_detected_speakers": {
+    "dad_phone": [
+      "SPEAKER_00",
+      "SPEAKER_00",
+      "SPEAKER_00",
+      "SPEAKER_00",
+      "SPEAKER_00",
+      "SPEAKER_00",
+      "SPEAKER_00"
+    ],
+    "dialogue": [
+      "SPEAKER_03",
+      "SPEAKER_04",
+      "SPEAKER_01",
+      "SPEAKER_01",
+      "SPEAKER_01",
+      "SPEAKER_01",
+      "SPEAKER_01"
+    ],
+    "Brian": [
+      "SPEAKER_04",
+      null
+    ],
+    "Sean": [
+      "SPEAKER_04"
+    ],
+    "frustrated_dad": [
+      "SPEAKER_03",
+      "SPEAKER_03",
+      "SPEAKER_03",
+      "SPEAKER_03",
+      "SPEAKER_03",
+      "SPEAKER_03"
+    ],
+    "mom": [
+      "SPEAKER_03",
+      "SPEAKER_03",
+      "SPEAKER_03"
+    ]
+  },
+  "n_detect_segments": 24,
+  "n_gt_segments": 26,
+  "source": {
+    "segments_json": "/workspace/media/runs/20260527_232648_test4thr05_07c020/meta/test4_thr050_chunk_000_segments_sandwich.json",
+    "gt_json": "/workspace/media/gt/test4_gt.json"
+  }
+}
