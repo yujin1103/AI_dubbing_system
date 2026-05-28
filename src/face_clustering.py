@@ -548,11 +548,101 @@ def cluster_faces_in_run(
             if n_speak > 0:
                 speaker_track_count[spk][str(t["track_id"])] += n_speak
 
-    # write outputs (보존 face_cluster_match.py 호환 schema)
+    # UI metadata 생성: 각 face cluster 의 대표 thumbnail (jpg) + SPK → face cluster 매핑
+    # 출력 폴더: run_dir/face_thumbnails/cluster_NNN.jpg
+    thumbnails_dir = Path(output_face_clusters_json).parent.parent / "face_thumbnails"
+    thumbnails_dir.mkdir(parents=True, exist_ok=True)
+
+    cluster_thumbnails: dict[int, str] = {}
+    try:
+        import cv2
+        # cluster 별로 가장 큰 face area 의 track + frame 선택
+        cluster_best: dict[int, tuple[float, dict, int]] = {}  # cid → (score, track, frame_local_idx)
+        for t in all_tracks:
+            cid = face_clusters.get(t["track_id"], -1)
+            if cid < 0:
+                continue
+            bboxes = t.get("bboxes") or []
+            if not bboxes:
+                continue
+            # 가장 큰 bbox area 선택
+            best_i = 0
+            best_area = -1.0
+            for i, b in enumerate(bboxes):
+                area = (b[2] - b[0]) * (b[3] - b[1])
+                if area > best_area:
+                    best_area = area
+                    best_i = i
+            track_score = len(t.get("frames") or []) * best_area
+            if cid not in cluster_best or cluster_best[cid][0] < track_score:
+                cluster_best[cid] = (track_score, t, best_i)
+
+        # 각 cluster 대표 frame 에서 face crop 저장
+        for cid, (_score, t, best_i) in cluster_best.items():
+            video_path = t.get("video_25fps")
+            if not video_path or not os.path.exists(video_path):
+                continue
+            frame_idx = int(t["frames"][best_i])
+            bbox = t["bboxes"][best_i]
+            cap = cv2.VideoCapture(video_path)
+            cap.set(cv2.CAP_PROP_POS_FRAMES, frame_idx)
+            ok, frame = cap.read()
+            cap.release()
+            if not ok or frame is None:
+                continue
+            h, w = frame.shape[:2]
+            x1, y1, x2, y2 = [max(0, int(c)) for c in bbox]
+            x2 = min(w, x2)
+            y2 = min(h, y2)
+            if x2 <= x1 or y2 <= y1:
+                continue
+            # 30% padding (head + shoulder)
+            pad = int(0.3 * max(x2 - x1, y2 - y1))
+            x1p = max(0, x1 - pad)
+            y1p = max(0, y1 - pad)
+            x2p = min(w, x2 + pad)
+            y2p = min(h, y2 + pad)
+            crop = frame[y1p:y2p, x1p:x2p]
+            if crop.size == 0:
+                continue
+            out_path = thumbnails_dir / f"cluster_{cid:03d}.jpg"
+            cv2.imwrite(str(out_path), crop)
+            cluster_thumbnails[cid] = str(out_path.relative_to(thumbnails_dir.parent))
+        logger.info("saved %s face cluster thumbnails to %s", len(cluster_thumbnails), thumbnails_dir)
+    except Exception as exc:
+        logger.warning("thumbnail save 실패: %s", exc)
+
+    # SPK ↔ face cluster 매핑 (frame_count 기준 dominant)
+    spk_face_map: dict[str, dict] = {}
+    for spk, track_count in speaker_track_count.items():
+        cluster_count: Counter = Counter()
+        for tid_str, cnt in track_count.items():
+            # face_clusters 는 int key 이므로 int 로 변환
+            try:
+                tid_int = int(tid_str)
+            except (TypeError, ValueError):
+                continue
+            cid = face_clusters.get(tid_int, -1)
+            if cid >= 0:
+                cluster_count[cid] += cnt
+        if not cluster_count:
+            continue
+        total = sum(cluster_count.values())
+        dominant_cid, dominant_n = cluster_count.most_common(1)[0]
+        spk_face_map[spk] = {
+            "dominant_face_cluster": int(dominant_cid),
+            "dominant_confidence": round(dominant_n / total, 3),
+            "face_thumbnail": cluster_thumbnails.get(dominant_cid),
+            "alt_clusters": {str(cid): int(c) for cid, c in cluster_count.most_common(5)[1:]},
+        }
+
+    # write outputs (보존 face_cluster_match.py 호환 + UI metadata)
     face_summary = {
         "face_clusters": {str(t["track_id"]): int(face_clusters.get(t["track_id"], -1))
                           for t in all_tracks},
         "speaker_face_count": {spk: dict(cnt) for spk, cnt in speaker_track_count.items()},
+        "speaker_face_map": spk_face_map,
+        "cluster_thumbnails": {str(cid): path for cid, path in cluster_thumbnails.items()},
         "fps": all_fps,
         "n_tracks": len(all_tracks),
         "n_clusters": len(set(face_clusters.values())),
