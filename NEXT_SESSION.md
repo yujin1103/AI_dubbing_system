@@ -81,6 +81,17 @@ docker exec dubbing_pipeline python scripts/validate_against_gt.py <RD>/meta/<ch
 
 **대안(더 단순):** 현재 DiariZen+NeMo fusion이 단순 옵션 중 최선(test4 1.1167/test5 0.9381). test5 4번째는 본질적으로 어려운 케이스(짧은 외침)이므로, local fusion이 위험 대비 이득이 작다면 현 상태 수용도 합리적.
 
+## 2d. ★ 속도 병목 진단 + 후행 과제 (2026-05-29 저녁)
+
+**병목 = LightASD가 I/O bound** (실측: CPU 16% / GPU 10% — 둘 다 미포화). 원인: `Columbia_test.py`가 프레임을 **JPG로 디스크 추출(2732장) → 1장씩 cv2.imread 재읽기**. facedetScale 0.5로 올리면 13.5분(0.25는 ~7분).
+- **S3FD 배치 패치는 효과 없음** (compute가 병목이 아니라 I/O라) → Columbia_test 원본(facedetScale 0.25, per-frame) 복원함. 배치 패치 백업: `/opt/Light-ASD/*.bak_batch`, detune 백업 `.bak_detune`.
+- **★ 진짜 fix (후행 과제): JPG round-trip 제거** — `inference_video`에서 ffmpeg JPG 추출 대신 `cv2.VideoCapture`로 영상 프레임을 메모리로 직접 읽고, 프리페치 스레드로 I/O와 GPU 검출을 파이프라인. crop 단계도 동일. → 모든 영상 가속 (캐싱과 달리). insightface는 venv_lipsync에서 GPU 가능(`onnxruntime-gpu` 보유, LD_LIBRARY_PATH="" 필요).
+
+**얼굴 검출/임베딩 개선 (미검증, 커밋됨):**
+- `face_clustering`: crop-후-재검출(작은 얼굴 임베딩 실패 25~37/62~69) → **full-frame 검출 + bbox IoU 매칭 + det_size 1280**으로 변경. 임베딩 실패율↓ → face cluster 정확도↑ 목표. **다음 세션에서 실패율/cluster 정합 검증 필요.**
+
+**원칙 (사용자 합의): 규칙 추가 중지.** minority 화자(sean 0.7초 1발화, test5 엄마 짧은 외침)는 규칙으로 짜내면 overfit. 일반 컴포넌트(임베딩·diarization 품질) 개선 + self-calibrating 임계값만. 영상별 손튜닝 금지.
+
 ## 3. 남은 hard case (다음 세션 목표)
 
 ### 3a. test5 — 엄마/아빠 "Adam" 외침 분리 (4번째 화자)
