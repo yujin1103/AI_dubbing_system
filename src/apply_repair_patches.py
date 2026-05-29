@@ -58,6 +58,14 @@ def apply_all(
     venv_python: str = DEFAULT_VENV_PYTHON,
 ) -> None:
     skip_set = set(skip)
+    # 선행: selective local split (pyannote 분할 국소 채택) — env-gated, default off.
+    # REPAIR_LOCAL_SPLIT=1 일 때만. pyannote-3.1(8943) 떠 있어야 동작(없으면 비파괴 skip).
+    if os.environ.get("REPAIR_LOCAL_SPLIT", "").strip() in ("1", "true", "True"):
+        cmd = [venv_python, str(PATCHES_ROOT / "selective_local_split.py"), run_dir, "--apply"]
+        print(f"\n[run] selective_local_split: {' '.join(cmd)}")
+        rc = subprocess.run(cmd).returncode
+        if rc != 0:
+            print(f"[warn] selective_local_split rc={rc} — 무시하고 계속")
     for name, script, takes_args in PATCH_ORDER:
         if name in skip_set:
             print(f"[skip] {name}")

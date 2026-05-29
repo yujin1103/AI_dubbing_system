@@ -202,6 +202,29 @@ def _embed_face_in_frame(face_app, frame, bbox):
     return best.normed_embedding
 
 
+def _iou(a, b):
+    ax1, ay1, ax2, ay2 = a
+    bx1, by1, bx2, by2 = b
+    ix1, iy1 = max(ax1, bx1), max(ay1, by1)
+    ix2, iy2 = min(ax2, bx2), min(ay2, by2)
+    inter = max(0.0, ix2 - ix1) * max(0.0, iy2 - iy1)
+    ua = (ax2 - ax1) * (ay2 - ay1) + (bx2 - bx1) * (by2 - by1) - inter
+    return inter / ua if ua > 0 else 0.0
+
+
+def _embed_face_fullframe(face_app, frame, bbox, iou_th: float = 0.25):
+    # full-frame 검출 후 LightASD track bbox 와 IoU 최대인 face 의 임베딩.
+    # crop-후-재검출(작은 얼굴 → 검출 실패)을 피해 임베딩 실패율을 낮춘다.
+    faces = face_app.get(frame)
+    if not faces:
+        return None
+    bb = [float(c) for c in bbox]
+    best = max(faces, key=lambda f: _iou([float(c) for c in f.bbox], bb))
+    if _iou([float(c) for c in best.bbox], bb) < iou_th:
+        return None
+    return best.normed_embedding
+
+
 def _track_avg_embedding(face_app, video_path: str, frames: list, bboxes: list, k: int = 7):
     # track 당 bbox area 상위 k개 프레임에서 임베딩을 뽑아 평균(L2-norm) → 단일 프레임
     # 추출 실패/노이즈로 인한 과분할(임베딩 실패 track 의 singleton cluster)을 완화.
@@ -220,7 +243,7 @@ def _track_avg_embedding(face_app, video_path: str, frames: list, bboxes: list, 
         ok, frame = cap.read()
         if not ok or frame is None:
             continue
-        e = _embed_face_in_frame(face_app, frame, bboxes[i])
+        e = _embed_face_fullframe(face_app, frame, bboxes[i])   # full-frame + IoU (실패율↓)
         if e is not None:
             embs.append(np.asarray(e, dtype=np.float32))
     cap.release()
@@ -246,7 +269,7 @@ def _cluster_face_tracks(tracks: list[dict], sim_threshold: float) -> dict[int, 
             name="buffalo_l",
             providers=["CUDAExecutionProvider", "CPUExecutionProvider"],
         )
-        face_app.prepare(ctx_id=0, det_size=(640, 640))
+        face_app.prepare(ctx_id=0, det_size=(1280, 1280))  # 작은 얼굴 검출 위해 ↑ (full-frame)
     except Exception as exc:
         logger.warning("FaceAnalysis init 실패 (%s) — placeholder cluster", exc)
         return {t["track_id"]: t["track_id"] for t in tracks}

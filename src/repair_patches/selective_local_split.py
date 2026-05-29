@@ -56,12 +56,18 @@ def _grid(segs, n, step):
     return g
 
 
-def _pyannote(vocals: str) -> list:
-    r = requests.post(PYANNOTE_URL, json={"vocals_wav": vocals, "num_speakers": None,
-                                          "min_duration": 0.3}, timeout=600)
-    d = r.json()
-    if not d.get("success", True) and not d.get("segments"):
-        raise SystemExit(f"pyannote failed: {d.get('error')}")
+def _pyannote(vocals: str):
+    # pyannote-3.1(8943) 호출. daemon 이 없거나 모델 미로드면 None 반환(체인 비파괴 skip).
+    try:
+        r = requests.post(PYANNOTE_URL, json={"vocals_wav": vocals, "num_speakers": None,
+                                              "min_duration": 0.3}, timeout=600)
+        d = r.json()
+    except Exception as e:
+        print(f"  [skip] pyannote 호출 실패 ({e}) — local split 건너뜀")
+        return None
+    if not d.get("segments"):
+        print(f"  [skip] pyannote 미로드/무응답 (err={d.get('error')}) — local split 건너뜀")
+        return None
     return [{"start": float(x["start"]), "end": float(x["end"]), "speaker": str(x["speaker"])}
             for x in d.get("segments", [])]
 
@@ -150,28 +156,54 @@ def selective_local_split(base_segs: list, pyan_segs: list, *,
     return out, log
 
 
+def _process_chunk(meta: Path, rd: Path, chunk: str, *, min_dur, min_frac, apply: bool):
+    base = json.load(open(meta / f"{chunk}_segments.json", encoding="utf-8"))
+    base_segs = _segs_of(base)
+    vocals = str(rd / "vocals" / f"{chunk}_clean_vocals.wav")
+    pyan = _pyannote(vocals)
+    if pyan is None:
+        return  # pyannote 없음 → 비파괴 skip (base 유지)
+    print(f"  [{chunk}] base {len(base_segs)}seg/"
+          f"{len(set(str(s.get('speaker','')) for s in base_segs))}spk, "
+          f"pyannote {len(pyan)}seg/{len(set(s['speaker'] for s in pyan))}spk")
+    out, log = selective_local_split(base_segs, pyan, min_dur=min_dur, min_frac=min_frac)
+    for line in log:
+        print(line)
+    n_spk = len(set(s["speaker"] for s in out if not s["speaker"].startswith("SPEAKER_BG")))
+    json.dump({"groups": out}, open(meta / f"{chunk}_segments_localsplit.json", "w",
+                                    encoding="utf-8"), ensure_ascii=False, indent=2)
+    if apply:
+        raw = meta / f"{chunk}_segments.json"
+        bak = meta / f"{chunk}_segments.preraw.json"
+        if not bak.exists():
+            import shutil
+            shutil.copy(raw, bak)
+        json.dump({"groups": out}, open(raw, "w", encoding="utf-8"), ensure_ascii=False, indent=2)
+        print(f"  [✓apply] {chunk}: _segments.json 교체 ({n_spk} main spk, 백업 .preraw.json)")
+    else:
+        print(f"  [✓] {chunk}: {n_spk} main spk → _segments_localsplit.json")
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("run_dir")
-    ap.add_argument("--chunk", required=True, help="e.g. test5_fresh_chunk_000")
+    ap.add_argument("--chunk", help="특정 chunk (생략 시 run_dir 의 모든 *_chunk_*_segments.json 자동 처리)")
+    ap.add_argument("--apply", action="store_true", help="_segments.json 을 split 결과로 교체 (repair 체인 진입용)")
     ap.add_argument("--min-dur", type=float, default=MIN_DUR)
     ap.add_argument("--min-frac", type=float, default=MIN_FRAC)
     args = ap.parse_args()
     rd = Path(args.run_dir)
     meta = rd / "meta"
-    base = json.load(open(meta / f"{args.chunk}_segments.json", encoding="utf-8"))
-    base_segs = _segs_of(base)
-    vocals = str(rd / "vocals" / f"{args.chunk}_clean_vocals.wav")
-    pyan = _pyannote(vocals)
-    print(f"base: {len(base_segs)} segs / {len(set(str(s.get('speaker','')) for s in base_segs))} spk; "
-          f"pyannote: {len(pyan)} segs / {len(set(s['speaker'] for s in pyan))} spk")
-    out, log = selective_local_split(base_segs, pyan, min_dur=args.min_dur, min_frac=args.min_frac)
-    for line in log:
-        print(line)
-    n_spk = len(set(s["speaker"] for s in out if not s["speaker"].startswith("SPEAKER_BG")))
-    outp = meta / f"{args.chunk}_segments_localsplit.json"
-    json.dump({"groups": out}, open(outp, "w", encoding="utf-8"), ensure_ascii=False, indent=2)
-    print(f"[✓] {len(out)} segs / {n_spk} main spk → {outp}")
+    if args.chunk:
+        chunks = [args.chunk]
+    else:
+        import re
+        chunks = sorted(p.stem.replace("_segments", "") for p in meta.glob("*_chunk_*_segments.json")
+                        if re.search(r"_chunk_\d+_segments\.json$", p.name))
+    if not chunks:
+        print("no chunks"); return
+    for ch in chunks:
+        _process_chunk(meta, rd, ch, min_dur=args.min_dur, min_frac=args.min_frac, apply=args.apply)
 
 
 if __name__ == "__main__":
