@@ -40,6 +40,29 @@ docker exec dubbing_pipeline /opt/venv_diarizen/bin/python src/apply_repair_patc
 docker exec dubbing_pipeline python scripts/validate_against_gt.py <RD>/meta/<chunk>_segments_gapfilled.json media/gt/test4_gt.json
 ```
 
+## 2b. ★ 2026-05-29 추가 측정 — pyannote-3.1 살림 + fusion anchor 한계 (다음 세션 1순위)
+
+**pyannote-3.1(8943) 로드 성공 방법 (중요):**
+- venv 잘못이 원인이었음. **`/opt/venv_pyann/bin/python`** + **`LD_LIBRARY_PATH=""`**(번들 cuDNN 9.20 강제; 시스템 9.19와 충돌 회피)로 띄워야 로드됨. venv_diarizen은 lightning 불일치(PyanNet.load_from_checkpoint), venv_pyann 기본은 cuDNN 충돌.
+- 정상 launch:
+  ```
+  pkill -f pyannote_diarize_daemon.py
+  PYANNOTE_MODEL=pyannote/speaker-diarization-3.1 HF_HOME=/workspace/media/model_cache/huggingface \
+  HF_TOKEN=<token> LD_LIBRARY_PATH="" \
+    nohup /opt/venv_pyann/bin/python /workspace/src/daemons/pyannote_diarize_daemon.py --port 8943 &
+  ```
+  (파일은 `/workspace/src/daemons/`에 있음. `/workspace/patches/`엔 없음.) GPU 필요 → cosy(8901)·asr(8902) 내려서 확보(현재 내려둠; **사용자 승인: cosy/asr는 별도 컨테이너로 분리**).
+
+**측정 결과 (단일 모델 화자 수):**
+| 영상 | DiariZen(8903) | NeMo | pyannote-3.1(8943) | 3-way fusion(8918) | GT |
+|---|---|---|---|---|---|
+| test4 | **6 ✓** | - | 3 ✗ | **6 ✓** | 6 |
+| test5 | 3 ✗ | - | **4 ✓** | 3 ✗ | 4 |
+
+**핵심 한계:** fusion(8918)의 canonical 화자는 **DiariZen+NeMo만으로 결정**(`fusion_diarize_daemon.py` line 152-159), pyannote는 canonical에 안 들어감 → DiariZen이 약한 test5에선 pyannote의 4번째가 버려짐.
+
+**★ 다음 세션 1순위 FIX (영상 무관 uniform):** fusion canonical anchor를 **"distinct 화자를 가장 많이 찾은 모델"**로 변경. test4→DiariZen(6), test5→pyannote(4) 자동 선택. 구현: `fuse()`에서 DZ/NeMo/pyannote 각각 per-frame 배열 만들고 max-speaker 모델을 canon으로, 나머지는 temporal-nearest 매핑. **주의: test4 1.1167을 깨지 않도록 양쪽 재검증 필수.** (pyannote frame 배열은 이미 fetch됨 — line 285 pyannote2_segs.)
+
 ## 3. 남은 hard case (다음 세션 목표)
 
 ### 3a. test5 — 엄마/아빠 "Adam" 외침 분리 (4번째 화자)
