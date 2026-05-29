@@ -87,8 +87,13 @@ docker exec dubbing_pipeline python scripts/validate_against_gt.py <RD>/meta/<ch
 - **S3FD 배치 패치는 효과 없음** (compute가 병목이 아니라 I/O라) → Columbia_test 원본(facedetScale 0.25, per-frame) 복원함. 배치 패치 백업: `/opt/Light-ASD/*.bak_batch`, detune 백업 `.bak_detune`.
 - **★ 진짜 fix (후행 과제): JPG round-trip 제거** — `inference_video`에서 ffmpeg JPG 추출 대신 `cv2.VideoCapture`로 영상 프레임을 메모리로 직접 읽고, 프리페치 스레드로 I/O와 GPU 검출을 파이프라인. crop 단계도 동일. → 모든 영상 가속 (캐싱과 달리). insightface는 venv_lipsync에서 GPU 가능(`onnxruntime-gpu` 보유, LD_LIBRARY_PATH="" 필요).
 
-**얼굴 검출/임베딩 개선 (미검증, 커밋됨):**
-- `face_clustering`: crop-후-재검출(작은 얼굴 임베딩 실패 25~37/62~69) → **full-frame 검출 + bbox IoU 매칭 + det_size 1280**으로 변경. 임베딩 실패율↓ → face cluster 정확도↑ 목표. **다음 세션에서 실패율/cluster 정합 검증 필요.**
+**얼굴 임베딩 개선 — 검증 완료 ✓ (full-frame):**
+- `face_clustering`: crop-후-재검출 → **full-frame 검출 + bbox IoU 매칭 + det_size 1280**.
+- **실측: 임베딩 성공 59/62 (실패 3)** — crop 버전 ~30/62 대비 대폭 개선. 모든 영상에 유효한 일반 개선. (단 cluster 수 26으로 늘어 — 실패 track이 더 이상 singleton 아님; 과/적정 분할은 sim threshold 별도 튜닝 영역.)
+
+**검출 속도 patch — 적용됨, 미검증 (`scripts/patch_lightasd_speed.py`):**
+- 병목 프로파일 (test4 facedetScale 0.25): 영상변환 ~15s + 프레임추출 ~10s + **얼굴검출 ~5.5분(병목)** + crop ~1분 + ASD. (추출이 아니라 검출이 병목 — GPU 3~17% 미포화: 2732 JPG 1장씩 imread + S3FD 1프레임씩.)
+- patch: `inference_video`가 **video.avi 순차 디코드 + S3FD 배치**(JPG open 제거). `/opt/Light-ASD` 적용 완료(백업 `.bak_speed`/`.bak_detune`). **아직 실행 검증 안 함 — 다음 세션 face_clustering 1회로 검출시간 5.5분→? 측정.** env `LIGHTASD_DET_BATCH`(기본16).
 
 **원칙 (사용자 합의): 규칙 추가 중지.** minority 화자(sean 0.7초 1발화, test5 엄마 짧은 외침)는 규칙으로 짜내면 overfit. 일반 컴포넌트(임베딩·diarization 품질) 개선 + self-calibrating 임계값만. 영상별 손튜닝 금지.
 
