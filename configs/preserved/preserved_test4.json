@@ -41,6 +41,18 @@
     "min_duration": 0.3,
     "fusion_timeout": 900
   },
+  "pipeline": {
+    "_note": "face_clustering LightASD 는 venv_lipsync 에서만 동작 (python_speech_features). /usr/bin/python·venv_diarizen 은 import 실패 → ASD no-op.",
+    "face_clustering": {
+      "enabled": true,
+      "venv_python": "/opt/venv_lipsync/bin/python",
+      "light_asd_dir": "/opt/Light-ASD",
+      "face_sim_threshold": 0.4,
+      "min_speak_score": 0.5,
+      "dominant_ratio": 0.5,
+      "min_evidence_frames": 5
+    }
+  },
   "preserved_repair": {
     "_note": "8 patches — word_split + focused_nemo + visual_asd + face_cluster_match + gap_fill + postprocess",
     "enabled": true,

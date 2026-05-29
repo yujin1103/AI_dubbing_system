@@ -22,8 +22,8 @@ from pathlib import Path
 import numpy as np
 import soundfile as sf
 
-sys.path.insert(0, "/workspace")
-from patches.eres2netv2_helper import extract_eres2netv2_emb, get_eres2netv2_model
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "daemons"))
+from eres2netv2_helper import extract_eres2netv2_emb, get_eres2netv2_model
 
 CACHE_DIR = Path("/workspace/media/cache/lightasd")
 ASD_TH = 0.0             # LightASD speaking score threshold (raw scores 보통 -1~1, 0 이상=speak)

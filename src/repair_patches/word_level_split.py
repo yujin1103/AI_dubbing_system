@@ -26,8 +26,8 @@ from pathlib import Path
 import numpy as np
 import soundfile as sf
 
-sys.path.insert(0, "/workspace")
-from patches.eres2netv2_helper import extract_eres2netv2_emb, get_eres2netv2_model
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "daemons"))
+from eres2netv2_helper import extract_eres2netv2_emb, get_eres2netv2_model
 
 WORD_DIFF_TH = 0.30      # LR_cos < 이면 split 후보
 F0_JUMP_TH = 100         # F0 차 Hz

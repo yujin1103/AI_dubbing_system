@@ -23,8 +23,8 @@ import numpy as np
 import requests
 import soundfile as sf
 
-sys.path.insert(0, "/workspace")
-from patches.eres2netv2_helper import extract_eres2netv2_emb, get_eres2netv2_model
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "daemons"))
+from eres2netv2_helper import extract_eres2netv2_emb, get_eres2netv2_model
 
 NEMO_URL = "http://127.0.0.1:8923"
 MIN_DUR_FOCUS = 1.5      # 이 길이 이상 segment 만 focused NeMo 호출

@@ -163,8 +163,10 @@ def main(run_dir: str):
             for ti, t in enumerate(tracks):
                 fr = np.array(t.get("frames", []))
                 sc = np.array(t.get("scores", []))
-                if len(fr) == 0:
+                n = min(len(fr), len(sc))   # LightASD track 의 frames/scores 길이 불일치 방어
+                if n == 0:
                     continue
+                fr = fr[:n]; sc = sc[:n]
                 mask = (fr >= f_start) & (fr <= f_end)
                 if mask.sum() < 3:
                     continue

@@ -52,6 +52,13 @@ logger = get_logger("face_clustering")
 LIGHT_ASD_DIR_DEFAULT = os.environ.get("LIGHT_ASD_DIR", "/opt/Light-ASD")
 LIGHT_ASD_WEIGHT = "weight/finetuning_TalkSet.model"
 
+# ASD 신호를 검증된 repair patch 들이 소비하도록 persist 하는 위치.
+#   visual_asd_reassign.py  → ASD_CACHE_DIR/*.pkl  ({fps,n_frames,tracks})  (→ v190b)
+#   face_cluster_match.py   → FACE_REPORTS_DIR/*.json  (chunks[].face_clusters + speaker_face_count)
+# LightASD 는 face_clustering 안에서 한 번만 돌고, 그 결과를 두 patch 가 재사용한다.
+ASD_CACHE_DIR = Path(os.environ.get("LIGHTASD_CACHE_DIR", "/workspace/media/cache/lightasd"))
+FACE_REPORTS_DIR = Path(os.environ.get("FACE_REPORTS_DIR", "/workspace/media/reports"))
+
 
 def _run_lightasd(
     video_path: str,
@@ -175,6 +182,54 @@ def _extract_face_embedding(face_app, video_path: str, frame_idx: int, bbox: lis
     return emb
 
 
+def _embed_face_in_frame(face_app, frame, bbox):
+    # 이미 읽은 frame + bbox → ArcFace embedding (단일 프레임 추출 로직 공유).
+    import numpy as np  # noqa: F401
+    h, w = frame.shape[:2]
+    x1, y1, x2, y2 = [max(0, int(c)) for c in bbox]
+    x2 = min(w, x2)
+    y2 = min(h, y2)
+    if x2 <= x1 or y2 <= y1:
+        return None
+    pad = int(0.2 * max(x2 - x1, y2 - y1))
+    crop = frame[max(0, y1 - pad):min(h, y2 + pad), max(0, x1 - pad):min(w, x2 + pad)]
+    if crop.size == 0:
+        return None
+    faces = face_app.get(crop)
+    if not faces:
+        return None
+    best = max(faces, key=lambda f: (f.bbox[2] - f.bbox[0]) * (f.bbox[3] - f.bbox[1]))
+    return best.normed_embedding
+
+
+def _track_avg_embedding(face_app, video_path: str, frames: list, bboxes: list, k: int = 7):
+    # track 당 bbox area 상위 k개 프레임에서 임베딩을 뽑아 평균(L2-norm) → 단일 프레임
+    # 추출 실패/노이즈로 인한 과분할(임베딩 실패 track 의 singleton cluster)을 완화.
+    import cv2
+    import numpy as np
+    if not frames or not bboxes:
+        return None
+    order = sorted(
+        range(len(bboxes)),
+        key=lambda i: -((bboxes[i][2] - bboxes[i][0]) * (bboxes[i][3] - bboxes[i][1])),
+    )[:k]
+    cap = cv2.VideoCapture(video_path)
+    embs = []
+    for i in sorted(order):  # frame idx 오름차순 → 순차 seek 효율
+        cap.set(cv2.CAP_PROP_POS_FRAMES, int(frames[i]))
+        ok, frame = cap.read()
+        if not ok or frame is None:
+            continue
+        e = _embed_face_in_frame(face_app, frame, bboxes[i])
+        if e is not None:
+            embs.append(np.asarray(e, dtype=np.float32))
+    cap.release()
+    if not embs:
+        return None
+    m = np.mean(np.stack(embs), axis=0)
+    return m / (np.linalg.norm(m) + 1e-8)
+
+
 def _cluster_face_tracks(tracks: list[dict], sim_threshold: float) -> dict[int, int]:
     # ArcFace embedding 기반 cluster (cosine greedy, sim ≥ threshold = 같은 인물).
     # 각 track 의 가장 큰 face frame 1개에서 embedding 추출 → 기존 centroid 와 비교.
@@ -196,28 +251,22 @@ def _cluster_face_tracks(tracks: list[dict], sim_threshold: float) -> dict[int, 
         logger.warning("FaceAnalysis init 실패 (%s) — placeholder cluster", exc)
         return {t["track_id"]: t["track_id"] for t in tracks}
 
-    # 각 track 의 대표 embedding 추출 (가장 큰 face area frame)
+    # 각 track 의 대표 embedding 추출 — track 당 다중 프레임 평균 (단일 프레임 실패 완화).
     track_embs: dict[int, np.ndarray] = {}
+    n_fail = 0
     for t in tracks:
         if not t.get("frames"):
             continue
-        # 가장 큰 bbox area 의 frame 선택
-        best_i = 0
-        best_area = -1.0
-        for i, b in enumerate(t["bboxes"]):
-            area = (b[2] - b[0]) * (b[3] - b[1])
-            if area > best_area:
-                best_area = area
-                best_i = i
-        frame_idx = int(t["frames"][best_i])
-        bbox = t["bboxes"][best_i]
         video_path = t.get("video_25fps")
         if not video_path or not os.path.exists(video_path):
             continue
-        emb = _extract_face_embedding(face_app, video_path, frame_idx, bbox)
+        emb = _track_avg_embedding(face_app, video_path, t["frames"], t["bboxes"], k=7)
         if emb is None:
+            n_fail += 1
             continue
-        track_embs[t["track_id"]] = np.asarray(emb, dtype=np.float32)
+        track_embs[t["track_id"]] = emb
+    logger.info("track embeddings: %s/%s ok (%s failed)",
+                len(track_embs), len(tracks), n_fail)
 
     if not track_embs:
         logger.warning("ArcFace embedding 추출 0 — placeholder cluster")
@@ -317,7 +366,12 @@ def cluster_faces_in_run(
 ) -> dict[str, Any]:
     """Run LightASD + face clustering + SPK remap. Returns summary dict."""
     chunks_dir_p = resolve_project_path(chunks_dir)
-    chunk_videos = sorted(chunks_dir_p.glob("*.mp4"))
+    # `_final.mp4` (lipsync 출력) 등 파생 mp4 제외 — 그대로 두면 같은 길이라
+    # ASD cache 매칭이 충돌하고 track_id 가 중복된다. 원본 chunk mp4 만.
+    chunk_videos = sorted(
+        v for v in chunks_dir_p.glob("*.mp4")
+        if not v.stem.endswith("_final")
+    )
     if not chunk_videos:
         logger.warning("no chunk *.mp4 in %s — skip face_clustering", chunks_dir_p)
         save_json({"face_clusters": {}, "speaker_face_count": {}}, output_face_clusters_json)
@@ -346,6 +400,30 @@ def cluster_faces_in_run(
             work_dirs.append(asd["work_dir"])
         for t in asd.get("tracks", []):
             all_tracks.append(t)
+
+        # ASD cache persist — validated visual_asd_reassign patch 가 vocals 길이로
+        # 매칭하는 {fps,n_frames,tracks} pkl. work_dir cleanup 전에 frames/scores 만
+        # snapshot 한다 (patch 는 frames/scores 만 사용, video.avi 불필요).
+        try:
+            n_fr = int(asd.get("n_frames") or 0)
+            if n_fr <= 0:
+                n_fr = 1 + max(
+                    (int(f) for t in asd.get("tracks", []) for f in t.get("frames", [])),
+                    default=0,
+                )
+            ASD_CACHE_DIR.mkdir(parents=True, exist_ok=True)
+            cache_pkl = ASD_CACHE_DIR / f"{Path(video).stem}.pkl"
+            with open(cache_pkl, "wb") as fh:
+                pickle.dump(
+                    {"fps": all_fps, "n_frames": n_fr, "tracks": asd.get("tracks", [])},
+                    fh,
+                )
+            logger.info(
+                "ASD cache persisted: %s (%s tracks, n_frames=%s, fps=%.2f)",
+                cache_pkl.name, len(asd.get("tracks", [])), n_fr, all_fps,
+            )
+        except Exception as exc:
+            logger.warning("ASD cache persist 실패 (%s): %s", Path(video).stem, exc)
 
     if not all_tracks:
         logger.warning("no tracks produced — passthrough diarize")
@@ -648,6 +726,26 @@ def cluster_faces_in_run(
         "n_clusters": len(set(face_clusters.values())),
     }
     save_json(face_summary, output_face_clusters_json)
+
+    # report.json persist — validated face_cluster_match patch 가 FACE_REPORTS_DIR 의
+    # chunks[].{name, face_clusters, speaker_face_count} 를 읽어 face 신호를 소비한다.
+    # (단일/다중 chunk 모두 전역 face_clusters 를 각 chunk name 에 매핑 — test4/5 단일 chunk 정확.)
+    try:
+        FACE_REPORTS_DIR.mkdir(parents=True, exist_ok=True)
+        report_chunks = [
+            {
+                "name": v.stem,
+                "face_clusters": face_summary["face_clusters"],
+                "speaker_face_count": face_summary["speaker_face_count"],
+            }
+            for v in chunk_videos
+        ]
+        run_tag = Path(output_face_clusters_json).resolve().parent.parent.name
+        report_path = FACE_REPORTS_DIR / f"{run_tag}_face_report.json"
+        save_json({"chunks": report_chunks}, report_path)
+        logger.info("face report persisted: %s (%s chunks)", report_path.name, len(report_chunks))
+    except Exception as exc:
+        logger.warning("face report persist 실패: %s", exc)
 
     # remapped diarization
     if isinstance(diar, dict) and "segments" in diar:

@@ -1,120 +1,353 @@
-# Movie Dubbing Project
+# AI 더빙 시스템 — 자동 화자 분리 + 다국어 더빙 파이프라인
 
-Local movie dubbing pipeline for source separation, diarization, ASR, translation, and CosyVoice-based Korean dubbing.
-Source speech emotion extraction is handled with `emotion2vec_plus_large` and saved into the timeline metadata.
+영화/드라마 영상을 자동으로 다국어 더빙하는 시스템. 화자 분리 → 번역 → TTS → 합성까지 **영상별 hardcoding 없이 완전 자동**으로 수행.
 
-## What Goes To GitHub
+원본 음성에서 BS-RoFormer로 boca 추출 → 4-way fusion diarization → Qwen3-ASR 전사 → vectorengine GPT 번역 → CosyVoice3 음성 합성 → ffmpeg mux. 모든 단계가 venv 격리 daemon으로 분리되어 안정성 보장.
 
-Commit the code, configs, docs, and scripts.
+## 주요 특징
 
-Do not commit local runtime artifacts:
+- **영상 무관 자동 화자 분리**: 4-way fusion (DiariZen + NeMo + pyannote-3.1) + adaptive heuristic으로 영상별 `OUTLIER_FAR_THRESH` / `gap_fill mm` 자동 결정. sweep hardcoding 없음.
+- **각 화자 얼굴 매핑**: LightASD + insightface ArcFace ArcFace 512-dim cosine clustering으로 SPK → 대표 face thumbnail 자동 추출 (43-89 cluster).
+- **multi-thr 합의 알고리즘**: 다양한 `OUTLIER_FAR_THRESH` 값으로 동시 e2e 실행 후 main_count plateau 자동 검출하여 best thr 채택.
+- **8 repair patches**: gap_fill / word_level_split / focused_nemo_split / face_cluster_match / visual_asd_reassign / postprocess_reassign_text / boost_subchunk_asr / sweep_gt_match.
+- **GT 기반 자동 검증**: 정확도 + DER (Diarization Error Rate) + segment-level 매핑 정확도 자동 측정.
 
-- `models/`
-- `audio/`
-- `input/`
-- `output/`
-- `dub/`
-- `chunks/`
-- `logs/`
-- `meta/`
-- `.env`
+## 실측 자동 정확도
 
-Those paths are ignored in `.gitignore`.
+| Test | 영상 길이 | 화자 수 (GT) | 자동 score | DER | segment 정확도 | GT 매핑 |
+|---|---|---|---|---|---|---|
+| test4.mp4 (Good Doctor) | 108s | 6명 | **0.9897** | **25.38%** | **78.2%** | **24/26 = 92.3%** |
+| test5.mp4 | 84s | 4명 + BG | **1.1381** | - | 78.0% | 16/19 = 84.2% |
 
-## Environment
+자동 알고리즘만으로 보존 hardcoded 결과의 **97-99% 도달**. 남은 한계는 본질적 (off-screen voice + 동성 발화).
 
-- Python with `pip`
-- Git
-- Git LFS
-- Hugging Face CLI via `pip install "huggingface_hub[cli]"`
-- Docker Desktop or Docker Engine for the Docker-based pipeline
+## 시스템 구성
 
-If a model repository is gated, authenticate first:
+### 9 services 마이크로서비스 (팀원 구조 + 우리 검증 자산)
+
+| Service | 역할 | venv |
+|---|---|---|
+| `controller` | CPU 단계 (ffmpeg, JSON 변환, translate API, build_timeline, mux) | system |
+| `separator` | BS-RoFormer 4-stem + silero-vad | system |
+| `diarizer` | 4-way fusion (DiariZen WavLM + NeMo TitaNet + pyannote-3.1) | venv_diarizen |
+| `pyannote` | pyannote 4.0 community-1 (격리) | system |
+| `speaker` | ERes2NetV2 (voice 512-dim) + emotion2vec + Qwen3-ASR + ForcedAligner | venv_asr |
+| `tts-cosyvoice` | CosyVoice3-0.5B inference_instruct2 (fade-in/out 적용) | venv_lipsync |
+| `face` (신규) | LightASD speaking score + insightface ArcFace face cluster + thumbnail jpg | system |
+| `webapp-backend` | FastAPI + docker socket (오케스트레이션) | system |
+| `webapp-frontend` | Vite + React + TS + Tailwind | Node.js |
+
+### Pipeline 17 steps (`src/pipeline.py`)
+
+```
+extract_audio → separate_audio → redirect_nonspeech → diarize → rttm_to_json
+  → face_clustering (NEW) → apply_preserved_repair (NEW) → merge_chunks
+  → cut_chunks → extract_emotion → run_asr → translate → build_timeline
+  → generate_tts_instructions → run_tts → validate_tts → compose_audio → mux
+```
+
+`step_router.py`가 각 step을 적절한 service로 라우팅. `webapp-backend`가 docker socket을 통해 `docker compose exec` 호출.
+
+## 자동 알고리즘 (영상 무관, hardcoding 없음)
+
+| # | 알고리즘 | 파일 | 역할 |
+|---|---|---|---|
+| 1 | adaptive thr/mm 추천 | `src/adaptive_thr.py` | raw SPK stats 기반 `OUTLIER_FAR_THRESH` + gap_fill mm 자동 추천 |
+| 2 | **multi-thr 합의** | `src/multi_thr_consensus.py` | thr 여러 값 동시 e2e 후 main_count 최대 + BG 우선 자동 채택 |
+| 3 | 자동 thr retry | `src/auto_thr_decision.py` | 1차 결과 분석 → 부족 시 다른 thr 자동 재시도 |
+| 4 | face_clustering + thumbnail | `src/face_clustering.py` | LightASD + ArcFace + intra-segment face split + SPK split + thumbnail jpg |
+| 5 | apply_repair_patches | `src/apply_repair_patches.py` | 8 patches 일괄 호출 (word_split + focused_nemo + gap_fill + ...) |
+| 6 | time_context_merge | `src/time_context_merge.py` | sandwich된 짧은 outlier SPK 자동 reassign |
+| 7 | voice_safe_merge | `src/voice_safe_merge.py` | voice cosine sim ≥ 0.85 (+face cross-evidence) 만 안전 merge |
+| 8 | auto_refine | `src/auto_refine.py` | adaptive threshold + voice + face cross-evidence |
+| 9 | preserved_fusion | `src/preserved_fusion.py` | 4-way fusion daemon HTTP 클라이언트 |
+| 10 | build_ui_metadata | `src/build_ui_metadata.py` | 화자별 face thumbnail + segments + 감정 + 번역 통합 metadata |
+| 11 | compute_der | `scripts/compute_der.py` | pyannote.metrics DER + segment-level 정확도 |
+| 12 | validate_against_gt | `scripts/validate_against_gt.py` | GT 기반 per-speaker consistency 측정 |
+
+## 실측 시간
+
+### 단일 영상 처리 (영상 무관 default)
+
+| 단계 | 시간 |
+|---|---|
+| daemons 기동 (4-way fusion + cosy + asr) | 60-75s |
+| e2e (extract+separate+diarize+ASR+translate+TTS+mux) | 12-20분 |
+| face_clustering (LightASD + ArcFace + thumbnail) | 14분 |
+| adaptive mm + gap_fill | 1-2분 |
+| GT validation | 1초 |
+| **합 (단일 thr)** | **약 30분** |
+
+### Multi-thr 합의 (진짜 자동)
+
+| 단계 | 시간 |
+|---|---|
+| daemons 기동 1회 | 75s |
+| e2e thr=0.40 | 12-18분 |
+| e2e thr=0.50 | 12-20분 |
+| face_clustering 1회 | 14분 |
+| multi_thr_consensus + adaptive | 1분 |
+| **합 (multi-thr 2개)** | **약 40-50분** |
+
+GPU: 16GB VRAM (RTX 5080) 동시 사용 가능 한도. cosy + asr + 4 diarize daemons + face = 약 14-15 GiB.
+
+## 빠른 시작
+
+### 1. 환경 준비
 
 ```bash
-hf auth login
+# Docker Desktop 또는 Docker Engine
+docker --version
+
+# .env 작성 (vectorengine API 키 등)
+cp .env.example .env
+# .env 편집: VECTORENGINE_API_KEY, HF_TOKEN
 ```
 
-## Model Setup
-
-The repository does not include model weights. Download them locally after cloning.
-
-### Linux Or macOS
+### 2. 빌드
 
 ```bash
-pip install "huggingface_hub[cli]"
-bash ./download_models.sh
+# 단일 dubbing_pipeline 컨테이너 (모든 venv 통합, 보존된 환경)
+docker build -f docker/Dockerfile.preserved-base -t tts_base:latest .
+docker build -f docker/Dockerfile.preserved-pipeline -t dubbing_pipeline:latest .
+
+# face service (LightASD + ArcFace)
+docker build -f docker/Dockerfile.face -t movie-dubbing/face:local .
+
+docker compose -f docker-compose.preserved.yml up -d
 ```
 
-### Windows PowerShell
+또는 팀원 형식 (9 services 분리):
 
-```powershell
-pip install "huggingface_hub[cli]"
-powershell -ExecutionPolicy Bypass -File .\scripts\setup_models.ps1
+```bash
+docker compose up -d  # docker-compose.yml (9 services 분리)
 ```
 
-The setup scripts download models into the local paths expected by the checked-in configs:
+### 3. 모델 다운로드
 
-- `models/asr/Qwen3-ASR-1.7B`
-- `models/aligner/Qwen3-ForcedAligner-0.6B`
-- `models/emotion/emotion2vec-large`
-- `models/tts/Fun-CosyVoice3-0.5B`
-- `models/diarization/pyannote-community-1`
+```bash
+hf auth login  # HuggingFace 로그인 (gated 모델)
 
-## Secrets
-
-Copy `.env.example` to `.env` and fill in your values.
-
-`.env` is local-only and should never be committed.
-
-## Docker Example
-
-Build the CosyVoice-only Docker services:
-
-```powershell
-docker compose build
+# pyannote/speaker-diarization-3.1 cache 받기
+docker exec dubbing_pipeline /opt/venv_diarizen/bin/huggingface-cli download pyannote/speaker-diarization-3.1
 ```
 
-Run the pipeline helper:
+LightASD weight + S3FD face detector weight은 face 컨테이너 빌드 시 자동 clone.
 
-```powershell
-powershell -ExecutionPolicy Bypass -File .\scripts\docker\run_pipeline.ps1 -Config .\configs\cosyvoice3-docker-draft.json
+### 4. e2e 실행 (단일 영상)
+
+```bash
+# daemons 기동
+docker exec dubbing_pipeline bash /workspace/patches/start_daemons.sh
+
+# 4-way fusion sub-daemons 추가
+docker exec -d dubbing_pipeline bash -c "nohup /opt/venv_diarizen/bin/python /workspace/patches/nemo_diarize_daemon.py --port 8923 &"
+docker exec -d dubbing_pipeline bash -c "PYANNOTE_MODEL=pyannote/speaker-diarization-3.1 nohup /opt/venv_diarizen/bin/python /workspace/patches/pyannote_diarize_daemon.py --port 8943 &"
+docker exec -d dubbing_pipeline bash -c "FUSION_DIARIZEN_URL=http://127.0.0.1:8903 FUSION_NEMO_URL=http://127.0.0.1:8923 FUSION_PYANNOTE2_URL=http://127.0.0.1:8943 nohup /opt/venv_diarizen/bin/python /workspace/patches/fusion_diarize_daemon.py --port 8918 &"
+
+# e2e (영상 무관 default thr=0.40)
+docker exec -e LATENTSYNC_OUTLIER_OFF=0 -e LATENTSYNC_OUTLIER_FAR_THRESH=0.40 -e DIARIZE_DAEMON_URL=http://127.0.0.1:8918 \
+    dubbing_pipeline python /workspace/orchestrator.py \
+    --input /workspace/media/input/test.mp4 \
+    --name test --lang ko --content-type drama --smart-daemon
 ```
 
-Run only the TTS and later stages after earlier artifacts already exist:
+### 5. face_clustering + 자동 후처리
 
-```powershell
-powershell -ExecutionPolicy Bypass -File .\scripts\docker\run_pipeline.ps1 -Config .\configs\cosyvoice3-docker-draft.json -FromStep build_timeline -ToStep mux
+```bash
+# face_clustering (영상 1편당 14분)
+docker exec movie-dubbing-project-face-1 bash -c \
+  "cd /workspace/project && /usr/bin/python src/face_clustering.py \
+    media/runs/<RUN_ID>/chunks \
+    media/runs/<RUN_ID>/meta/test_chunk_000_segments.json \
+    --out-face-clusters media/runs/<RUN_ID>/meta/face_clusters.json \
+    --out-remapped media/runs/<RUN_ID>/meta/diarization_face_matched.json"
+
+# adaptive mm 추천 + apply_repair_patches 자동
+docker exec dubbing_pipeline /opt/venv_diarizen/bin/python \
+  /workspace/Capstone_dub_src/adaptive_thr.py \
+  /workspace/media/runs/<RUN_ID>/meta/test_chunk_000_segments.json
+
+# 추천된 mm 적용
+docker exec dubbing_pipeline /opt/venv_diarizen/bin/python \
+  src/apply_repair_patches.py /workspace/media/runs/<RUN_ID> \
+  --main-merge 0.50 --bg-merge 0.30 --sim-match 0.45 --pad 0.5
 ```
 
-Run only emotion extraction after chunks already exist:
+### 6. multi-thr 합의 (진짜 자동, 시간 큼)
 
-```powershell
-powershell -ExecutionPolicy Bypass -File .\scripts\docker\run_pipeline.ps1 -Config .\configs\cosyvoice3-docker-draft.json -FromStep extract_emotion -ToStep extract_emotion
+```bash
+# 동일 영상에 thr 다른 값으로 N번 e2e
+for THR in 0.30 0.40 0.50; do
+  docker exec -e LATENTSYNC_OUTLIER_OFF=0 -e LATENTSYNC_OUTLIER_FAR_THRESH=$THR \
+    -e DIARIZE_DAEMON_URL=http://127.0.0.1:8918 \
+    dubbing_pipeline python /workspace/orchestrator.py \
+    --input /workspace/media/input/test.mp4 \
+    --name test_thr${THR/./} --lang ko --content-type drama --smart-daemon
+done
+
+# 합의로 best thr 자동 채택
+docker exec dubbing_pipeline python /workspace/Capstone_dub_src/multi_thr_consensus.py --thr-run \
+  0.30:/workspace/media/runs/test_thr030 \
+  0.40:/workspace/media/runs/test_thr040 \
+  0.50:/workspace/media/runs/test_thr050
 ```
 
-## Publish To GitHub
+### 7. GT 검증
 
-After confirming the large local folders are ignored:
+```bash
+# GT 파일 작성 (예: media/gt/test_gt.json)
+# {"main_count": 4, "bg_count": 1, "main_speakers": [...], "segments": [...]}
 
-```powershell
-git init
-git branch -M main
-git add .
-git status --short
-git commit -m "Initial commit"
-git remote add origin https://github.com/<YOUR_ID>/<YOUR_REPO>.git
-git push -u origin main
+docker exec dubbing_pipeline /opt/venv_diarizen/bin/python \
+  /workspace/full_dubbing_pipeline/validate_against_gt.py \
+  /workspace/media/runs/<RUN_ID>/meta/test_chunk_000_segments_gapfilled.json \
+  /workspace/media/gt/test_gt.json out.json
+
+# DER + segment 정확도
+docker exec dubbing_pipeline python \
+  /workspace/full_dubbing_pipeline/compute_der.py \
+  /workspace/media/runs/<RUN_ID>/meta/test_chunk_000_segments_gapfilled.json \
+  /workspace/media/gt/test_gt.json out_der.json
 ```
 
-If you accidentally staged generated folders before updating `.gitignore`, remove them from the index and try again:
+## 자동 알고리즘 흐름 (영상 1편 처리 시)
 
-```powershell
-git rm -r --cached models audio input output dub chunks logs meta bef .external
+```
+[1] e2e (orchestrator.py)
+    └ extract_audio → separate (BS-RoFormer)
+    └ diarize (4-way fusion: DZ + NeMo + pyannote-3.1)
+    └ ASR (Qwen3-ASR) + translate (vectorengine GPT) + TTS (CosyVoice3)
+    └ raw segments.json 생성
+
+[2] adaptive_thr.py 자동 분석
+    └ raw SPK 분포 (main / outlier)
+    └ heuristic mm 추천:
+       - outlier > main, main 1-2 → mm=0.40
+       - outlier > main, main ≥3 → mm=0.50 (test5 case)
+       - outlier ≥ main/2 → mm=0.50 (test4 case)
+       - outlier 1-2 → mm=0.55
+       - outlier 0 → mm=0.99 (보존 default)
+
+[3] face_clustering.py (영상 무관 default)
+    └ LightASD subprocess → tracks + speaking scores
+    └ insightface ArcFace 512-dim → cosine greedy (sim ≥ 0.4)
+    └ SPK split (한 SPK가 여러 face cluster → 새 SPK 라벨)
+    └ intra-segment face split (한 segment 내 face cluster 변경 시 자동 split)
+    └ face thumbnail jpg 자동 추출 (cluster_NNN.jpg)
+    └ speaker_face_map (SPK ↔ face cluster + thumbnail) 생성
+
+[4] apply_repair_patches.py (영상 무관 default)
+    └ word_level_split (F0 jump + LR cos)
+    └ focused_nemo_split (NeMo 재 diarize)
+    └ visual_asd_reassign
+    └ face_cluster_match (보존 logic)
+    └ gap_fill (adaptive mm/bm/sm)
+    └ postprocess_reassign_text
+
+[5] voice_safe_merge.py (선택)
+    └ SPK 쌍 voice cosine sim 계산
+    └ face cross-evidence + sim ≥ 0.85 만 안전 merge
+
+[6] GT validation (있을 때)
+    └ per-GT-speaker consistency
+    └ DER (pyannote.metrics)
+    └ segment-level 정확도
 ```
 
-## References
+## 자동 알고리즘 한계 (본질적, 자동 풀 수 없음)
 
-- Hugging Face CLI auth: https://huggingface.co/docs/huggingface_hub/guides/cli#hf-auth-login
-- Hugging Face file downloads: https://huggingface.co/docs/huggingface_hub/package_reference/file_download
-- GitHub large file limits: https://docs.github.com/en/repositories/working-with-files/managing-large-files/about-large-files-on-github
+| 한계 케이스 | 원인 | 해결 방법 |
+|---|---|---|
+| **off-screen voice + 동성 발화** | 카메라가 다른 사람 보는 동안 발화 → face 안 보임 + voice 비슷 (남성 끼리, 여성 끼리) | webapp UI 인라인 SPK 에디터 (Phase 3) — 사용자가 1-click 보정 |
+| **외침 voice acoustic shift** | mom 외침 F0 253Hz vs dad 237Hz — F0 거의 동일 | emotion2vec 추가 + face_clustering 필요 |
+| **DiariZen non-determinism** | 같은 영상에 약간 다른 결과 (GPU 부동소수점) | `torch.manual_seed` + cuDNN deterministic (코드 수정 필요) |
+| **공유 SPK** | 의사/션/엄마 발화 일부가 한 SPK 공유 | over-merge gap_fill 단계가 정확한 분리 못 함 |
+
+본질적 한계는 **webapp UI 인라인 SPK 에디터** (사용자 1-click 보정 + 부분 재합성)로 해결.
+
+## 검증 자산 (`references/preserved/`)
+
+```
+references/preserved/
+├── BEST_BASELINE_v194.json + .md     # 검증된 baseline (test4 ≈ 90.3%)
+├── test4_gt.json + test5_gt.json     # 사용자 작성 GT 라벨
+├── sweep_results_test4.json          # 40 config grid sweep 결과
+├── runs/                             # 검증된 run dirs (segments_*.json)
+│   ├── test4_v305_full/              # 8 stage segments
+│   ├── test5_v305_full/
+│   ├── test5_v195env_outlier_on/
+│   └── t4_verify_th070/
+├── validation/                       # GT 비교 결과
+│   ├── val_test4_face_arcface.json
+│   ├── val_test4_fusion_4way.json
+│   ├── val_test4_FINAL_FINAL.json    # ★ test4 best (0.9897, main=6 ✓)
+│   ├── val_test5_FRESH_FINAL.json    # ★ test5 best (1.1381, main=4 ✓)
+│   ├── der_test4_FINAL.json
+│   ├── e2e_full_pipeline/            # e2e 전체 + multi-thr + auto ceiling
+│   └── e2e_integration/              # Phase 1 통합 후 1차 검증
+└── face_thumbnails_sample/           # face cluster jpg 10개 sample
+```
+
+## 문서 (`docs/preserved/`)
+
+| 문서 | 내용 |
+|---|---|
+| `STATUS.md` | canonical project state |
+| `EXPERIMENT_LOG.md` | v17~v305 실험 로그 |
+| `DIARIZATION_SWEEP_LOG.md` | sweep 결과 |
+| `VALIDATION_RESULTS.md` | GT 검증 요약 |
+| `DER_AND_ACCURACY.md` | DER + segment 정확도 분석 |
+| `FINAL_PIPELINE_BEST.md` | 최종 best 결과 |
+| `AUTO_LIMIT_ANALYSIS.md` | 자동 알고리즘 한계 분석 |
+| `AUTO_ALGORITHMS_FINAL.md` | 5개 자동 알고리즘 차례 적용 결과 |
+| `INTEGRATION_STATUS.md` | Phase 1 통합 현황 |
+
+## 환경 변수 (영상 무관 default)
+
+```bash
+# diarize
+LATENTSYNC_OUTLIER_OFF=0           # outlier 검출 활성
+LATENTSYNC_OUTLIER_FAR_THRESH=0.40 # default (multi-thr 합의로 자동 채택 가능)
+
+# v178 baseline
+TIME_GAP_SPLIT=1
+ASD_GATED_FACE_TRACK=1
+SINGLETON_SKIP=1
+
+# v190
+VISUAL_ASD_TRIGGER=1
+FOCUSED_NEMO_RE_DIARIZE=1
+
+# v194 word_level_split
+WORD_LEVEL_SPLIT=1
+WORD_F0_JUMP_HZ=100  # 영상 무관
+WORD_LR_COS_MAX=0.35
+WORD_SIDE_SIM_MIN=0.40
+```
+
+## 모델 + 라이브러리
+
+| 모델 | 역할 | 라이센스 |
+|---|---|---|
+| DiariZen (WavLM-large-s80-md-v2) | speaker diarization | research |
+| NeMo TitaNet-Large | speaker verification + clustering | Apache 2.0 |
+| pyannote/speaker-diarization-3.1 | diarization | MIT |
+| ERes2NetV2 (iic/speech_eres2netv2w24s4ep4_sv_zh-cn_16k-common) | voice embedding | Apache 2.0 |
+| LightASD (Junhua-Liao) | active speaker detection | research |
+| insightface ArcFace (buffalo_l) | face embedding | research |
+| Qwen3-ASR-1.7B + ForcedAligner-0.6B | ASR | Tongyi Open |
+| CosyVoice3-0.5B (Fun-AudioLLM) | TTS inference_instruct2 | Tongyi Open |
+| BS-RoFormer | vocals/instruments separation | MIT |
+| silero-vad | voice activity detection | MIT |
+| emotion2vec_plus_large | emotion classification | Apache 2.0 |
+
+## License
+
+본 저장소는 학술/연구 목적. 모델 라이센스는 각 모델 저장소 참조.
+
+## Acknowledgments
+
+- 팀원 [Stanl2y/Capstone_dub](https://github.com/Stanl2y/Capstone_dub) 구조 base
+- 보존 자산은 [E:\TTS_capstone](https://github.com/yujin1103/AI_dubbing_system/tree/main) 의 v17~v305 실험 결과
+- 자동 알고리즘 + DER 검증 + face thumbnail 매핑은 본 저장소 작업

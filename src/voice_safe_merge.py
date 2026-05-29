@@ -15,8 +15,8 @@ from pathlib import Path
 import numpy as np
 import soundfile as sf
 
-sys.path.insert(0, "/workspace")
-from patches.eres2netv2_helper import extract_eres2netv2_emb, get_eres2netv2_model
+sys.path.insert(0, str(Path(__file__).resolve().parent / "daemons"))
+from eres2netv2_helper import extract_eres2netv2_emb, get_eres2netv2_model
 
 
 def _l2(v):
