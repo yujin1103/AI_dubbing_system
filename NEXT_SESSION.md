@@ -40,7 +40,21 @@ docker exec dubbing_pipeline /opt/venv_diarizen/bin/python src/apply_repair_patc
 docker exec dubbing_pipeline python scripts/validate_against_gt.py <RD>/meta/<chunk>_segments_gapfilled.json media/gt/test4_gt.json
 ```
 
-## 2b. ★ 2026-05-29 추가 측정 — pyannote-3.1 살림 + fusion anchor 한계 (다음 세션 1순위)
+## 2c. ★★ 해결 완료 (2026-05-29) — 선택적 local fusion
+
+**`src/repair_patches/selective_local_split.py` 구현·검증 완료 (커밋 3d247b6).**
+- base(DiariZen+NeMo) 위에서 **pyannote의 split만 국소 채택** (merge 무시). 전역 게이트(pyannote_n>base_n) + confinement(pyannote 화자가 base 안 ≥60%) + base당 confined ≥2일 때만 분할. no-op 시 base 원본 통과.
+- **결과 (uniform, 튜닝 없음): test4 1.1167 유지(6/6), test5 0.9381→1.1095(4/4, BG/아빠 1.0 보존).** 둘 다 정확.
+- 실행 절차 (raw 단계, repair 전):
+  ```
+  # pyannote-3.1 8943 로드 필수 (아래 §2b)
+  docker exec dubbing_pipeline /opt/venv_diarizen/bin/python src/repair_patches/selective_local_split.py <RD> --chunk <chunk>
+  cp meta/<chunk>_segments_localsplit.json meta/<chunk>_segments.json   # raw 교체
+  # 이후 §2 repair + score
+  ```
+- **남은 통합 작업(다음 세션)**: `pipeline.py` step_diarize 와 apply_preserved_repair 사이에 자동 실행되도록 wiring (현재 standalone 검증만). pyannote-3.1 daemon이 항상 떠 있도록 start_daemons 정비(venv_pyann + LD_LIBRARY_PATH="").
+
+## 2b. pyannote-3.1 살림 + fusion anchor 한계 (배경)
 
 **pyannote-3.1(8943) 로드 성공 방법 (중요):**
 - venv 잘못이 원인이었음. **`/opt/venv_pyann/bin/python`** + **`LD_LIBRARY_PATH=""`**(번들 cuDNN 9.20 강제; 시스템 9.19와 충돌 회피)로 띄워야 로드됨. venv_diarizen은 lightning 불일치(PyanNet.load_from_checkpoint), venv_pyann 기본은 cuDNN 충돌.
