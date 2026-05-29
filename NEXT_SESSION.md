@@ -61,7 +61,11 @@ docker exec dubbing_pipeline python scripts/validate_against_gt.py <RD>/meta/<ch
 
 **핵심 한계:** fusion(8918)의 canonical 화자는 **DiariZen+NeMo만으로 결정**(`fusion_diarize_daemon.py` line 152-159), pyannote는 canonical에 안 들어감 → DiariZen이 약한 test5에선 pyannote의 4번째가 버려짐.
 
-**★ 다음 세션 1순위 FIX (영상 무관 uniform):** fusion canonical anchor를 **"distinct 화자를 가장 많이 찾은 모델"**로 변경. test4→DiariZen(6), test5→pyannote(4) 자동 선택. 구현: `fuse()`에서 DZ/NeMo/pyannote 각각 per-frame 배열 만들고 max-speaker 모델을 canon으로, 나머지는 temporal-nearest 매핑. **주의: test4 1.1167을 깨지 않도록 양쪽 재검증 필수.** (pyannote frame 배열은 이미 fetch됨 — line 285 pyannote2_segs.)
+**측정 (whole-model swap 검증, 2026-05-29):** test5에 pyannote raw(4명)를 통째로 써서 repair → **main=4 맞췄으나 score 0.9381→0.719 하락** (BG 0.0 놓침, 션 0.86→0.43, 의사 0.5). 즉 pyannote는 4번째(count)는 잡지만 다른 화자 분할/배정이 DiariZen+NeMo보다 나쁨.
+
+**→ "max-speaker anchor"(통째 교체)는 실패.** 화자 수가 맞다고 좋은 게 아님. **올바른 방향 = 선택적 local 결합:** pyannote가 "DiariZen이 1명으로 뭉친 구간을 2명으로 쪼갠" **그 disagreement 구간만** pyannote 분할 채택하고, 나머지(션·의사·BG 등 DiariZen이 잘한 부분)는 DiariZen 유지. 구현: frame-level에서 (a) DiariZen canon 유지, (b) DiariZen 한 화자 구간 내에서 pyannote가 ≥2 화자로 일관되게 나누면 그 sub-boundary로 split + 새 라벨 부여, (c) minority absorb. **주의: test4 1.1167 / test5 0.9381 둘 다 재검증, 어느 것도 떨어뜨리지 말 것.** (DZ/NeMo/pyannote 결과는 모두 8918 fusion 안에서 fetch 가능.)
+
+**대안(더 단순):** 현재 DiariZen+NeMo fusion이 단순 옵션 중 최선(test4 1.1167/test5 0.9381). test5 4번째는 본질적으로 어려운 케이스(짧은 외침)이므로, local fusion이 위험 대비 이득이 작다면 현 상태 수용도 합리적.
 
 ## 3. 남은 hard case (다음 세션 목표)
 
