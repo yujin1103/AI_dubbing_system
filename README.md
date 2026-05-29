@@ -1,353 +1,148 @@
-# AI 더빙 시스템 — 자동 화자 분리 + 다국어 더빙 파이프라인
+# AI Dubbing System — Automatic Movie/Video Dubbing Pipeline
+# AI 더빙 시스템 — 영화/영상 자동 더빙 파이프라인
 
-영화/드라마 영상을 자동으로 다국어 더빙하는 시스템. 화자 분리 → 번역 → TTS → 합성까지 **영상별 hardcoding 없이 완전 자동**으로 수행.
+> **EN** — A modular dubbing pipeline that takes an English video and automatically performs speaker diarization → speech recognition → translation → speech synthesis → (optional) lip-sync.
+>
+> **KO** — 영어 영상을 입력하면 화자 분리 → 음성 인식 → 번역 → 음성 합성 → 립싱크까지 자동으로 수행하는 모듈러 더빙 파이프라인.
 
-원본 음성에서 BS-RoFormer로 boca 추출 → 4-way fusion diarization → Qwen3-ASR 전사 → vectorengine GPT 번역 → CosyVoice3 음성 합성 → ffmpeg mux. 모든 단계가 venv 격리 daemon으로 분리되어 안정성 보장.
+This repository is based on the `restructure-modular` branch. / 본 저장소는 `restructure-modular` 브랜치를 기준으로 모듈화된 파이프라인을 제공합니다.
 
-## 주요 특징
+---
 
-- **영상 무관 자동 화자 분리**: 4-way fusion (DiariZen + NeMo + pyannote-3.1) + adaptive heuristic으로 영상별 `OUTLIER_FAR_THRESH` / `gap_fill mm` 자동 결정. sweep hardcoding 없음.
-- **각 화자 얼굴 매핑**: LightASD + insightface ArcFace ArcFace 512-dim cosine clustering으로 SPK → 대표 face thumbnail 자동 추출 (43-89 cluster).
-- **multi-thr 합의 알고리즘**: 다양한 `OUTLIER_FAR_THRESH` 값으로 동시 e2e 실행 후 main_count plateau 자동 검출하여 best thr 채택.
-- **8 repair patches**: gap_fill / word_level_split / focused_nemo_split / face_cluster_match / visual_asd_reassign / postprocess_reassign_text / boost_subchunk_asr / sweep_gt_match.
-- **GT 기반 자동 검증**: 정확도 + DER (Diarization Error Rate) + segment-level 매핑 정확도 자동 측정.
-
-## 실측 자동 정확도
-
-| Test | 영상 길이 | 화자 수 (GT) | 자동 score | DER | segment 정확도 | GT 매핑 |
-|---|---|---|---|---|---|---|
-| test4.mp4 (Good Doctor) | 108s | 6명 | **0.9897** | **25.38%** | **78.2%** | **24/26 = 92.3%** |
-| test5.mp4 | 84s | 4명 + BG | **1.1381** | - | 78.0% | 16/19 = 84.2% |
-
-자동 알고리즘만으로 보존 hardcoded 결과의 **97-99% 도달**. 남은 한계는 본질적 (off-screen voice + 동성 발화).
-
-## 시스템 구성
-
-### 9 services 마이크로서비스 (팀원 구조 + 우리 검증 자산)
-
-| Service | 역할 | venv |
-|---|---|---|
-| `controller` | CPU 단계 (ffmpeg, JSON 변환, translate API, build_timeline, mux) | system |
-| `separator` | BS-RoFormer 4-stem + silero-vad | system |
-| `diarizer` | 4-way fusion (DiariZen WavLM + NeMo TitaNet + pyannote-3.1) | venv_diarizen |
-| `pyannote` | pyannote 4.0 community-1 (격리) | system |
-| `speaker` | ERes2NetV2 (voice 512-dim) + emotion2vec + Qwen3-ASR + ForcedAligner | venv_asr |
-| `tts-cosyvoice` | CosyVoice3-0.5B inference_instruct2 (fade-in/out 적용) | venv_lipsync |
-| `face` (신규) | LightASD speaking score + insightface ArcFace face cluster + thumbnail jpg | system |
-| `webapp-backend` | FastAPI + docker socket (오케스트레이션) | system |
-| `webapp-frontend` | Vite + React + TS + Tailwind | Node.js |
-
-### Pipeline 17 steps (`src/pipeline.py`)
+## 파이프라인 개요 / Pipeline Overview
 
 ```
-extract_audio → separate_audio → redirect_nonspeech → diarize → rttm_to_json
-  → face_clustering (NEW) → apply_preserved_repair (NEW) → merge_chunks
-  → cut_chunks → extract_emotion → run_asr → translate → build_timeline
-  → generate_tts_instructions → run_tts → validate_tts → compose_audio → mux
+입력 영상 (영어)
+   │
+   ▼
+[1] 오디오 추출 (extract_audio)
+   │
+   ▼
+[2] 음원 분리 (separate_audio) ── BGM/음성 분리 (Demucs/BS-RoFormer)
+   │
+   ▼
+[3] 화자 분리 (diarize) ── 4-way fusion (DiariZen + NeMo + pyannote×2)
+   │
+   ▼
+[4] 화자-얼굴 매칭 (face_clustering) ── LightASD + InsightFace ArcFace
+   │
+   ▼
+[5] 화자 정제 (repair patches) ── word/nemo/visual-ASD/face/gap-fill
+   │
+   ▼
+[6] 음성 인식 (run_asr) ── Qwen3-ASR
+   │
+   ▼
+[7] 번역 (translate) ── 문맥 인식 번역 + 길이 제어
+   │
+   ▼
+[8] 감정 분석 (extract_emotion) ── emotion2vec
+   │
+   ▼
+[9] 음성 합성 (run_tts) ── CosyVoice3 (inference_instruct2)
+   │
+   ▼
+[10] 오디오 합성 (compose_audio) ── 타임라인 배치 + 페이드
+   │
+   ▼
+[11] 립싱크 (lipsync, 선택) ── LatentSync + GFPGAN
+   │
+   ▼
+출력 영상 (한국어 더빙)
 ```
 
-`step_router.py`가 각 step을 적절한 service로 라우팅. `webapp-backend`가 docker socket을 통해 `docker compose exec` 호출.
+---
 
-## 자동 알고리즘 (영상 무관, hardcoding 없음)
+## Quick Start / 빠른 시작
 
-| # | 알고리즘 | 파일 | 역할 |
+```bash
+# 1. Start model daemons (TTS / ASR / Diarize / Fusion)
+#    모델 데몬 시작
+bash src/daemons/start_daemons.sh
+
+# 2. Run the pipeline / 파이프라인 실행
+python src/pipeline.py --config configs/default.json --input-video media/input/test4.mp4
+```
+
+**EN** — Models load once into long-lived daemons (first load: TTS 60–90 s, ASR 30–45 s, Diarize 20–30 s); afterwards each HTTP call responds in well under a second.
+**KO** — 모델은 상시 데몬으로 한 번만 로드됩니다 (최초: TTS 60–90초, ASR 30–45초, Diarize 20–30초). 이후 HTTP 호출은 1초 미만으로 응답합니다.
+
+> **GPU note / GPU 참고:** InsightFace face embedding runs on GPU under `venv_lipsync` (`onnxruntime-gpu`) with `LD_LIBRARY_PATH=""`. pyannote-3.1 loads under `venv_pyann` with `LD_LIBRARY_PATH=""`. / 얼굴 임베딩은 `venv_lipsync`에서 GPU로, pyannote-3.1은 `venv_pyann`에서 로드합니다.
+
+---
+
+## Directory Structure / 디렉토리 구조
+
+```
+Capstone_dub/
+├── src/                      # Core pipeline code / 핵심 파이프라인 코드
+│   ├── pipeline.py           # Pipeline orchestrator (11 steps) / 오케스트레이터
+│   ├── diarize.py            # Speaker diarization / 화자 분리
+│   ├── face_clustering.py    # Speaker–face matching (LightASD + ArcFace)
+│   ├── run_asr.py            # Speech recognition (Qwen3-ASR)
+│   ├── translate.py          # Translation / 번역
+│   ├── run_tts.py            # Speech synthesis (CosyVoice3)
+│   ├── compose_audio.py      # Audio composition / 오디오 합성
+│   ├── repair_patches/       # Speaker-refinement patches / 화자 정제 패치
+│   ├── daemons/              # Model daemons (TTS/ASR/Diarize/Fusion/pyannote)
+│   └── preserved_orchestrator/  # Full end-to-end orchestrator / 전체 오케스트레이터
+├── configs/                  # Config files (JSON) / 설정 파일
+├── scripts/                  # Utility scripts / 유틸리티 스크립트
+├── docs/                     # Documentation / 문서
+├── requirements/             # Python dependencies / 의존성
+├── docker/                   # Docker assets / 도커 자원
+└── media/                    # I/O + ground-truth / 입출력·정답(GT)
+    ├── input/                #   Input videos / 입력 영상
+    └── gt/                   #   Ground-truth labels for evaluation / 평가용 정답
+```
+
+---
+
+## Key Models & Techniques / 주요 기술
+
+| Step / 단계 | Model / Technique · 모델/기법 |
+|------|-----------|
+| Source separation / 음원 분리 | Demucs / BS-RoFormer |
+| Speaker diarization / 화자 분리 | DiariZen (WavLM-large) + NeMo TitaNet + pyannote-3.1 (fusion) |
+| Selective local split / 선택적 국소 분할 | pyannote-3.1 split adopted locally (adds short-overlap speakers) |
+| Speaker–face / 화자-얼굴 | LightASD (Active Speaker Detection) + InsightFace ArcFace (buffalo_l) |
+| Voice merge / 목소리 병합 | ERes2NetV2 speaker-verification embeddings |
+| Speech recognition / 음성 인식 | Qwen3-ASR-1.7B |
+| Translation / 번역 | Context-aware LLM translation with duration control / 문맥 인식 + 길이 제어 |
+| Emotion / 감정 분석 | emotion2vec-large |
+| Speech synthesis / 음성 합성 | CosyVoice3-0.5B (`inference_instruct2`) |
+| Lip-sync / 립싱크 | LatentSync + GFPGAN |
+
+---
+
+## Design Principles / 설계 원칙
+
+- **Fully automatic — no per-video hardcoding.** Speaker count is auto-decided (`num_speakers=null`); thresholds are uniform across videos, not hand-tuned per clip.
+  **완전 자동 — 영상별 하드코딩 없음.** 화자 수는 자동 결정, 임계값은 모든 영상에 동일하게 적용.
+- **No video-specific rules.** Rules that fit one clip overfit and break on others, so they are avoided.
+  **영상 전용 규칙 금지.** 특정 영상에만 맞춘 규칙은 다른 영상에서 깨지므로 추가하지 않음.
+- **Multi-signal fusion.** Audio (diarization), voice embeddings, face identity, and on-screen active-speaker detection are combined to cover each model's blind spots.
+  **다중 신호 결합.** 음성·목소리·얼굴·화면(ASD)을 함께 사용해 단일 모델 약점 보완.
+- **Open-source only**, with source/maintainer verification before installing external models or packages.
+  **오픈소스 기반**, 외부 모델·패키지는 출처 확인 후 사용.
+
+---
+
+## Diarization Results / 화자 분리 결과
+
+Evaluated fully automatically (caches cleared, no per-video tuning) against ground truth. / 캐시 삭제·영상별 튜닝 없이 자동 실행한 결과를 정답(GT)과 비교.
+
+| Video | Score | Speaker count (det / GT) | Notes / 비고 |
 |---|---|---|---|
-| 1 | adaptive thr/mm 추천 | `src/adaptive_thr.py` | raw SPK stats 기반 `OUTLIER_FAR_THRESH` + gap_fill mm 자동 추천 |
-| 2 | **multi-thr 합의** | `src/multi_thr_consensus.py` | thr 여러 값 동시 e2e 후 main_count 최대 + BG 우선 자동 채택 |
-| 3 | 자동 thr retry | `src/auto_thr_decision.py` | 1차 결과 분석 → 부족 시 다른 thr 자동 재시도 |
-| 4 | face_clustering + thumbnail | `src/face_clustering.py` | LightASD + ArcFace + intra-segment face split + SPK split + thumbnail jpg |
-| 5 | apply_repair_patches | `src/apply_repair_patches.py` | 8 patches 일괄 호출 (word_split + focused_nemo + gap_fill + ...) |
-| 6 | time_context_merge | `src/time_context_merge.py` | sandwich된 짧은 outlier SPK 자동 reassign |
-| 7 | voice_safe_merge | `src/voice_safe_merge.py` | voice cosine sim ≥ 0.85 (+face cross-evidence) 만 안전 merge |
-| 8 | auto_refine | `src/auto_refine.py` | adaptive threshold + voice + face cross-evidence |
-| 9 | preserved_fusion | `src/preserved_fusion.py` | 4-way fusion daemon HTTP 클라이언트 |
-| 10 | build_ui_metadata | `src/build_ui_metadata.py` | 화자별 face thumbnail + segments + 감정 + 번역 통합 metadata |
-| 11 | compute_der | `scripts/compute_der.py` | pyannote.metrics DER + segment-level 정확도 |
-| 12 | validate_against_gt | `scripts/validate_against_gt.py` | GT 기반 per-speaker consistency 측정 |
+| **test4** | **1.1167** | **6 / 6 ✓** | man1·woman1·paramedic·dad·mom = 1.0; sean 0.5 (0.6 s utterance) |
+| **test5** | **1.1143** | **4 / 4 ✓** (+BG) | dad·BG = 1.0; doctor 0.83, mom 0.67, sean 0.57 (short shouts) |
 
-## 실측 시간
+**EN** — `score = mean per-speaker consistency + speaker-count-match bonus`. The system outputs anonymous labels (`SPEAKER_00…`); the scorer maps each GT speaker's segments to the most time-overlapping detected cluster and measures consistency. Speaker **count** is matched exactly for both; remaining error is confined to sub-second utterances/shouts (an intrinsic signal limit).
 
-### 단일 영상 처리 (영상 무관 default)
+**KO** — `점수 = 화자별 일관성 평균 + 화자 수 일치 보너스`. 시스템은 익명 라벨(`SPEAKER_00…`)을 출력하며, 채점기가 각 GT 화자를 시간이 가장 겹치는 검출 클러스터에 매칭해 일관성을 측정합니다. 두 영상 모두 화자 **수**는 정확히 일치하고, 남은 오차는 1초 미만 짧은 발화/외침에 한정된 본질적 한계입니다.
 
-| 단계 | 시간 |
-|---|---|
-| daemons 기동 (4-way fusion + cosy + asr) | 60-75s |
-| e2e (extract+separate+diarize+ASR+translate+TTS+mux) | 12-20분 |
-| face_clustering (LightASD + ArcFace + thumbnail) | 14분 |
-| adaptive mm + gap_fill | 1-2분 |
-| GT validation | 1초 |
-| **합 (단일 thr)** | **약 30분** |
+---
 
-### Multi-thr 합의 (진짜 자동)
+## License / 라이선스
 
-| 단계 | 시간 |
-|---|---|
-| daemons 기동 1회 | 75s |
-| e2e thr=0.40 | 12-18분 |
-| e2e thr=0.50 | 12-20분 |
-| face_clustering 1회 | 14분 |
-| multi_thr_consensus + adaptive | 1분 |
-| **합 (multi-thr 2개)** | **약 40-50분** |
-
-GPU: 16GB VRAM (RTX 5080) 동시 사용 가능 한도. cosy + asr + 4 diarize daemons + face = 약 14-15 GiB.
-
-## 빠른 시작
-
-### 1. 환경 준비
-
-```bash
-# Docker Desktop 또는 Docker Engine
-docker --version
-
-# .env 작성 (vectorengine API 키 등)
-cp .env.example .env
-# .env 편집: VECTORENGINE_API_KEY, HF_TOKEN
-```
-
-### 2. 빌드
-
-```bash
-# 단일 dubbing_pipeline 컨테이너 (모든 venv 통합, 보존된 환경)
-docker build -f docker/Dockerfile.preserved-base -t tts_base:latest .
-docker build -f docker/Dockerfile.preserved-pipeline -t dubbing_pipeline:latest .
-
-# face service (LightASD + ArcFace)
-docker build -f docker/Dockerfile.face -t movie-dubbing/face:local .
-
-docker compose -f docker-compose.preserved.yml up -d
-```
-
-또는 팀원 형식 (9 services 분리):
-
-```bash
-docker compose up -d  # docker-compose.yml (9 services 분리)
-```
-
-### 3. 모델 다운로드
-
-```bash
-hf auth login  # HuggingFace 로그인 (gated 모델)
-
-# pyannote/speaker-diarization-3.1 cache 받기
-docker exec dubbing_pipeline /opt/venv_diarizen/bin/huggingface-cli download pyannote/speaker-diarization-3.1
-```
-
-LightASD weight + S3FD face detector weight은 face 컨테이너 빌드 시 자동 clone.
-
-### 4. e2e 실행 (단일 영상)
-
-```bash
-# daemons 기동
-docker exec dubbing_pipeline bash /workspace/patches/start_daemons.sh
-
-# 4-way fusion sub-daemons 추가
-docker exec -d dubbing_pipeline bash -c "nohup /opt/venv_diarizen/bin/python /workspace/patches/nemo_diarize_daemon.py --port 8923 &"
-docker exec -d dubbing_pipeline bash -c "PYANNOTE_MODEL=pyannote/speaker-diarization-3.1 nohup /opt/venv_diarizen/bin/python /workspace/patches/pyannote_diarize_daemon.py --port 8943 &"
-docker exec -d dubbing_pipeline bash -c "FUSION_DIARIZEN_URL=http://127.0.0.1:8903 FUSION_NEMO_URL=http://127.0.0.1:8923 FUSION_PYANNOTE2_URL=http://127.0.0.1:8943 nohup /opt/venv_diarizen/bin/python /workspace/patches/fusion_diarize_daemon.py --port 8918 &"
-
-# e2e (영상 무관 default thr=0.40)
-docker exec -e LATENTSYNC_OUTLIER_OFF=0 -e LATENTSYNC_OUTLIER_FAR_THRESH=0.40 -e DIARIZE_DAEMON_URL=http://127.0.0.1:8918 \
-    dubbing_pipeline python /workspace/orchestrator.py \
-    --input /workspace/media/input/test.mp4 \
-    --name test --lang ko --content-type drama --smart-daemon
-```
-
-### 5. face_clustering + 자동 후처리
-
-```bash
-# face_clustering (영상 1편당 14분)
-docker exec movie-dubbing-project-face-1 bash -c \
-  "cd /workspace/project && /usr/bin/python src/face_clustering.py \
-    media/runs/<RUN_ID>/chunks \
-    media/runs/<RUN_ID>/meta/test_chunk_000_segments.json \
-    --out-face-clusters media/runs/<RUN_ID>/meta/face_clusters.json \
-    --out-remapped media/runs/<RUN_ID>/meta/diarization_face_matched.json"
-
-# adaptive mm 추천 + apply_repair_patches 자동
-docker exec dubbing_pipeline /opt/venv_diarizen/bin/python \
-  /workspace/Capstone_dub_src/adaptive_thr.py \
-  /workspace/media/runs/<RUN_ID>/meta/test_chunk_000_segments.json
-
-# 추천된 mm 적용
-docker exec dubbing_pipeline /opt/venv_diarizen/bin/python \
-  src/apply_repair_patches.py /workspace/media/runs/<RUN_ID> \
-  --main-merge 0.50 --bg-merge 0.30 --sim-match 0.45 --pad 0.5
-```
-
-### 6. multi-thr 합의 (진짜 자동, 시간 큼)
-
-```bash
-# 동일 영상에 thr 다른 값으로 N번 e2e
-for THR in 0.30 0.40 0.50; do
-  docker exec -e LATENTSYNC_OUTLIER_OFF=0 -e LATENTSYNC_OUTLIER_FAR_THRESH=$THR \
-    -e DIARIZE_DAEMON_URL=http://127.0.0.1:8918 \
-    dubbing_pipeline python /workspace/orchestrator.py \
-    --input /workspace/media/input/test.mp4 \
-    --name test_thr${THR/./} --lang ko --content-type drama --smart-daemon
-done
-
-# 합의로 best thr 자동 채택
-docker exec dubbing_pipeline python /workspace/Capstone_dub_src/multi_thr_consensus.py --thr-run \
-  0.30:/workspace/media/runs/test_thr030 \
-  0.40:/workspace/media/runs/test_thr040 \
-  0.50:/workspace/media/runs/test_thr050
-```
-
-### 7. GT 검증
-
-```bash
-# GT 파일 작성 (예: media/gt/test_gt.json)
-# {"main_count": 4, "bg_count": 1, "main_speakers": [...], "segments": [...]}
-
-docker exec dubbing_pipeline /opt/venv_diarizen/bin/python \
-  /workspace/full_dubbing_pipeline/validate_against_gt.py \
-  /workspace/media/runs/<RUN_ID>/meta/test_chunk_000_segments_gapfilled.json \
-  /workspace/media/gt/test_gt.json out.json
-
-# DER + segment 정확도
-docker exec dubbing_pipeline python \
-  /workspace/full_dubbing_pipeline/compute_der.py \
-  /workspace/media/runs/<RUN_ID>/meta/test_chunk_000_segments_gapfilled.json \
-  /workspace/media/gt/test_gt.json out_der.json
-```
-
-## 자동 알고리즘 흐름 (영상 1편 처리 시)
-
-```
-[1] e2e (orchestrator.py)
-    └ extract_audio → separate (BS-RoFormer)
-    └ diarize (4-way fusion: DZ + NeMo + pyannote-3.1)
-    └ ASR (Qwen3-ASR) + translate (vectorengine GPT) + TTS (CosyVoice3)
-    └ raw segments.json 생성
-
-[2] adaptive_thr.py 자동 분석
-    └ raw SPK 분포 (main / outlier)
-    └ heuristic mm 추천:
-       - outlier > main, main 1-2 → mm=0.40
-       - outlier > main, main ≥3 → mm=0.50 (test5 case)
-       - outlier ≥ main/2 → mm=0.50 (test4 case)
-       - outlier 1-2 → mm=0.55
-       - outlier 0 → mm=0.99 (보존 default)
-
-[3] face_clustering.py (영상 무관 default)
-    └ LightASD subprocess → tracks + speaking scores
-    └ insightface ArcFace 512-dim → cosine greedy (sim ≥ 0.4)
-    └ SPK split (한 SPK가 여러 face cluster → 새 SPK 라벨)
-    └ intra-segment face split (한 segment 내 face cluster 변경 시 자동 split)
-    └ face thumbnail jpg 자동 추출 (cluster_NNN.jpg)
-    └ speaker_face_map (SPK ↔ face cluster + thumbnail) 생성
-
-[4] apply_repair_patches.py (영상 무관 default)
-    └ word_level_split (F0 jump + LR cos)
-    └ focused_nemo_split (NeMo 재 diarize)
-    └ visual_asd_reassign
-    └ face_cluster_match (보존 logic)
-    └ gap_fill (adaptive mm/bm/sm)
-    └ postprocess_reassign_text
-
-[5] voice_safe_merge.py (선택)
-    └ SPK 쌍 voice cosine sim 계산
-    └ face cross-evidence + sim ≥ 0.85 만 안전 merge
-
-[6] GT validation (있을 때)
-    └ per-GT-speaker consistency
-    └ DER (pyannote.metrics)
-    └ segment-level 정확도
-```
-
-## 자동 알고리즘 한계 (본질적, 자동 풀 수 없음)
-
-| 한계 케이스 | 원인 | 해결 방법 |
-|---|---|---|
-| **off-screen voice + 동성 발화** | 카메라가 다른 사람 보는 동안 발화 → face 안 보임 + voice 비슷 (남성 끼리, 여성 끼리) | webapp UI 인라인 SPK 에디터 (Phase 3) — 사용자가 1-click 보정 |
-| **외침 voice acoustic shift** | mom 외침 F0 253Hz vs dad 237Hz — F0 거의 동일 | emotion2vec 추가 + face_clustering 필요 |
-| **DiariZen non-determinism** | 같은 영상에 약간 다른 결과 (GPU 부동소수점) | `torch.manual_seed` + cuDNN deterministic (코드 수정 필요) |
-| **공유 SPK** | 의사/션/엄마 발화 일부가 한 SPK 공유 | over-merge gap_fill 단계가 정확한 분리 못 함 |
-
-본질적 한계는 **webapp UI 인라인 SPK 에디터** (사용자 1-click 보정 + 부분 재합성)로 해결.
-
-## 검증 자산 (`references/preserved/`)
-
-```
-references/preserved/
-├── BEST_BASELINE_v194.json + .md     # 검증된 baseline (test4 ≈ 90.3%)
-├── test4_gt.json + test5_gt.json     # 사용자 작성 GT 라벨
-├── sweep_results_test4.json          # 40 config grid sweep 결과
-├── runs/                             # 검증된 run dirs (segments_*.json)
-│   ├── test4_v305_full/              # 8 stage segments
-│   ├── test5_v305_full/
-│   ├── test5_v195env_outlier_on/
-│   └── t4_verify_th070/
-├── validation/                       # GT 비교 결과
-│   ├── val_test4_face_arcface.json
-│   ├── val_test4_fusion_4way.json
-│   ├── val_test4_FINAL_FINAL.json    # ★ test4 best (0.9897, main=6 ✓)
-│   ├── val_test5_FRESH_FINAL.json    # ★ test5 best (1.1381, main=4 ✓)
-│   ├── der_test4_FINAL.json
-│   ├── e2e_full_pipeline/            # e2e 전체 + multi-thr + auto ceiling
-│   └── e2e_integration/              # Phase 1 통합 후 1차 검증
-└── face_thumbnails_sample/           # face cluster jpg 10개 sample
-```
-
-## 문서 (`docs/preserved/`)
-
-| 문서 | 내용 |
-|---|---|
-| `STATUS.md` | canonical project state |
-| `EXPERIMENT_LOG.md` | v17~v305 실험 로그 |
-| `DIARIZATION_SWEEP_LOG.md` | sweep 결과 |
-| `VALIDATION_RESULTS.md` | GT 검증 요약 |
-| `DER_AND_ACCURACY.md` | DER + segment 정확도 분석 |
-| `FINAL_PIPELINE_BEST.md` | 최종 best 결과 |
-| `AUTO_LIMIT_ANALYSIS.md` | 자동 알고리즘 한계 분석 |
-| `AUTO_ALGORITHMS_FINAL.md` | 5개 자동 알고리즘 차례 적용 결과 |
-| `INTEGRATION_STATUS.md` | Phase 1 통합 현황 |
-
-## 환경 변수 (영상 무관 default)
-
-```bash
-# diarize
-LATENTSYNC_OUTLIER_OFF=0           # outlier 검출 활성
-LATENTSYNC_OUTLIER_FAR_THRESH=0.40 # default (multi-thr 합의로 자동 채택 가능)
-
-# v178 baseline
-TIME_GAP_SPLIT=1
-ASD_GATED_FACE_TRACK=1
-SINGLETON_SKIP=1
-
-# v190
-VISUAL_ASD_TRIGGER=1
-FOCUSED_NEMO_RE_DIARIZE=1
-
-# v194 word_level_split
-WORD_LEVEL_SPLIT=1
-WORD_F0_JUMP_HZ=100  # 영상 무관
-WORD_LR_COS_MAX=0.35
-WORD_SIDE_SIM_MIN=0.40
-```
-
-## 모델 + 라이브러리
-
-| 모델 | 역할 | 라이센스 |
-|---|---|---|
-| DiariZen (WavLM-large-s80-md-v2) | speaker diarization | research |
-| NeMo TitaNet-Large | speaker verification + clustering | Apache 2.0 |
-| pyannote/speaker-diarization-3.1 | diarization | MIT |
-| ERes2NetV2 (iic/speech_eres2netv2w24s4ep4_sv_zh-cn_16k-common) | voice embedding | Apache 2.0 |
-| LightASD (Junhua-Liao) | active speaker detection | research |
-| insightface ArcFace (buffalo_l) | face embedding | research |
-| Qwen3-ASR-1.7B + ForcedAligner-0.6B | ASR | Tongyi Open |
-| CosyVoice3-0.5B (Fun-AudioLLM) | TTS inference_instruct2 | Tongyi Open |
-| BS-RoFormer | vocals/instruments separation | MIT |
-| silero-vad | voice activity detection | MIT |
-| emotion2vec_plus_large | emotion classification | Apache 2.0 |
-
-## License
-
-본 저장소는 학술/연구 목적. 모델 라이센스는 각 모델 저장소 참조.
-
-## Acknowledgments
-
-- 팀원 [Stanl2y/Capstone_dub](https://github.com/Stanl2y/Capstone_dub) 구조 base
-- 보존 자산은 [E:\TTS_capstone](https://github.com/yujin1103/AI_dubbing_system/tree/main) 의 v17~v305 실험 결과
-- 자동 알고리즘 + DER 검증 + face thumbnail 매핑은 본 저장소 작업
+For academic/research use. Each model follows its own license. / 학술·연구 목적. 각 모델의 라이선스를 따릅니다.

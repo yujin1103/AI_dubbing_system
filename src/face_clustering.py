@@ -243,7 +243,13 @@ def _track_avg_embedding(face_app, video_path: str, frames: list, bboxes: list, 
         ok, frame = cap.read()
         if not ok or frame is None:
             continue
-        e = _embed_face_fullframe(face_app, frame, bboxes[i])   # full-frame + IoU (실패율↓)
+        # 기본: 검증된 crop-기반 임베딩(det 640) — test4 1.1167/test5 1.1095 재현.
+        # FACE_EMBED_FULLFRAME=1 일 때만 full-frame+IoU(det 1280): 임베딩 실패율은 낮으나
+        # cluster 수가 늘어 repair 수렴을 깨 score 하락(test4 0.8135). sim threshold 동반 튜닝 필요.
+        if os.environ.get("FACE_EMBED_FULLFRAME", "").strip() in ("1", "true", "True"):
+            e = _embed_face_fullframe(face_app, frame, bboxes[i])
+        else:
+            e = _embed_face_in_frame(face_app, frame, bboxes[i])
         if e is not None:
             embs.append(np.asarray(e, dtype=np.float32))
     cap.release()
@@ -269,7 +275,8 @@ def _cluster_face_tracks(tracks: list[dict], sim_threshold: float) -> dict[int, 
             name="buffalo_l",
             providers=["CUDAExecutionProvider", "CPUExecutionProvider"],
         )
-        face_app.prepare(ctx_id=0, det_size=(1280, 1280))  # 작은 얼굴 검출 위해 ↑ (full-frame)
+        _det = (1280, 1280) if os.environ.get("FACE_EMBED_FULLFRAME", "").strip() in ("1", "true", "True") else (640, 640)
+        face_app.prepare(ctx_id=0, det_size=_det)  # 기본 640(검증). full-frame 시 1280.
     except Exception as exc:
         logger.warning("FaceAnalysis init 실패 (%s) — placeholder cluster", exc)
         return {t["track_id"]: t["track_id"] for t in tracks}
