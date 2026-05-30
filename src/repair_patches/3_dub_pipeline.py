@@ -40,7 +40,7 @@ SHIFT_BACK = 2.5              # VAD onset can be up to 2.5s before diar.start
 SHIFT_FWD = 3.0               # or up to 3.0s after (catches breath/silence-front errors)
 MIN_SHIFT = 0.20              # min |shift| to apply
 
-MIN_SYNTH_DUR = 0.5           # segments shorter than this are SKIPPED
+MIN_SYNTH_DUR = 0.2           # segments shorter than this are SKIPPED (0.5→0.2: 짧은 대사 "Maybe"·"Find another" 살림)
 COMPOSITE_SR = 44100
 
 DEFAULT_EMOTION = 'Neutral'
@@ -307,6 +307,8 @@ def main():
     ap.add_argument('--target-lang', default='Korean')
     ap.add_argument('--speaker-config', help='Optional JSON: {"SPEAKER_00":{"desc":...,"emotion":...,"tone":...}, ...}')
     ap.add_argument('--video-duration', type=float, default=None, help='Override (default: probe via ffprobe)')
+    ap.add_argument('--bg-segments', default=None,
+                    help='JSON of BG segments [{start,end}] to fill with ORIGINAL audio (no translation)')
     ap.add_argument('--llm-concurrency', type=int, default=int(os.environ.get('LLM_CONCURRENCY','10')),
                     help='Parallel segment workers (each may do multiple LLM calls). Default 10.')
     ap.add_argument('--cosy-concurrency', type=int, default=int(os.environ.get('COSY_CONCURRENCY','3')),
