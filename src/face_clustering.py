@@ -225,24 +225,61 @@ def _embed_face_fullframe(face_app, frame, bbox, iou_th: float = 0.25):
     return best.normed_embedding
 
 
-def _track_avg_embedding(face_app, video_path: str, frames: list, bboxes: list, k: int = 7):
-    # track 당 bbox area 상위 k개 프레임에서 임베딩을 뽑아 평균(L2-norm) → 단일 프레임
-    # 추출 실패/노이즈로 인한 과분할(임베딩 실패 track 의 singleton cluster)을 완화.
-    import cv2
-    import numpy as np
-    if not frames or not bboxes:
-        return None
+def _track_topk_order(bboxes: list, k: int = 7) -> list:
+    # bbox area 상위 k개 프레임 인덱스 (오름차순). _track_avg_embedding 과 동일 기준.
     order = sorted(
         range(len(bboxes)),
         key=lambda i: -((bboxes[i][2] - bboxes[i][0]) * (bboxes[i][3] - bboxes[i][1])),
     )[:k]
+    return sorted(order)
+
+
+def _prefetch_frames(video_path: str, frame_indices: set) -> dict:
+    # 비디오를 1회 순차 디코드하며 필요한 frame index 만 캐시.
+    # cap.set(POS_FRAMES) 랜덤 seek(키프레임 재탐색, 매우 느림)을 제거 — 같은 프레임 픽셀 반환.
+    import cv2
+    cache: dict = {}
+    if not frame_indices:
+        return cache
     cap = cv2.VideoCapture(video_path)
-    embs = []
-    for i in sorted(order):  # frame idx 오름차순 → 순차 seek 효율
-        cap.set(cv2.CAP_PROP_POS_FRAMES, int(frames[i]))
+    want = set(int(i) for i in frame_indices)
+    max_idx = max(want)
+    idx = 0
+    while idx <= max_idx:
         ok, frame = cap.read()
-        if not ok or frame is None:
-            continue
+        if not ok:
+            break
+        if idx in want:
+            cache[idx] = frame
+        idx += 1
+    cap.release()
+    return cache
+
+
+def _track_avg_embedding(face_app, video_path: str, frames: list, bboxes: list, k: int = 7,
+                         frame_cache: dict | None = None):
+    # track 당 bbox area 상위 k개 프레임에서 임베딩을 뽑아 평균(L2-norm) → 단일 프레임
+    # 추출 실패/노이즈로 인한 과분할(임베딩 실패 track 의 singleton cluster)을 완화.
+    # frame_cache 주어지면 순차 디코드 캐시 사용(랜덤 seek 제거, 결과 동일); 없으면 기존 seek.
+    import cv2
+    import numpy as np
+    if not frames or not bboxes:
+        return None
+    order = _track_topk_order(bboxes, k)
+    cap = None
+    if frame_cache is None:
+        cap = cv2.VideoCapture(video_path)
+    embs = []
+    for i in order:  # frame idx 오름차순
+        if frame_cache is not None:
+            frame = frame_cache.get(int(frames[i]))
+            if frame is None:
+                continue
+        else:
+            cap.set(cv2.CAP_PROP_POS_FRAMES, int(frames[i]))
+            ok, frame = cap.read()
+            if not ok or frame is None:
+                continue
         # 기본: 검증된 crop-기반 임베딩(det 640) — test4 1.1167/test5 1.1095 재현.
         # FACE_EMBED_FULLFRAME=1 일 때만 full-frame+IoU(det 1280): 임베딩 실패율은 낮으나
         # cluster 수가 늘어 repair 수렴을 깨 score 하락(test4 0.8135). sim threshold 동반 튜닝 필요.
@@ -252,7 +289,8 @@ def _track_avg_embedding(face_app, video_path: str, frames: list, bboxes: list, 
             e = _embed_face_in_frame(face_app, frame, bboxes[i])
         if e is not None:
             embs.append(np.asarray(e, dtype=np.float32))
-    cap.release()
+    if cap is not None:
+        cap.release()
     if not embs:
         return None
     m = np.mean(np.stack(embs), axis=0)
