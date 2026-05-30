@@ -322,13 +322,29 @@ def _cluster_face_tracks(tracks: list[dict], sim_threshold: float) -> dict[int, 
     # 각 track 의 대표 embedding 추출 — track 당 다중 프레임 평균 (단일 프레임 실패 완화).
     track_embs: dict[int, np.ndarray] = {}
     n_fail = 0
+
+    # 속도: video(25fps) 별로 모든 track 의 top-k 프레임 인덱스를 모아 1회 순차 디코드 캐시.
+    # track 마다 cap.set(POS_FRAMES) 랜덤 seek(키프레임 재탐색 ~55% 병목) 제거.
+    # 같은 프레임 픽셀 → 같은 crop → 임베딩 동일 (정확도 무영향).
+    needed: dict[str, set] = {}
+    for t in tracks:
+        bb = t.get("bboxes") or []
+        fr = t.get("frames") or []
+        vp = t.get("video_25fps")
+        if not bb or not fr or not vp or not os.path.exists(vp):
+            continue
+        order = _track_topk_order(bb, 7)
+        needed.setdefault(vp, set()).update(int(fr[i]) for i in order if i < len(fr))
+    frame_caches: dict[str, dict] = {vp: _prefetch_frames(vp, idxs) for vp, idxs in needed.items()}
+
     for t in tracks:
         if not t.get("frames"):
             continue
         video_path = t.get("video_25fps")
         if not video_path or not os.path.exists(video_path):
             continue
-        emb = _track_avg_embedding(face_app, video_path, t["frames"], t["bboxes"], k=7)
+        emb = _track_avg_embedding(face_app, video_path, t["frames"], t["bboxes"], k=7,
+                                   frame_cache=frame_caches.get(video_path))
         if emb is None:
             n_fail += 1
             continue
