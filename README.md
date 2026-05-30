@@ -28,7 +28,14 @@ Fully automatic — caches cleared, uniform params, scored against ground truth:
 | test4.mp4 (Good Doctor) | 108s | **6 / 6 ✓** | **0.92** | **1.1167** | 24/26 = 92.3% |
 | test5.mp4 | 84s | **4 / 4 ✓** (+BG) | 0.81 | **1.1143** | 16/19 = 84.2% |
 
-Speaker **count** is auto-matched exactly for both, and main speakers are mostly perfectly consistent (1.0). `score = mean per-speaker consistency + count-match bonus`. Remaining error is confined to sub-second utterances/shouts (intrinsic signal limit: off-screen voice + same-gender speech).
+Speaker **count** is auto-matched exactly for both, and main speakers are mostly perfectly consistent (1.0). Remaining error is confined to sub-second utterances/shouts (intrinsic signal limit: off-screen voice + same-gender speech).
+
+**What each metric means** (the system never sees who the people are — it only outputs anonymous labels `SPEAKER_00, SPEAKER_01, …`; the scorer matches those to the ground-truth (GT) people by time overlap):
+
+- **Speaker count (det / GT)** — how many distinct people the system found vs. how many actually speak. `6 / 6 ✓` means it auto-found exactly the right number, with no count hint given.
+- **Consistency (0–1)** — for each real person, the fraction of their lines that landed in *one* label. `1.0` = all of that person's speech was grouped as a single speaker (perfect); `0.5` = their lines were split across two labels. The table shows the average over all people.
+- **Score** — a single summary number: `mean consistency + 0.2 (if speaker count matches) + 0.1 (if a background speaker was detected)`. Above `1.0` means high consistency *and* the count matched.
+- **GT mapping** — of all the labeled GT segments, how many were assigned to the correct person. `24/26 = 92.3%`.
 
 <details><summary>Stricter frame/segment-level metrics (older preserved run)</summary>
 
@@ -37,7 +44,10 @@ Speaker **count** is auto-matched exactly for both, and main speakers are mostly
 | test4 | 25.38% | 78.2% |
 | test5 | – | 78.0% |
 
-DER counts every short boundary/overlap error, so it reads lower than the count/consistency headline — **25% DER is normal-to-good** for multi-speaker drama. These are stricter low-level metrics, not a contradiction of the high speaker-level accuracy above.
+- **DER (Diarization Error Rate, lower is better)** — the field-standard metric. Over every moment of audio it sums the time wrongly labeled (wrong speaker + missed speech + speech detected during silence). Strict, because a single short boundary or overlap error counts against you. **25% DER is normal-to-good** for multi-speaker drama.
+- **Segment accuracy** — the share of detected segments whose speaker label matches GT at the segment level. Lower than the consistency headline because it penalizes every short boundary mismatch.
+
+These are stricter low-level metrics, not a contradiction of the high speaker-level accuracy above.
 </details>
 
 ### System Architecture — 9-service microservices (teammate structure + our validated assets)
@@ -165,7 +175,14 @@ Evaluated fully automatically (caches cleared, no per-video tuning) against grou
 | test4.mp4 (Good Doctor) | 108s | **6 / 6 ✓** | **0.92** | **1.1167** | 24/26 = 92.3% |
 | test5.mp4 | 84s | **4 / 4 ✓** (+BG) | 0.81 | **1.1143** | 16/19 = 84.2% |
 
-화자 **수**는 둘 다 자동으로 정확히 일치, 주요 화자는 대부분 일관성 1.0. `score = 화자별 일관성 평균 + 화자수 일치 보너스`. 남은 오차는 1초 미만 짧은 발화/외침에 한정된 본질적 한계(off-screen voice + 동성 발화).
+화자 **수**는 둘 다 자동으로 정확히 일치, 주요 화자는 대부분 일관성 1.0. 남은 오차는 1초 미만 짧은 발화/외침에 한정된 본질적 한계(off-screen voice + 동성 발화).
+
+**각 지표 설명** (시스템은 사람이 누구인지 모릅니다 — 익명 라벨 `SPEAKER_00, SPEAKER_01, …`만 출력하고, 채점기가 시간 겹침으로 정답(GT) 인물과 매칭합니다):
+
+- **화자 수 (검출/GT)** — 시스템이 찾은 사람 수 vs 실제 말한 사람 수. `6 / 6 ✓` = 화자 수 힌트 없이 정확한 인원을 자동으로 찾음.
+- **일관성 (0–1)** — 각 실제 인물의 발화 중 *하나의* 라벨로 묶인 비율. `1.0` = 그 사람의 모든 발화가 한 화자로 묶임(완벽), `0.5` = 두 라벨로 쪼개짐. 표의 값은 전체 인물 평균.
+- **score** — 한 줄 요약 숫자: `일관성 평균 + 0.2(화자 수 일치 시) + 0.1(배경 화자 검출 시)`. `1.0` 초과 = 일관성이 높으면서 화자 수도 맞음.
+- **GT 매핑** — 라벨된 GT 구간 중 올바른 인물에 배정된 비율. `24/26 = 92.3%`.
 
 <details><summary>더 엄격한 frame/segment 단위 지표 (옛 preserved run)</summary>
 
@@ -174,7 +191,10 @@ Evaluated fully automatically (caches cleared, no per-video tuning) against grou
 | test4 | 25.38% | 78.2% |
 | test5 | – | 78.0% |
 
-DER은 짧은 경계·겹침 오차를 전부 세므로 화자수/일관성 헤드라인보다 낮게 보입니다 — 다화자 드라마에서 **25% DER은 정상~양호**입니다. 모순이 아니라 더 엄격한 저수준 지표입니다.
+- **DER (Diarization Error Rate, 낮을수록 좋음)** — 분야 표준 지표. 오디오의 매 순간에 대해 잘못 라벨된 시간(틀린 화자 + 놓친 발화 + 묵음 구간을 발화로 검출)을 모두 합산. 짧은 경계·겹침 오차 하나도 감점되어 엄격함. 다화자 드라마에서 **25% DER은 정상~양호**.
+- **segment 정확도** — 검출된 구간 중 화자 라벨이 GT와 segment 단위로 맞는 비율. 짧은 경계 불일치를 모두 감점하므로 일관성 헤드라인보다 낮음.
+
+모순이 아니라 더 엄격한 저수준 지표입니다.
 </details>
 
 ## 시스템 구성
