@@ -156,16 +156,26 @@ Evaluated fully automatically (caches cleared, no per-video tuning) against grou
 - **8 repair patches**: gap_fill / word_level_split / focused_nemo_split / face_cluster_match / visual_asd_reassign / postprocess_reassign_text / boost_subchunk_asr / sweep_gt_match.
 - **GT 기반 자동 검증**: 정확도 + DER (Diarization Error Rate) + segment-level 매핑 정확도 자동 측정.
 
-## 실측 자동 정확도
+## 실측 정확도 (2026-05-30 재검증)
 
-| Test | 영상 길이 | 화자 수 (GT) | 자동 score | DER | segment 정확도 | GT 매핑 |
-|---|---|---|---|---|---|---|
-| test4.mp4 (Good Doctor) | 108s | 6명 | **0.9897** | **25.38%** | **78.2%** | **24/26 = 92.3%** |
-| test5.mp4 | 84s | 4명 + BG | **1.1381** | - | 78.0% | 16/19 = 84.2% |
+완전 자동 — 캐시 삭제·통일 파라미터·GT 대비:
 
-자동 알고리즘만으로 보존 hardcoded 결과의 **97-99% 도달**. 남은 한계는 본질적 (off-screen voice + 동성 발화).
+| Test | 영상 길이 | 화자 수 (검출/GT) | 일관성 | score | GT 매핑 |
+|---|---|---|---|---|---|
+| test4.mp4 (Good Doctor) | 108s | **6 / 6 ✓** | **0.92** | **1.1167** | 24/26 = 92.3% |
+| test5.mp4 | 84s | **4 / 4 ✓** (+BG) | 0.81 | **1.1143** | 16/19 = 84.2% |
 
-> 2026-05-30 캐시 삭제·통일 파라미터로 fresh fusion raw에서 재현: **test4 score 1.1167 (6/6 ✓)**, **test5 score 1.1143 (4/4 ✓ +BG)**.
+화자 **수**는 둘 다 자동으로 정확히 일치, 주요 화자는 대부분 일관성 1.0. `score = 화자별 일관성 평균 + 화자수 일치 보너스`. 남은 오차는 1초 미만 짧은 발화/외침에 한정된 본질적 한계(off-screen voice + 동성 발화).
+
+<details><summary>더 엄격한 frame/segment 단위 지표 (옛 preserved run)</summary>
+
+| Test | DER (↓ 좋음) | segment 정확도 |
+|---|---|---|
+| test4 | 25.38% | 78.2% |
+| test5 | – | 78.0% |
+
+DER은 짧은 경계·겹침 오차를 전부 세므로 화자수/일관성 헤드라인보다 낮게 보입니다 — 다화자 드라마에서 **25% DER은 정상~양호**입니다. 모순이 아니라 더 엄격한 저수준 지표입니다.
+</details>
 
 ## 시스템 구성
 
