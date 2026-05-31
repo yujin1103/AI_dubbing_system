@@ -30,7 +30,7 @@ from silero_vad import load_silero_vad, get_speech_timestamps
 
 # === Length control hyperparameters ===
 PHONEMES_PER_SEC = 14.0      # Korean jamo/sec at natural pace
-MAX_SPEED = 1.50              # CosyVoice speed cap
+MAX_SPEED = 1.35              # CosyVoice speed cap (품질 안전선; 극단 speedup 방지)
 MIN_SPEED = 0.85
 TOLERANCE = 0.15              # ±15% triggers iterative re-translate
 FIT_TOLERANCE = 0.10          # ±100ms ok during speed fit
@@ -110,12 +110,22 @@ class LLM:
         raise RuntimeError(f'LLM exhausted retries: {last_err}')
 
 
-def llm_translate_multi(llm, en_text, target_dur, speaker_desc, override_budget=None, target_lang='Korean'):
+def llm_translate_multi(llm, en_text, target_dur, speaker_desc, override_budget=None,
+                        target_lang='Korean', context=''):
     budget = override_budget if override_budget else phoneme_budget(target_dur)
     short_b = max(int(budget * 0.80), 4); long_b = int(budget * 1.20)
-    prompt = f"""English source: "{en_text}"
+    ctx_block = ""
+    if context:
+        ctx_block = f"""
+**대화 맥락** (이 장면의 앞뒤 대사 — 말투·관계·감정 흐름 파악용. 번역하지 말 것):
+{context}
 
-영어 → {target_lang} 번역. 의미와 감정 유지, 길이 정확히 맞추기.
+위 맥락을 반영해, '>>>' 로 표시된 대사를 문맥에 맞게(말다툼이면 말다툼 톤, 존댓말/반말 일관) 번역하세요.
+"""
+    target_line = f">>> {en_text}" if context else en_text
+    prompt = f"""English source: "{target_line}"
+{ctx_block}
+영어 → {target_lang} 번역. 의미와 감정·말투 유지, 자연스러운 흐름.
 
 **목표 시간**: {target_dur:.2f}초 (자모 약 {budget}개 ≈ 음절 약 {budget//2}개)
 **화자 어조**: {speaker_desc}
@@ -126,9 +136,10 @@ def llm_translate_multi(llm, en_text, target_dur, speaker_desc, override_budget=
 - LONG   : 약 {long_b} 자모 (풍부한 표현)
 
 규칙:
-1. 자연스러운 구어체 (직역 X)
+1. 자연스러운 구어체 (직역 X), 앞뒤 대사와 말투·호칭 일관
 2. 감정 표현 (느낌표, 의문문) 유지
-3. JSON 한 줄로만 출력
+3. '>>>' 대사 하나만 번역 (맥락 대사는 번역 금지)
+4. JSON 한 줄로만 출력
 
 출력: {{"short":"...","normal":"...","long":"..."}}"""
     obj = llm.chat(prompt)
@@ -222,18 +233,21 @@ def vad_refine_boundaries(audio_full, sr, segs, vad_model, max_workers=1):
 
 
 # === Per-segment iterative fit ===
-def synth_and_fit(cosy, llm, seg, ref, emo, tone, spk_desc, avail, target_lang='Korean'):
+def synth_and_fit(cosy, llm, seg, ref, emo, tone, spk_desc, avail, target_lang='Korean', context=''):
     """Returns (final_dur, final_ko, audio_bytes) or (None, None, None) on failure."""
     en = seg['text'].strip()
     target_dur = seg['end'] - seg['start']
+    # no-lipsync: 번역 예산을 '다음 발화까지의 여유(avail)' 기준으로 — 원본 구간보다 넉넉히(상한 있음).
+    # 압축 왜곡 제거. avail 이 작으면(촘촘) 자동으로 작게 유지 → 다음 발화 침범 안 함.
+    budget_dur = min(max(avail, target_dur), max(target_dur * 1.8, target_dur + 1.0))
 
     best = None; used_budget = None
     # Iterative loop (max 2 LLM rounds)
     for attempt in range(2):
         try:
-            cands = llm_translate_multi(llm, en, target_dur, spk_desc,
+            cands = llm_translate_multi(llm, en, budget_dur, spk_desc,
                                         override_budget=used_budget if attempt > 0 else None,
-                                        target_lang=target_lang)
+                                        target_lang=target_lang, context=context)
         except Exception as ex:
             log(f'      LLM error (A{attempt+1}): {ex}')
             break
@@ -248,13 +262,13 @@ def synth_and_fit(cosy, llm, seg, ref, emo, tone, spk_desc, avail, target_lang='
                            'jamo':count_jamo(ko)})
         if not results: break
 
-        pick = min(results, key=lambda x: abs(x['dur'] - target_dur))
-        if best is None or abs(pick['dur']-target_dur) < abs(best['dur']-target_dur):
+        pick = min(results, key=lambda x: abs(x['dur'] - budget_dur))
+        if best is None or abs(pick['dur']-budget_dur) < abs(best['dur']-budget_dur):
             best = pick
-        off = abs(pick['dur'] - target_dur) / target_dur
+        off = abs(pick['dur'] - budget_dur) / budget_dur
         if off <= TOLERANCE: break
         measured_rate = pick['jamo'] / pick['dur']
-        used_budget = max(int(target_dur * measured_rate), 4)
+        used_budget = max(int(budget_dur * measured_rate), 4)
     if best is None: return None, None, None
 
     final_ko = best['ko']; final_audio = best['audio']; final_dur = best['dur']
@@ -283,13 +297,7 @@ def synth_and_fit(cosy, llm, seg, ref, emo, tone, spk_desc, avail, target_lang='
         if audio_b is None: break
         final_audio = audio_b; final_dur = dur
 
-    # Under-target → slow down
-    if final_dur < target_dur * 0.85 and cur_speed > MIN_SPEED:
-        slow_speed = max(final_dur/target_dur, MIN_SPEED)
-        audio_b, new_dur, _ = cosy.synth_to_dur(final_ko, ref, emo, tone, speed=slow_speed)
-        if audio_b is not None and new_dur <= avail:
-            final_audio = audio_b; final_dur = new_dur
-
+    # no-lipsync: 짧은 한국어를 원본 길이에 맞추려 인위적으로 늦추지 않음(자연 속도 유지, 뒤는 침묵/배경).
     return final_dur, final_ko, final_audio
 
 
@@ -309,6 +317,12 @@ def main():
     ap.add_argument('--video-duration', type=float, default=None, help='Override (default: probe via ffprobe)')
     ap.add_argument('--bg-segments', default=None,
                     help='JSON of BG segments [{start,end}] to fill with ORIGINAL audio (no translation)')
+    ap.add_argument('--bg-stem', default=None,
+                    help='보컬 제거된 배경음(no_vocals) wav — 전 구간 연속 bed 로 깔고 그 위에 합성 overlay')
+    ap.add_argument('--bg-gain', type=float, default=0.5, help='배경음 bed 볼륨 (default 0.5)')
+    ap.add_argument('--synth-gain', type=float, default=0.75, help='한국어 합성 볼륨 (default 0.75, 낮출수록 작아짐)')
+    ap.add_argument('--orig-gain', type=float, default=0.7, help='BG passthrough 원본 오디오 볼륨 (default 0.7)')
+    ap.add_argument('--duck', type=float, default=0.5, help='합성이 나올 때 배경 bed 를 이 배율로 낮춤(ducking). 1.0=끔')
     ap.add_argument('--llm-concurrency', type=int, default=int(os.environ.get('LLM_CONCURRENCY','10')),
                     help='Parallel segment workers (each may do multiple LLM calls). Default 10.')
     ap.add_argument('--cosy-concurrency', type=int, default=int(os.environ.get('COSY_CONCURRENCY','3')),
@@ -367,6 +381,10 @@ def main():
 
     def process_seg(i_seg):
         i, seg = i_seg
+        # BG 화자: 번역/합성 안 함. 최종 조립 시 원본 오디오로 채움(passthrough).
+        if seg['speaker'].startswith('SPEAKER_BG'):
+            log(f'  [{i+1}] BG passthrough (no translate) "{seg["text"][:30]}"')
+            return None
         target_dur = seg['end'] - seg['start']
         if target_dur < MIN_SYNTH_DUR:
             log(f'  [{i+1}] SKIP ({target_dur:.2f}s) "{seg["text"][:30]}"')
@@ -382,10 +400,19 @@ def main():
         new_st = corrected_start(i)
         next_st = next_non_skip_start(i)
         avail = next_st - new_st - 0.03
+        # 문맥 인식 번역: 앞 3 + 뒤 2 대사(화자+영어)를 맥락으로 전달 → 말투/흐름 일관(말다툼 톤 등).
+        ctx_lines = []
+        for j in range(max(0, i - 3), min(len(segs), i + 3)):
+            if j == i:
+                continue
+            t = segs[j].get('text', '').strip()
+            if t:
+                ctx_lines.append(f"  ({segs[j]['speaker']}) {t}")
+        context = "\n".join(ctx_lines)
         log(f'  [{i+1}] {spk} t={target_dur:.2f}s avail={avail:.2f}s EN="{seg["text"][:50]}"')
         try:
             fdur, fko, faudio = synth_and_fit(cosy, llm, seg, ref, emo, tone, spk_desc,
-                                              avail, target_lang=args.target_lang)
+                                              avail, target_lang=args.target_lang, context=context)
         except Exception as ex:
             log(f'  [{i+1}] FAIL: {ex}'); return None
         if fdur is None:
@@ -407,9 +434,25 @@ def main():
     clones.sort(key=lambda c: c['idx'])
     translations_log.sort(key=lambda t: t['idx'])
 
-    # Stage 7: composite + mux
+    # Stage 7: composite + mux — 배경음 bed(연속) + 한국어 합성 overlay(ducking) + BG 원본 passthrough
     log(f'\n=== Composite ({len(clones)} clips) ===')
-    composite = np.zeros(int(video_dur * COMPOSITE_SR), dtype=np.float32)
+    N = int(video_dur * COMPOSITE_SR)
+
+    # (1) 배경음 bed: 보컬 제거 stem 을 전 구간 연속으로 깔기 (없으면 무음 bed = 기존 동작)
+    bed = np.zeros(N, dtype=np.float32)
+    if args.bg_stem and os.path.exists(args.bg_stem):
+        b, sr_ = sf.read(args.bg_stem)
+        if b.ndim > 1: b = np.mean(b, axis=1)
+        if sr_ != COMPOSITE_SR:
+            b = sps.resample_poly(b, COMPOSITE_SR, sr_).astype(np.float32)
+        m = min(N, len(b)); bed[:m] = b[:m].astype(np.float32) * args.bg_gain
+        log(f'  background bed: {os.path.basename(args.bg_stem)} x{args.bg_gain}')
+    else:
+        log(f'  background bed: (none — bg_stem 미지정, 합성 구간 무음)')
+
+    # (2) 한국어 합성 overlay (볼륨 args.synth_gain) + 합성 존재 마스크(ducking 용)
+    synth = np.zeros(N, dtype=np.float32)
+    voice_mask = np.zeros(N, dtype=np.float32)
     cuts = []
     for c in clones:
         a, sr_ = sf.read(c['path'])
@@ -425,8 +468,37 @@ def main():
                 a = a[:cut_len].copy()
                 fn = int(0.05*COMPOSITE_SR); a[-fn:] *= np.linspace(1,0,fn)
                 e_idx = s_idx + len(a)
-        if e_idx > len(composite): e_idx = len(composite); a = a[:e_idx-s_idx]
-        composite[s_idx:e_idx] += a
+        if e_idx > N: e_idx = N; a = a[:e_idx-s_idx]
+        synth[s_idx:e_idx] += a.astype(np.float32) * args.synth_gain
+        voice_mask[s_idx:e_idx] = 1.0
+
+    # (3) ducking: 합성이 나오는 구간은 배경 bed 를 args.duck 배율로 낮춰 대사 명료도 확보
+    if args.duck < 1.0:
+        # 마스크를 살짝 부드럽게(50ms) → 급격한 볼륨 점프 방지
+        w = max(1, int(0.05 * COMPOSITE_SR))
+        sm = np.convolve(voice_mask, np.ones(w)/w, mode='same')
+        bed = bed * (1.0 - (1.0 - args.duck) * np.clip(sm, 0, 1))
+
+    composite = bed + synth
+
+    # (4) BG passthrough: BG 구간(+--bg-segments)을 원본 오디오로 덮어쓰기(배경+원본음성 그대로)
+    bg_ranges = [(float(s['start']), float(s['end'])) for s in segs
+                 if s['speaker'].startswith('SPEAKER_BG')]
+    if args.bg_segments:
+        try:
+            extra = json.load(open(args.bg_segments))
+            extra = extra.get('segments', extra) if isinstance(extra, dict) else extra
+            bg_ranges += [(float(b['start']), float(b['end'])) for b in extra]
+        except Exception as ex:
+            log(f'  ⚠ --bg-segments load fail: {ex}')
+    if bg_ranges:
+        oa = sps.resample_poly(audio_full, COMPOSITE_SR, sr_vad).astype(np.float32)
+        for bs, be in bg_ranges:
+            s_idx = int(bs * COMPOSITE_SR); e_idx = min(int(be * COMPOSITE_SR), N, len(oa))
+            if e_idx > s_idx:
+                composite[s_idx:e_idx] = oa[s_idx:e_idx] * args.orig_gain  # 원본(배경+음성) 그대로
+        log(f'  BG passthrough: {len(bg_ranges)} ranges → 원본 오디오 x{args.orig_gain}')
+
     peak = float(np.max(np.abs(composite)) + 1e-9)
     if peak > 0.95: composite *= 0.95/peak
     if cuts:

@@ -38,16 +38,20 @@ def is_clean(seg, all_segs):
     return True
 
 def pick_ref(segs_for_spk, all_segs):
-    """Pick best ref slice: longest clean segment within [TARGET_REF_MIN_S, TARGET_REF_MAX_S]."""
-    clean = [s for s in segs_for_spk if is_clean(s, all_segs)]
-    if not clean: clean = segs_for_spk  # fallback
-    # Score: prefer 5-12s, longer better
+    """Pick best ref slice: longest segment (clean 우선이되, 깨끗한 게 너무 짧으면 긴 것 채택).
+    경계는 main 에서 트림하므로 긴 turn 을 쓰는 게 클론 품질에 유리."""
     def score(s):
         d = s['end'] - s['start']
-        if d < TARGET_REF_MIN_S: return -d  # too short, prefer larger
-        if d > TARGET_REF_MAX_S: return -1e6 + d  # too long, penalize but allow trim
+        if d < TARGET_REF_MIN_S: return d           # 짧으면 길수록 좋음
+        if d > TARGET_REF_MAX_S: return TARGET_REF_MAX_S - (d - TARGET_REF_MAX_S) * 0.01
         return d
-    return max(clean, key=score)
+    clean = [s for s in segs_for_spk if is_clean(s, all_segs)]
+    best_clean = max(clean, key=score) if clean else None
+    best_any = max(segs_for_spk, key=score)
+    # 깨끗한 게 충분히 길면(>=3s) 그걸, 아니면 가장 긴 turn(트림으로 경계오염 완화)
+    if best_clean is not None and (best_clean['end'] - best_clean['start']) >= 3.0:
+        return best_clean
+    return best_any
 
 def normalize_peak(audio, target_db=PEAK_NORM_DB):
     peak = float(np.max(np.abs(audio)) + 1e-9)
@@ -75,7 +79,16 @@ def main():
 
     out_dir = Path(args.out_dir); out_dir.mkdir(parents=True, exist_ok=True)
     with open(args.diarize_json) as f: data = json.load(f)
-    segs = data['segments']
+    # 'segments'(dub입력) 또는 'groups'(gapfilled 화자분리) 둘 다 지원.
+    # ref 는 긴 화자 turn 이 좋으므로 gapfilled(groups) 직접 사용 권장.
+    if isinstance(data, dict) and data.get('segments'):
+        segs = data['segments']
+    else:
+        groups = data.get('groups', data if isinstance(data, list) else [])
+        segs = [{'speaker': g.get('speaker', 'SPEAKER_00'),
+                 'start': float(g.get('group_start', g.get('start', 0))),
+                 'end': float(g.get('group_end', g.get('end', 0))),
+                 'text': g.get('text', '')} for g in groups]
 
     # Extract audio at target SR
     audio_wav = out_dir / '_full_audio.wav'
@@ -94,6 +107,9 @@ def main():
     for spk, ss in sorted(by_spk.items()):
         pick = pick_ref(ss, segs)
         s, e = pick['start'], pick['end']
+        # 경계 오염(인접 화자 bleed) 완화: 1s 초과 segment 는 양끝 0.2s 트림
+        if e - s > 1.0:
+            s += 0.2; e -= 0.2
         # Trim to TARGET_REF_MAX_S if too long
         if e - s > TARGET_REF_MAX_S:
             e = s + TARGET_REF_MAX_S

@@ -21,6 +21,7 @@ _model = None
 class TranscribeRequest(BaseModel):
     audio_path: str
     language: Optional[str] = None  # "English", "Korean", None=auto
+    context: Optional[str] = None  # Qwen3-ASR hotword/biasing 텍스트 (예: 등장인물 이름)
 
 
 class TranscribeResponse(BaseModel):
@@ -82,6 +83,7 @@ def transcribe(req: TranscribeRequest):
             lang = None
         results = _model.transcribe(
             audio=req.audio_path,
+            context=req.context or "",
             language=lang,
             return_time_stamps=True,
         )

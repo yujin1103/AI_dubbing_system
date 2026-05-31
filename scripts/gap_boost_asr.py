@@ -74,6 +74,10 @@ def main():
                     help="메인 ASR 빈 구간이 이 이상이면 boost 대상")
     ap.add_argument("--silence-db", type=float, default=-55.0,
                     help="boost 후 mean_volume 이 이하면 침묵으로 보고 skip(환각 방지)")
+    ap.add_argument("--max-word-dur", dest="max_word_dur", type=float, default=2.0,
+                    help="단일 단어 span 이 이보다 길면 환각으로 보고 거부('Hello' 9.5s 등)")
+    ap.add_argument("--min-word-dur", dest="min_word_dur", type=float, default=0.06,
+                    help="단어 span 이 이보다 짧으면(zero-duration) 거부")
     args = ap.parse_args()
 
     d = json.load(open(args.words, encoding="utf-8"))
@@ -110,6 +114,7 @@ def main():
 
     fresh = []
     skipped_silent = 0
+    rejected_hallu = []  # (start, end, word, reason) — 환각 필터에 걸린 단어
     for gs, ge in gaps:
         a = max(0.0, gs - args.pad)
         b = min(total, ge + args.pad)
@@ -139,6 +144,15 @@ def main():
             # 단어 중심이 실제 gap 안(원래 gs~ge)에 있을 때만 — pad 영역 메인단어 중복 방지
             if not (gs - 0.05 <= wc <= ge + 0.05):
                 continue
+            # 환각 필터: 단일 단어가 비현실적으로 길거나(boost된 노이즈/음악을 한 단어로 환각)
+            # zero-duration(타임스탬프 깨짐)이면 거부. 더빙 소스 텍스트 오염 방지.
+            dur = we - ws
+            if dur > args.max_word_dur:
+                rejected_hallu.append((ws, we, w["word"], f"dur {dur:.1f}s>{args.max_word_dur}"))
+                continue
+            if dur < args.min_word_dur:
+                rejected_hallu.append((ws, we, w["word"], f"dur {dur:.2f}s<{args.min_word_dur}"))
+                continue
             # 경계 메인 단어와 가깝고 같은 단어면 skip (가짜 중복)
             if any(abs(ws - e["start"]) < 0.3 and norm(w["word"]) == norm(e["word"]) for e in existing):
                 continue
@@ -149,6 +163,11 @@ def main():
             os.remove(sub)
         except OSError:
             pass
+
+    if rejected_hallu:
+        print(f"\n환각 필터: {len(rejected_hallu)}개 단어 거부 (비현실적 span/zero-duration):")
+        for s, e, word, reason in rejected_hallu:
+            print(f"  ✗ {s:6.2f}-{e:6.2f}  {word!r}  [{reason}]")
 
     print(f"\ngap-boost: {skipped_silent}개 gap 침묵으로 skip, 새 단어 {len(fresh)}개:")
     for w in fresh:
