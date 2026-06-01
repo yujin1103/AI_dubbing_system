@@ -25,6 +25,11 @@ def _build_dub_asr_records(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
         dub_wav = row.get("dub_wav")
         if not dub_wav:
             continue
+        # passthrough/빈텍스트 행(dub_error)·미생성 wav 는 QC 대상 아님 → skip (BG/원본유지 청크).
+        if row.get("dub_error"):
+            continue
+        if not resolve_project_path(dub_wav).exists():
+            continue
         records.append(
             {
                 "chunk_id": row.get("chunk_id"),

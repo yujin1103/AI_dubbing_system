@@ -1,6 +1,6 @@
 {
-  "_note": "test5 MODULAR DUB on verified golden gapfilled(16/19). --from-step apply_gapfilled. orchestrator 미사용.",
-  "input_video": "media/input/test5.mp4",
+  "_note": "test4 MODULAR DUB on verified gapfilled. apply_gapfilled->mux. venv_asr.",
+  "input_video": "media/input/test4.mp4",
   "paths": {
     "raw_audio": "audio/{input_stem}/raw.wav",
     "dialogue_audio": "audio/{input_stem}/dialogue.wav",
@@ -57,7 +57,7 @@
   "preserved_repair": {
     "_note": "test5 = main 4명(엄마/아빠/의사/션) + BG. main_merge=0.99(=병합 거의 안함): gap_fill MAIN_MERGE는 sim>=임계값이면 두 메인을 병합하므로, 낮으면(0.40) 덜닮은 화자도 병합돼 엄마가 의사로 흡수되고 catch-all이 사라져 S2 face-split이 무력화됨(2026-06-01 실측: 0.40→3명, 0.99→4-way 재현). sim_match 높여서 BG 분리.",
     "enabled": true,
-    "run_dir": "media/runs/20260528_092242_test5fresh_86fb30",
+    "run_dir": "media/runs/20260528_090246_test4fresh_74d347",
     "gap_fill": {
       "main_merge": 0.99,
       "bg_merge": 0.3,
@@ -114,5 +114,8 @@
   "_bg_speaker_no_translate": {
     "_note": "SPEAKER_BG_* 화자는 영어 원본 그대로 유지 (번역 skip). orchestrator.py _is_dialogue patch 참고.",
     "skip_translate_pattern": "^SPEAKER_BG"
+  },
+  "pipeline": {
+    "use_separator": true
   }
 }
