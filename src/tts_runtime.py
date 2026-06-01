@@ -731,7 +731,7 @@ def initialize_tts_session(
 
     try:
         import soundfile as sf
-        from cosyvoice.cli.cosyvoice import AutoModel
+        from cosyvoice.cli.cosyvoice import AutoModel, CosyVoice3
     except ImportError as exc:
         raise RuntimeError(
             f"CosyVoice import failed: {exc}. "
@@ -753,7 +753,14 @@ def initialize_tts_session(
         for row in rows
         if row.get("chunk_id")
     }
-    cosyvoice = AutoModel(model_dir=str(resolve_project_path(model_dir)))
+    # AutoModel 은 cosyvoice2.yaml 을 먼저 감지해 CosyVoice2 로 오판(이 모델은 v2/v3 yaml 둘 다 보유).
+    # cosyvoice_daemon 과 동일하게 cosyvoice3.yaml 있으면 CosyVoice3 강제(instruct2 감정 경로 보존).
+    import os as _os
+    _md = str(resolve_project_path(model_dir))
+    if _os.path.exists(_os.path.join(_md, "cosyvoice3.yaml")):
+        cosyvoice = CosyVoice3(_md)
+    else:
+        cosyvoice = AutoModel(model_dir=_md)
     return TtsSession(
         cosyvoice=cosyvoice,
         sf=sf,

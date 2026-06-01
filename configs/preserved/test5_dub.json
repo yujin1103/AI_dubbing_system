@@ -1,5 +1,5 @@
 {
-  "_note": "Preserved best config for test5.mp4 — 4-way fusion + 8 repair patches + boost subchunk. Validated score 1.1667 (main=4 ✓, BG ✓, 아빠/션/BG 1.00).",
+  "_note": "test5 MODULAR DUB on verified golden gapfilled(16/19). --from-step apply_gapfilled. orchestrator 미사용.",
   "input_video": "media/input/test5.mp4",
   "paths": {
     "raw_audio": "audio/{input_stem}/raw.wav",
@@ -19,21 +19,34 @@
     "output_video": "output/{input_stem}/output_{tts_engine}.mp4"
   },
   "audio": {
-    "sample_rate": 16000, "channels": 1,
-    "source_sample_rate": 44100, "source_channels": 2,
+    "sample_rate": 16000,
+    "channels": 1,
+    "source_sample_rate": 44100,
+    "source_channels": 2,
     "chunk_source": "audio/{input_stem}/dialogue.wav",
-    "final_sample_rate": 44100, "final_channels": 2,
-    "background_gain": 0.8, "dub_gain": 1.0,
-    "target_peak_dbfs": -1.0, "final_codec": "aac", "final_bitrate": "192k"
+    "final_sample_rate": 44100,
+    "final_channels": 2,
+    "background_gain": 0.8,
+    "dub_gain": 1.0,
+    "target_peak_dbfs": -1.0,
+    "final_codec": "aac",
+    "final_bitrate": "192k"
   },
   "models": {
-    "asr": "models/asr/Qwen3-ASR-1.7B",
-    "tts": "models/tts/Fun-CosyVoice3-0.5B",
+    "asr": "/workspace/media/model_cache/huggingface/hub/models--Qwen--Qwen3-ASR-1.7B/snapshots/7278e1e70fe206f11671096ffdd38061171dd6e5",
+    "tts": "media/model_cache/modelscope/hub/FunAudioLLM/Fun-CosyVoice3-0.5B-2512",
     "cosyvoice_repo": "third_party/CosyVoice",
-    "emotion": "models/emotion/emotion2vec-large"
+    "emotion": "iic/emotion2vec_plus_large"
   },
-  "runtime": { "device": "cuda:0", "dtype": "float16" },
-  "chunking": { "speaker_merge_gap_sec": 0.2, "min_chunk_sec": 0.2, "max_chunk_sec": 15 },
+  "runtime": {
+    "device": "cuda:0",
+    "dtype": "float16"
+  },
+  "chunking": {
+    "speaker_merge_gap_sec": 0.2,
+    "min_chunk_sec": 0.2,
+    "max_chunk_sec": 15
+  },
   "diarization": {
     "engine": "fusion_4way",
     "fusion_url": "http://127.0.0.1:8903",
@@ -44,10 +57,10 @@
   "preserved_repair": {
     "_note": "test5 = main 4명(엄마/아빠/의사/션) + BG. main_merge=0.99(=병합 거의 안함): gap_fill MAIN_MERGE는 sim>=임계값이면 두 메인을 병합하므로, 낮으면(0.40) 덜닮은 화자도 병합돼 엄마가 의사로 흡수되고 catch-all이 사라져 S2 face-split이 무력화됨(2026-06-01 실측: 0.40→3명, 0.99→4-way 재현). sim_match 높여서 BG 분리.",
     "enabled": true,
-    "run_dir": "media/runs/{input_stem}_preserved",
+    "run_dir": "media/runs/20260528_092242_test5fresh_86fb30",
     "gap_fill": {
       "main_merge": 0.99,
-      "bg_merge": 0.30,
+      "bg_merge": 0.3,
       "sim_match": 0.45,
       "pad": 0.5
     },
@@ -68,16 +81,22 @@
   },
   "translation": {
     "mode": "vectorengine_gpt",
-    "source_language": "English", "target_language": "Korean",
-    "env_file": ".env", "timeout_sec": 120,
-    "context_refine": true, "context_batch_size": 12,
-    "duration_control": true, "max_budget_rewrites": 2
+    "source_language": "English",
+    "target_language": "Korean",
+    "env_file": ".env",
+    "timeout_sec": 120,
+    "context_refine": true,
+    "context_batch_size": 12,
+    "duration_control": true,
+    "max_budget_rewrites": 2
   },
   "tts": {
     "engine": "cosyvoice",
     "passthrough_on_copy_source": true,
-    "min_prompt_sec": 3.0, "speed": 1.0,
-    "style_priority": "balanced", "reference_mode": "auto",
+    "min_prompt_sec": 3.0,
+    "speed": 1.0,
+    "style_priority": "balanced",
+    "reference_mode": "auto",
     "fit_to_duration": true,
     "trim_silence": true,
     "silence_trim_threshold_dbfs": -45.0,

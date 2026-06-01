@@ -297,7 +297,8 @@ def _track_avg_embedding(face_app, video_path: str, frames: list, bboxes: list, 
     return m / (np.linalg.norm(m) + 1e-8)
 
 
-def _cluster_face_tracks(tracks: list[dict], sim_threshold: float) -> dict[int, int]:
+def _cluster_face_tracks(tracks: list[dict], sim_threshold: float,
+                         faces_out: str | None = None, fps: float = 25.0) -> dict[int, int]:
     # ArcFace embedding 기반 cluster (cosine greedy, sim ≥ threshold = 같은 인물).
     # 각 track 의 가장 큰 face frame 1개에서 embedding 추출 → 기존 centroid 와 비교.
     try:
@@ -351,6 +352,37 @@ def _cluster_face_tracks(tracks: list[dict], sim_threshold: float) -> dict[int, 
         track_embs[t["track_id"]] = emb
     logger.info("track embeddings: %s/%s ok (%s failed)",
                 len(track_embs), len(tracks), n_fail)
+
+    # Emit faces.json (per-track ArcFace emb + ASD + time + size) for the
+    # face_identity_split repair patch. Reuses the embeddings just computed —
+    # must happen here (LightASD work_dir/video survives only during clustering).
+    if faces_out is not None:
+        try:
+            recs = []
+            for t in tracks:
+                tid = t.get("track_id")
+                if tid not in track_embs:
+                    continue
+                fr = t.get("frames") or []
+                bb = t.get("bboxes") or []
+                sc = t.get("scores") or []
+                if not fr or not bb:
+                    continue
+                n = min(len(fr), len(sc))
+                areas = [(b[2] - b[0]) * (b[3] - b[1]) for b in bb]
+                recs.append({
+                    "tid": int(tid),
+                    "asd": float(np.mean(sc[:n])) if n else 0.0,
+                    "t0": float(min(fr)) / fps,
+                    "t1": float(max(fr)) / fps,
+                    "sz": float(np.mean(areas)) if areas else 0.0,
+                    "emb": [float(x) for x in track_embs[tid]],
+                })
+            with open(faces_out, "w", encoding="utf-8") as fh:
+                json.dump(recs, fh)
+            logger.info("faces.json emitted: %s tracks -> %s", len(recs), faces_out)
+        except Exception as exc:
+            logger.warning("faces.json emit 실패: %s", exc)
 
     if not track_embs:
         logger.warning("ArcFace embedding 추출 0 — placeholder cluster")
@@ -466,7 +498,8 @@ def cluster_faces_in_run(
         return {"chunks": 0, "tracks": 0, "remapped_segments": 0}
 
     diar = load_json(diarization_json)
-    segments = diar.get("segments") or diar.get("groups") or diar
+    # diar 는 list(rttm_to_json 출력) 또는 dict({segments|groups}) 둘 다 허용.
+    segments = (diar.get("segments") or diar.get("groups") or diar) if isinstance(diar, dict) else diar
     if not isinstance(segments, list):
         raise ValueError(f"diarization_json {diarization_json} segments not a list")
 
@@ -515,7 +548,9 @@ def cluster_faces_in_run(
         save_json(diar, output_remapped_json)
         return {"chunks": len(chunk_videos), "tracks": 0, "remapped_segments": 0}
 
-    face_clusters = _cluster_face_tracks(all_tracks, face_sim_threshold)
+    _faces_out = str(Path(output_face_clusters_json).parent / "faces.json")
+    face_clusters = _cluster_face_tracks(all_tracks, face_sim_threshold,
+                                         faces_out=_faces_out, fps=all_fps)
     spk_dominant = _compute_dominant_speaker(
         segments, all_tracks, face_clusters, all_fps,
         min_speak_score=min_speak_score,

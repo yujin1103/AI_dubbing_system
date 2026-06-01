@@ -118,9 +118,10 @@ def step_redirect_nonspeech(config: dict) -> None:
 
 
 def step_diarize(config: dict) -> None:
+    # fusion_4way/team engines 는 자체 데몬/모델 사용 — diarizen 전용 model 경로는 lazy(deep_get).
     diarization_kwargs = {
-        "model_dir": require_value(config, ("models", "diarization")),
-        "embedding_model_dir": require_value(config, ("models", "diarization_embedding")),
+        "model_dir": deep_get(config, ("models", "diarization")),
+        "embedding_model_dir": deep_get(config, ("models", "diarization_embedding")),
         "device": str(deep_get(config, ("runtime", "device"), "cuda:0")),
         "max_speakers": deep_get(config, ("diarization", "max_speakers")),
         "min_speakers": deep_get(config, ("diarization", "min_speakers")),
@@ -235,21 +236,67 @@ def step_face_clustering(config: dict) -> None:
         logger.info("Skipping face_clustering (pipeline.face_clustering.enabled=false)")
         return
     from face_clustering import cluster_faces_in_run
+    import shutil as _shutil
 
+    # face detection 은 전체 소스 비디오(단일 chunk) 기준. 모듈 cut_chunks 는 화자-turn 오디오라
+    # 비디오 chunk 가 없음 → input_video 를 chunks_dir 에 단일 mp4 로 제공(없을 때만).
+    stem = Path(str(config.get("input_video", "input"))).stem or "input"
+    chunks_dir_p = resolve_project_path(require_value(config, ("paths", "chunks_dir")))
+    chunks_dir_p.mkdir(parents=True, exist_ok=True)
+    if not any(not v.stem.endswith("_final") for v in chunks_dir_p.glob("*.mp4")):
+        src_video = resolve_project_path(require_value(config, ("input_video",)))
+        _shutil.copyfile(src_video, chunks_dir_p / f"{stem}_full.mp4")
+        logger.info("face_clustering: source video -> %s/%s_full.mp4", chunks_dir_p, stem)
+    # stabilization 비활성 시 stabilized.json(미생성) 대신 diarization_json 사용.
+    diar_for_face = (require_value(config, ("paths", "diarization_stabilized_json"))
+                     if _diarization_stabilization_enabled(config)
+                     else require_value(config, ("paths", "diarization_json")))
+    # {input_stem} 치환(config 에 명시 경로 없을 때 default 가 리터럴로 남는 것 방지 → 브리지와 경로 일치).
+    fc_json = str(deep_get(config, ("paths", "face_clusters_json"),
+                           "meta/{input_stem}/face_clusters.json")).replace("{input_stem}", stem)
+    fm_json = str(deep_get(config, ("paths", "diarization_face_matched_json"),
+                           "meta/{input_stem}/diarization_face_matched.json")).replace("{input_stem}", stem)
     cluster_faces_in_run(
-        require_value(config, ("paths", "chunks_dir")),
-        deep_get(config, ("paths", "diarization_stabilized_json"))
-        or require_value(config, ("paths", "diarization_json")),
-        deep_get(config, ("paths", "face_clusters_json"),
-                 "meta/{input_stem}/face_clusters.json"),
-        deep_get(config, ("paths", "diarization_face_matched_json"),
-                 "meta/{input_stem}/diarization_face_matched.json"),
+        str(chunks_dir_p),
+        diar_for_face,
+        fc_json,
+        fm_json,
         light_asd_dir=str(fc_cfg.get("light_asd_dir", "/opt/Light-ASD")),
         venv_python=str(fc_cfg.get("venv_python", "/usr/bin/python")),
         face_sim_threshold=float(fc_cfg.get("face_sim_threshold", 0.4)),
         min_speak_score=float(fc_cfg.get("min_speak_score", 0.5)),
         dominant_ratio=float(fc_cfg.get("dominant_ratio", 0.5)),
         min_evidence_frames=int(fc_cfg.get("min_evidence_frames", 5)),
+    )
+
+
+def step_build_repair_inputs(config: dict) -> None:
+    # 모듈 stage 출력(fusion diar + vocals + faces.json + 전체영상 ASR)을 preserved_repair.run_dir
+    # 형식으로 채움 → 검증된 4-way + 8 repair patch 가 모듈 pipeline 안에서 그대로 동작(webUI 소비 가능).
+    repair_cfg = deep_get(config, ("preserved_repair",)) or {}
+    if not bool(repair_cfg.get("enabled", False)):
+        logger.info("Skipping build_repair_inputs (preserved_repair.enabled=false)")
+        return
+    run_dir = repair_cfg.get("run_dir")
+    if not run_dir:
+        logger.warning("preserved_repair.run_dir not set; skipping build_repair_inputs")
+        return
+    from build_repair_inputs import build_repair_inputs
+
+    stem = Path(str(config.get("input_video", "input"))).stem or "input"
+    fc_json = str(deep_get(config, ("paths", "face_clusters_json"),
+                           "meta/{input_stem}/face_clusters.json")).replace("{input_stem}", stem)
+    faces_src = str(resolve_project_path(fc_json).parent / "faces.json")
+    build_repair_inputs(
+        str(resolve_project_path(run_dir)),
+        stem=stem,
+        vocals_src=str(select_audio_path(config, "dialogue_audio")),
+        diarization_json=str(resolve_project_path(require_value(config, ("paths", "diarization_json")))),
+        faces_src=faces_src,
+        video_src=str(resolve_project_path(require_value(config, ("input_video",)))),
+        asr_url=str(deep_get(config, ("asr", "daemon_url"), "http://127.0.0.1:8902")),
+        asr_language=str(deep_get(config, ("asr", "language"),
+                                  deep_get(config, ("translation", "source_language"), "English"))),
     )
 
 
@@ -278,6 +325,31 @@ def step_apply_preserved_repair(config: dict) -> None:
         },
         skip=repair_cfg.get("skip") or [],
         venv_python=repair_cfg.get("venv_python") or "/opt/venv_diarizen/bin/python",
+    )
+
+
+def step_apply_gapfilled(config: dict) -> None:
+    # 검증된 gapfilled 화자분리(run_dir/meta/*_segments_gapfilled.json, BG화자·gap회수 포함)를
+    # 청크 단계 입력(diarization_json)으로 export → merge_speaker_chunks 가 검증 화자 turn 을 청크로 묶음.
+    repair_cfg = deep_get(config, ("preserved_repair",)) or {}
+    if not bool(repair_cfg.get("enabled", False)):
+        logger.info("Skipping apply_gapfilled (preserved_repair.enabled=false)")
+        return
+    run_dir = repair_cfg.get("run_dir")
+    if not run_dir:
+        logger.warning("preserved_repair.run_dir not set; skipping apply_gapfilled")
+        return
+    from apply_gapfilled_diarization import apply_gapfilled_to_diarization
+
+    stabilized = (
+        require_value(config, ("paths", "diarization_stabilized_json"))
+        if _diarization_stabilization_enabled(config)
+        else None
+    )
+    apply_gapfilled_to_diarization(
+        str(resolve_project_path(run_dir)),
+        require_value(config, ("paths", "diarization_json")),
+        stabilized_json=stabilized,
     )
 
 
@@ -481,7 +553,9 @@ STEP_FUNCTIONS: list[tuple[str, Callable[[dict], None]]] = [
     ("diarize", step_diarize),
     ("rttm_to_json", step_rttm_to_json),
     ("face_clustering", step_face_clustering),
+    ("build_repair_inputs", step_build_repair_inputs),
     ("apply_preserved_repair", step_apply_preserved_repair),
+    ("apply_gapfilled", step_apply_gapfilled),
     ("merge_chunks", step_merge_chunks),
     ("cut_chunks", step_cut_chunks),
     ("extract_emotion", step_extract_emotion),
