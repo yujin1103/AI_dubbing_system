@@ -378,6 +378,8 @@ def step_translate(config: dict) -> None:
         context_batch_size=int(deep_get(config, ("translation", "context_batch_size"), 12)),
         duration_control=bool(deep_get(config, ("translation", "duration_control"), True)),
         max_budget_rewrites=int(deep_get(config, ("translation", "max_budget_rewrites"), 2)),
+        scene_context=str(deep_get(config, ("translation", "scene_context"), "")),
+        register_override=str(deep_get(config, ("translation", "register"), "")),
     )
 
 

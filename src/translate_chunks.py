@@ -135,6 +135,27 @@ def _measure_budget_fit(text: str, *, target_language: str, budget: dict[str, An
     }
 
 
+# 다국어 무관 프롬프트 보강 — config translation.scene_context / register 로 build_translation_entries 가 런타임 1회 설정.
+_SCENE_CONTEXT: str = ""
+_REGISTER_OVERRIDE: str = ""
+
+
+def _extra_prompt_rules(target_label: str) -> str:
+    """모든 번역 프롬프트에 붙는 공통 규칙 — (1) 항상 타겟언어 완역(영어 잔류 차단) (2) 씬/등장인물 컨텍스트."""
+    block = (
+        f"\nIMPORTANT: The output MUST be written entirely in {target_label}. "
+        f"Translate EVERYTHING into {target_label} — including country names, place names, numbers, "
+        "statistics, lists, and fast rapid speech. Never leave any words in the source language.\n"
+    )
+    scene = (_SCENE_CONTEXT or "").strip()
+    if scene:
+        block += (
+            "Scene/character context (use this to fix tone, register, pronouns, who speaks to whom, "
+            f"and continuity across lines): {scene}\n"
+        )
+    return block
+
+
 def _build_budget_rewrite_messages(
     row: dict[str, Any],
     *,
@@ -270,6 +291,7 @@ def _build_translation_messages(
         budget_rule +
         register_rule +
         "13. If the input is empty, return an empty string."
+        + _extra_prompt_rules(target_label)
     )
     user_prompt = f"Source dialogue ({source_label}):\n{text}"
     return system_prompt, user_prompt
@@ -345,6 +367,7 @@ def _build_context_refinement_messages(
             "9. Treat the output as a performance script: every number, date, unit, price, and abbreviation must be written exactly the way a voice actor would pronounce it aloud, not as Arabic digits or written shorthand.\n"
             "10. If a source line is empty, return an empty string for that line.\n"
             "11. Output JSON only. No markdown, explanations, or extra keys."
+            + _extra_prompt_rules(target_label)
         )
 
     batch_payload: list[dict[str, Any]] = []
@@ -936,7 +959,13 @@ def build_translation_entries(
     context_batch_size: int = 12,
     duration_control: bool = True,
     max_budget_rewrites: int = 2,
+    scene_context: str = "",
+    register_override: str = "",
 ) -> list[dict[str, Any]]:
+    # 프롬프트 보강(씬 컨텍스트/격식)을 모듈 전역에 1회 설정 → 모든 번역/정제 프롬프트에 주입.
+    global _SCENE_CONTEXT, _REGISTER_OVERRIDE
+    _SCENE_CONTEXT = scene_context or ""
+    _REGISTER_OVERRIDE = (register_override or "").strip().lower()
     asr_rows = load_json(asr_json)
     existing_rows = load_json_if_exists(output_json, default=[])
     existing_map = {row["chunk_id"]: row for row in existing_rows}
@@ -981,7 +1010,7 @@ def build_translation_entries(
             chunk_feature=chunk_feature_map.get(str(row["chunk_id"])),
         )
         speaker = str(row.get("speaker") or "")
-        register_hint = speaker_register_memory.get(speaker, "")
+        register_hint = _REGISTER_OVERRIDE or speaker_register_memory.get(speaker, "")
         blocked_reason: str | None = None
 
         if mode == "copy_source":
