@@ -29,6 +29,7 @@
     "background_gain": 0.8,
     "dub_gain": 1.0,
     "target_peak_dbfs": -1.0,
+    "per_chunk_peak_dbfs": -3.0,
     "final_codec": "aac",
     "final_bitrate": "192k"
   },
@@ -90,7 +91,7 @@
     "duration_control": true,
     "max_budget_rewrites": 2,
     "register": "polite",
-    "scene_context": "장면: 미국 대학의 공개 패널 토론. 남성 사회자가 패널인 남성 교수(유명 뉴스 앵커)에게 미국이 세계 최고의 나라인 이유를 한 문장으로 답하라고 압박한다. 교수는 처음엔 농담으로 회피하다가, 미국은 최고가 아니라며 문해력·수학·과학·기대수명 등 각종 통계 순위를 들어 통렬하고 냉소적으로 반박하는 긴 연설을 한다. 객석의 젊은 여대생이 원래 질문자이며 약 51초에 짧게 끼어든다. 공개 토론이라 서로 존댓말을 쓰되 교수의 반박은 단호하고 직설적이며 도발적이다."
+    "auto_scene_context": true
   },
   "tts": {
     "engine": "cosyvoice",

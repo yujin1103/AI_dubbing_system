@@ -287,6 +287,12 @@ def _track_avg_embedding(face_app, video_path: str, frames: list, bboxes: list, 
             e = _embed_face_fullframe(face_app, frame, bboxes[i])
         else:
             e = _embed_face_in_frame(face_app, frame, bboxes[i])
+            # crop 재검출 실패(작은/흐린 얼굴: 예 test4 paramedic sz54k·sean sz8k) 시
+            # full-frame+IoU 로 회수. 정상 얼굴은 crop 결과 그대로(score 무영향) — 실패
+            # 트랙만 살림. 이게 없으면 작은 화자 얼굴 트랙이 통째로 드롭돼 face_identity_split
+            # 이 catch-all 을 못 가름(clean-room 6/6 핵심, 2026-06-02).
+            if e is None and os.environ.get("FACE_EMBED_CROP_FALLBACK", "1") in ("1", "true", "True"):
+                e = _embed_face_fullframe(face_app, frame, bboxes[i])
         if e is not None:
             embs.append(np.asarray(e, dtype=np.float32))
     if cap is not None:

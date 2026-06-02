@@ -380,6 +380,7 @@ def step_translate(config: dict) -> None:
         max_budget_rewrites=int(deep_get(config, ("translation", "max_budget_rewrites"), 2)),
         scene_context=str(deep_get(config, ("translation", "scene_context"), "")),
         register_override=str(deep_get(config, ("translation", "register"), "")),
+        auto_scene_context=bool(deep_get(config, ("translation", "auto_scene_context"), False)),
     )
 
 
@@ -517,6 +518,11 @@ def step_compose_audio(config: dict) -> None:
         background_gain=float(deep_get(config, ("audio", "background_gain"), 1.0)),
         dub_gain=float(deep_get(config, ("audio", "dub_gain"), 1.0)),
         target_peak_dbfs=float(deep_get(config, ("audio", "target_peak_dbfs"), -1.0)),
+        per_chunk_peak_dbfs=(
+            float(deep_get(config, ("audio", "per_chunk_peak_dbfs")))
+            if deep_get(config, ("audio", "per_chunk_peak_dbfs")) is not None
+            else None
+        ),
     )
 
 

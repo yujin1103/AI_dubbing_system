@@ -61,6 +61,25 @@ def _limit_peak(data: np.ndarray, *, target_peak_dbfs: float | None) -> np.ndarr
     return np.clip(data, -1.0, 1.0).astype("float32", copy=False)
 
 
+def _normalize_chunk_peak(
+    data: np.ndarray, *, per_chunk_peak_dbfs: float | None, silence_floor_dbfs: float = -45.0
+) -> np.ndarray:
+    """청크 단위 peak 정규화 — CosyVoice 출력 레벨 편차(-12~-24dBFS) 보정.
+
+    compose 의 _limit_peak 은 '줄이기만' 하므로 작은 더빙은 무음으로 남는다.
+    각 청크의 peak 를 per_chunk_peak_dbfs 로 끌어올려(키우거나 줄여) 청크간 레벨을 일관화.
+    silence_floor 미만(합성 실패/거의 무음)은 noise 증폭 방지 위해 건너뜀.
+    """
+    target = _target_peak_linear(per_chunk_peak_dbfs)
+    if target is None or target <= 0 or not data.size:
+        return data
+    peak = float(np.max(np.abs(data)))
+    floor = _target_peak_linear(silence_floor_dbfs) or 0.0
+    if peak <= floor:  # 사실상 무음 → 증폭하지 않음
+        return data
+    return (data * (target / peak)).astype("float32", copy=False)
+
+
 def compose_audio(
     master_timeline_json: str | Path,
     output_wav: str | Path,
@@ -71,6 +90,7 @@ def compose_audio(
     background_gain: float = 1.0,
     dub_gain: float = 1.0,
     target_peak_dbfs: float | None = -1.0,
+    per_chunk_peak_dbfs: float | None = None,
 ) -> Path:
     timeline = load_json(master_timeline_json)
     sample_rate = int(sample_rate)
@@ -106,6 +126,7 @@ def compose_audio(
         audio, rate = _read_audio(dub_path, target_sample_rate=sample_rate, target_channels=channels)
         if rate != sample_rate:
             raise ValueError(f"Dub wav sample rate mismatch: {dub_path} -> {rate}")
+        audio = _normalize_chunk_peak(audio, per_chunk_peak_dbfs=per_chunk_peak_dbfs)
         audio = audio * float(dub_gain)
         start_index = int(round(float(row["start"]) * sample_rate))
         prepared.append((start_index, audio))
@@ -151,6 +172,8 @@ def build_arg_parser() -> argparse.ArgumentParser:
     parser.add_argument("--background-gain", type=float, default=1.0)
     parser.add_argument("--dub-gain", type=float, default=1.0)
     parser.add_argument("--target-peak-dbfs", type=float, default=-1.0)
+    parser.add_argument("--per-chunk-peak-dbfs", type=float, default=None,
+                        help="청크별 peak 정규화 목표(dBFS). 미지정 시 비활성(기존 동작).")
     return parser
 
 
@@ -165,6 +188,7 @@ def main() -> None:
         background_gain=args.background_gain,
         dub_gain=args.dub_gain,
         target_peak_dbfs=args.target_peak_dbfs,
+        per_chunk_peak_dbfs=args.per_chunk_peak_dbfs,
     )
 
 

@@ -946,6 +946,55 @@ def _apply_duration_budget_control(
     return translated_rows
 
 
+_SCENE_CONTEXT_SYSTEM = (
+    "You prepare a concise SCENE CONTEXT that will guide the dubbing translation of this "
+    "video. From the dialogue transcript (speaker-tagged), write 2-4 sentences covering: "
+    "(1) the setting/situation, (2) who the speakers are and their relationship, (3) the "
+    "register/formality between them, (4) the overall tone. This guides translation tone, "
+    "pronouns, honorifics and cross-line continuity. Output ONLY the scene context prose "
+    "(no preamble, no bullet points), in English."
+)
+
+
+def generate_scene_context(
+    asr_rows: list[dict[str, Any]],
+    *,
+    source_language: str,
+    target_language: str,
+    env_file: str | Path = ".env",
+    timeout_sec: int = 60,
+) -> str:
+    """ASR 전사본 전체를 LLM 1회 요약 → scene_context 자동 생성(수동 힌트 대체).
+    어떤 타겟언어든 무관(영어 컨텍스트가 톤/존댓말/대명사를 가이드). 실패 시 빈 문자열."""
+    load_env_file(env_file)
+    api_key = os.environ.get("VECTORENGINE_API_KEY", "").strip()
+    if not api_key:
+        logger.warning("auto scene_context: VECTORENGINE_API_KEY 없음 — skip")
+        return ""
+    base_url = os.environ.get("VECTORENGINE_BASE_URL", "https://api.vectorengine.ai/").strip()
+    model_name = os.environ.get("VECTORENGINE_MODEL", "gpt-5.4").strip()
+    endpoint = os.environ.get("VECTORENGINE_ENDPOINT", "/v1/chat/completions").strip()
+    transcript = "\n".join(
+        f"[{r.get('speaker', '?')}] {(r.get('text_src') or '').strip()}"
+        for r in asr_rows if (r.get('text_src') or '').strip()
+    )[:6000]
+    if not transcript.strip():
+        return ""
+    try:
+        ctx = _translate_with_vectorengine_api(
+            "", source_language=source_language, target_language=target_language,
+            target_duration_sec=None, duration_budget=None, register_hint="",
+            api_key=api_key, base_url=base_url, endpoint=endpoint, model_name=model_name,
+            timeout_sec=timeout_sec, response_format_json=False,
+            system_prompt_override=_SCENE_CONTEXT_SYSTEM,
+            user_prompt_override="Transcript:\n" + transcript,
+        )
+        return (ctx or "").strip()
+    except Exception as exc:
+        logger.warning("auto scene_context 생성 실패: %s", exc)
+        return ""
+
+
 def build_translation_entries(
     asr_json: str | Path,
     output_json: str | Path,
@@ -961,6 +1010,7 @@ def build_translation_entries(
     max_budget_rewrites: int = 2,
     scene_context: str = "",
     register_override: str = "",
+    auto_scene_context: bool = False,
 ) -> list[dict[str, Any]]:
     # 프롬프트 보강(씬 컨텍스트/격식)을 모듈 전역에 1회 설정 → 모든 번역/정제 프롬프트에 주입.
     global _SCENE_CONTEXT, _REGISTER_OVERRIDE
@@ -989,6 +1039,15 @@ def build_translation_entries(
         endpoint = os.environ.get("VECTORENGINE_ENDPOINT", "/v1/chat/completions").strip()
         if not api_key:
             raise RuntimeError(f"VECTORENGINE_API_KEY is missing. Put it in {env_file}.")
+        # 수동 scene_context 없고 auto 켜졌으면 ASR 전사본에서 자동 생성(완전 자동 문맥번역).
+        if auto_scene_context and not _SCENE_CONTEXT:
+            _auto_ctx = generate_scene_context(
+                asr_rows, source_language=source_language, target_language=target_language,
+                env_file=env_file, timeout_sec=timeout_sec,
+            )
+            if _auto_ctx:
+                _SCENE_CONTEXT = _auto_ctx
+                logger.info("auto scene_context 생성: %s", _auto_ctx[:200])
 
     translated_rows: list[dict[str, Any]] = []
     speaker_register_memory: dict[str, str] = {}

@@ -34,6 +34,14 @@ BG_MERGE = 0.40        # BG 화자들끼리 sim ≥ 이면 같은 BG로 merge
 MAIN_MERGE = 0.80      # 메인 화자끼리 sim ≥ 이면 over-merge
 LANG = "English"
 
+# === 짧은 segment voice 재배정 (v178 ERes2NetV2 short reassign) ===
+# face(화면) 재배정은 리액션샷/저신뢰 클러스터에서 메인 대화를 망가뜨리지만,
+# voice 는 짧은 발화도 본인 화자에 강하게 매칭(검증 2026-05-31: test4 'Good' 0.76s → sean 0.59 vs dad 0.29).
+SHORT_REASSIGN = True   # 짧은 발화를 voice centroid 로 본인 화자에 자동 재배정
+SHORT_DUR = 1.5         # 이보다 짧은 segment 만 대상 (긴 turn 은 안 건드림)
+SHORT_MARGIN = 0.15     # best_sim - current_sim ≥ 이 값일 때만 재배정 (명확할 때만)
+SHORT_MIN_SIM = 0.45    # best_sim ≥ 이 값일 때만 (잡음/단역 오배정 방지)
+
 
 def cosine(a, b):
     return float(np.dot(a, b))
@@ -148,6 +156,47 @@ def main(run_dir: str):
         # centroids 다시
         main_after = sorted(set(merge_map.values()))
         print(f"  메인 over-merge 후: {main_after}  (merge_map={merge_map})")
+
+        # === 짧은 segment voice 재배정 (v178 short reassign) ===
+        # 짧은 발화가 인접 화자 턴에 흡수돼 잘못 배정된 경우, voice centroid 로 본인 화자에 되돌림.
+        # 예: test4 'Good'(sean) 이 diarization 턴 경계 때문에 dad(03) 턴에 들어간 것 → sean(04) 으로 자동 교정.
+        if SHORT_REASSIGN:
+            vr_best = {}
+            for g in groups:
+                spk = g["speaker"]; d = g["group_end"] - g["group_start"]
+                if spk not in vr_best or d > vr_best[spk][0]:
+                    vr_best[spk] = (d, g["group_start"], g["group_end"])
+            vr_cent = {}
+            for spk, (d, s, e) in vr_best.items():
+                s2 = max(0.0, s - PAD_CENT); e2 = min(total_dur, e + PAD_CENT)
+                if e2 - s2 < 0.4:
+                    continue
+                em = extract_eres2netv2_emb(slice(s2, e2), sr=sr)
+                if em is not None:
+                    vr_cent[spk] = em
+            n_vr = 0
+            for g in groups:
+                if g["group_end"] - g["group_start"] > SHORT_DUR:
+                    continue
+                cur = g["speaker"]
+                # 본인 화자 centroid 출처(최장 segment)면 skip
+                if cur in vr_best and abs(vr_best[cur][1] - g["group_start"]) < 1e-6:
+                    continue
+                s2 = max(0.0, g["group_start"] - 0.1); e2 = min(total_dur, g["group_end"] + 0.1)
+                em = extract_eres2netv2_emb(slice(s2, e2), sr=sr)
+                if em is None:
+                    continue
+                sims = {sp: cosine(em, c) for sp, c in vr_cent.items()}
+                if not sims:
+                    continue
+                best = max(sims, key=sims.get)
+                cur_sim = sims.get(cur, -1.0)
+                if best != cur and sims[best] >= SHORT_MIN_SIM and (sims[best] - cur_sim) >= SHORT_MARGIN:
+                    print(f"  [voice-reassign] {g['group_start']:.2f}-{g['group_end']:.2f} {cur}→{best} (sim {cur_sim:.2f}→{sims[best]:.2f})")
+                    g["speaker"] = best
+                    n_vr += 1
+            if n_vr:
+                print(f"  voice 짧은segment 재배정 {n_vr}건")
 
         # === gap 검출 ===
         gaps = []

@@ -29,6 +29,7 @@
     "background_gain": 0.8,
     "dub_gain": 1.0,
     "target_peak_dbfs": -1.0,
+    "per_chunk_peak_dbfs": -3.0,
     "final_codec": "aac",
     "final_bitrate": "192k"
   },
@@ -88,7 +89,8 @@
     "context_refine": true,
     "context_batch_size": 12,
     "duration_control": true,
-    "max_budget_rewrites": 2
+    "max_budget_rewrites": 2,
+    "auto_scene_context": true
   },
   "tts": {
     "engine": "cosyvoice",

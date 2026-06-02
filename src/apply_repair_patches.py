@@ -47,6 +47,9 @@ PATCH_ORDER: list[tuple[str, str, bool]] = [
     ("face_cluster_match", "face_cluster_match.py", False),
     ("gap_fill", "gap_fill.py", True),
     ("postprocess_reassign_text", "postprocess_reassign_text.py", False),
+    ("face_track_boundary_split", "face_track_boundary_split.py", False),
+    ("face_identity_split", "face_identity_split.py", False),
+    ("gender_interjection_split", "gender_interjection_split.py", False),
 ]
 
 
