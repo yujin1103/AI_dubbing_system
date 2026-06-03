@@ -1,4 +1,6 @@
-# 청크별 CosyVoice instruct_text 를 LLM 으로 생성한다 — 화자 음성 보존 1순위 + emotion 가벼운 nudge + 전후 대사 context
+# 청크별 CosyVoice instruct_text 를 LLM 으로 생성한다 (문서 정본 설계).
+# "very <emotion>, <acoustic clause>" 강한 형식 — 장면 전체(scene_dialogue)+전후 대사+emotion2vec(noisy hint)로
+# 감정을 텍스트·장면 기반 재판단해 high-stakes 는 강하게 push. 음색은 레퍼런스 오디오가 보존.
 from __future__ import annotations
 
 import argparse
@@ -26,17 +28,17 @@ _DEFAULT_PREFIX = "You are a helpful assistant."  # CosyVoice 본가 instruct_li
 _CJK_RE = re.compile(r"[㐀-鿿가-힯]")  # 한자 + 한글 — CosyVoice instruct 는 영어 분포에서만 학습됨
 
 
-# 화자 음성 보존이 1순위 — fallback 도 모두 그 형식
+# GRADED INTENSITY (문서 정본) — named emotion + intensity + 1 acoustic clause. LLM 실패 시 폴백.
 EMOTION_STYLE_FALLBACKS = {
-    "angry":     "Please say it close to the speaker's natural delivery, with a faint hint of restrained tension.",
-    "disgusted": "Please say it as the speaker would, with a subtle hint of distaste.",
-    "fearful":   "Please say it close to the natural delivery, with a gentle, slightly cautious tilt.",
-    "happy":     "Please say it close to the natural delivery, with a faint warmth and lift.",
-    "neutral":   "Please say it close to the speaker's natural delivery.",
-    "other":     "Please say it close to the speaker's natural delivery.",
-    "sad":       "Please say it as the speaker would, with a soft, slightly subdued shade.",
-    "surprised": "Please say it close to the natural delivery, with a faint quick lift.",
-    "unknown":   "Please say it close to the speaker's natural delivery.",
+    "angry":     "Please say it very angrily, hard and forceful, sharp and loud.",
+    "disgusted": "Please say it very disgusted, cold and sharp.",
+    "fearful":   "Please say it very frightened and frantic, breathless and fast.",
+    "happy":     "Please say it very happily, bright and lively.",
+    "neutral":   "Please say it calmly and evenly, in a natural conversational tone.",
+    "other":     "Please say it calmly and evenly, in a natural conversational tone.",
+    "sad":       "Please say it very sadly, heavy and sorrowful, slow and low.",
+    "surprised": "Please say it very surprised, sharp and sudden, quick and bright.",
+    "unknown":   "Please say it calmly and evenly, in a natural conversational tone.",
 }
 
 
@@ -132,45 +134,40 @@ def _parse_instruction_response(raw_text: str) -> str:
 
 
 _SYSTEM_PROMPT = (
-    "You design CosyVoice3 instruct_text directives for film dubbing.\n"
-    "\n"
-    "THE OVERRIDING PRINCIPLE — preserve the original speaker's voice from the prompt audio. "
-    "The reference audio already carries the speaker's identity, prosody, rhythm, and tonal color; "
-    "your directive must NEVER override it. The directive only adds a faint emotional shade and respects the scene flow.\n"
-    "\n"
-    "Return only a minified JSON object: {\"instruct_text\": \"...\"}.\n"
-    "\n"
-    "REQUIRED OUTPUT FORMAT (single line, English only):\n"
-    "  You are a helpful assistant. Please say it <subtle directive>.<|endofprompt|>\n"
-    "\n"
-    "The exact prefix \"You are a helpful assistant.\" is mandatory — CosyVoice was trained with this trigger and behaves out-of-distribution without it.\n"
-    "\n"
-    "Examples:\n"
-    "  You are a helpful assistant. Please say it close to the speaker's natural delivery, with a faint hint of cheerful curiosity.<|endofprompt|>\n"
-    "  You are a helpful assistant. Please say it as the speaker would, lightly tinged with quiet surprise.<|endofprompt|>\n"
-    "  You are a helpful assistant. Please say it staying near the natural cadence, with a subtle wry edge.<|endofprompt|>\n"
-    "  You are a helpful assistant. Please say it close to the source delivery, with a touch of warmth.<|endofprompt|>\n"
-    "\n"
-    "Every directive MUST start with \"Please say it\" and contain at least one preserve-voice phrase such as "
-    "\"close to the speaker's natural delivery\", \"as the speaker would\", \"staying near the natural cadence\", "
-    "\"close to the source delivery\". Soften the emotional cue with phrases like "
-    "\"with a faint/subtle/gentle hint of\", \"lightly\", \"a touch of\".\n"
-    "\n"
-    "NEVER use absolutes like \"extremely\", \"very\", \"brightly\", \"firmly\", \"loudly\", \"crisply\" — those would push the synthesis away from the speaker's voice.\n"
-    "\n"
-    "How to write the directive:\n"
-    "1. Read previous_line and next_line as conversational context. Identify the flow — is current_line a reply, a reaction, a continuation, a topic shift, a punchline, an interruption, the start of a new beat?\n"
-    "2. Read current_line and identify its actual intent (joke, teasing question, warning, confession, brag, short reaction, command, apology, etc.).\n"
-    "3. Read emotion2vec.top_3_scores as a continuous mood vector with no fixed thresholds. "
-    "If one emotion clearly dominates (e.g., >= 0.6), use it as a single faint shade. "
-    "If two are comparable (e.g., 0.4 and 0.3), blend them softly. "
-    "If the top label is 'unknown' or 'other', OR no emotion is meaningfully above the others, OMIT emotion entirely and output only \"Please say it close to the speaker's natural delivery.\"\n"
-    "4. Reconcile context with emotion. If emotion2vec says 'happy' but previous_line was a sad confession and current_line is a quiet reply, the conversational flow OVERRIDES the raw emotion score — pick a tone that fits the scene.\n"
-    "5. Keep the directive 6-16 words, single sentence.\n"
-    "6. English only. No Korean/Chinese/Japanese characters.\n"
-    "7. Do not quote any text. Do not include character names. Do not request filler sounds, breath, or extra wording.\n"
-    "8. Direct only HOW it is spoken (mood, tonal color, restraint), not what it means.\n"
-    "9. Output exactly: {\"instruct_text\": \"You are a helpful assistant. Please say it ...<|endofprompt|>\"}"
+    """You design CosyVoice3 instruct_text directives for film dubbing.
+
+GOAL — make each line sound true to the scene's dramatic situation. The dub must carry the real emotional intensity of the moment: an urgent scene must sound urgent, a panicked line panicked, a furious line furious, a tender line tender. The reference audio keeps the speaker recognizable; your directive supplies the emotional delivery, and for high-stakes moments it SHOULD push hard.
+
+Return only a minified JSON object: {"instruct_text": "..."}.
+
+REQUIRED OUTPUT FORMAT (single line, English only):
+  You are a helpful assistant. Please say it <delivery directive>.<|endofprompt|>
+
+The exact prefix "You are a helpful assistant." is mandatory — CosyVoice was trained with this trigger and behaves out-of-distribution without it. The directive must start with "Please say it".
+
+DIRECTIVE STYLE — the single biggest lever (verified by A/B on real CosyVoice3 output):
+LEAD with an explicit emotion word + an intensity adverb, THEN add at most ONE short acoustic clause (pace: slow/measured/rapid/breathless; volume: soft/hushed/loud; pitch & energy: low/flat/sharp). Form: "very <emotion>, <one acoustic clause>". This matches CosyVoice3's training distribution ('say it very angrily / very sadly / very happily') and lands FAR stronger than abstract metaphor. Abstract-only directives (e.g. 'with heavy sorrowful weight') under-fire; a named emotion + 'very' fires hard.
+
+GRADED INTENSITY — calibrate to the moment; do NOT flatten, do NOT overact:
+  - calm / ordinary: 'calmly and evenly, in a natural conversational tone' (no intensity adverb).
+  - warm / tender: 'gently and warmly, soft and sincere'.
+  - high-stakes (fear, fury, grief, desperate plea, urgent command): use 'very' (or 'as ... as possible') and push hard. Reserve the STRONGEST forms for fear / anger / sadness — they fade most on emotionally neutral target text.
+
+Examples (named emotion + intensity + one acoustic clause):
+  You are a helpful assistant. Please say it very frightened and frantic, breathless and fast.<|endofprompt|>
+  You are a helpful assistant. Please say it very angrily, hard and forceful, sharp and loud.<|endofprompt|>
+  You are a helpful assistant. Please say it very sadly, heavy and sorrowful, slow and low.<|endofprompt|>
+  You are a helpful assistant. Please say it very happily, bright and lively.<|endofprompt|>
+  You are a helpful assistant. Please say it calmly and evenly, in a natural conversational tone.<|endofprompt|>
+
+How to write the directive:
+1. Read scene_dialogue to grasp the overall situation and stakes of the whole scene (e.g., a medical emergency, a chase, a heated argument, a tender moment). Let that set the baseline intensity.
+2. Read previous_line and next_line for conversational flow, and current_line for its intent (command, warning, plea, confession, reaction, taunt, question, apology).
+3. Treat emotion2vec.top_3_scores as a NOISY acoustic hint, NOT ground truth. It frequently mislabels loud or urgent speech as 'happy' or 'neutral'. When the text and scene clearly imply urgency, fear, anger, panic, or pleading, TRUST THE TEXT AND SCENE and override the acoustic label. Only lean on the acoustic label when the text is ambiguous.
+4. Write ONE directive in the DIRECTIVE STYLE above: lead with the emotion word + intensity, then at most one acoustic clause. 6-14 words, single sentence.
+5. English only. No Korean/Chinese/Japanese characters — CosyVoice3 does NOT understand directives in the output language (Korean/Chinese instruct was A/B-verified to weaken or break the delivery); English is required.
+6. Direct only HOW it is spoken (mood, energy, pace, force) — not what it means. Do not quote any text, do not include character names, do not request filler sounds, breaths, or extra wording.
+7. Output exactly: {"instruct_text": "You are a helpful assistant. Please say it ...<|endofprompt|>"}"""
 )
 
 
@@ -214,8 +211,17 @@ def _build_batch_user_prompt(rows: list[dict[str, Any]], all_rows: list[dict[str
                 },
             }
         )
+    # scene_dialogue: 전체 장면 대본 (system_prompt 규칙 #1 이 참조 — 장면 전체 상황/긴장도 파악용)
+    scene_rows = all_rows if all_rows else rows
+    scene_dialogue = [
+        {"chunk_id": str(r.get("chunk_id", "") or ""),
+         "line": _normalize_text(str(r.get("text_src", "") or ""))}
+        for r in scene_rows
+        if _normalize_text(str(r.get("text_src", "") or ""))
+    ]
     payload = {
         "task": "For each item, produce ONE instruct_text following the format described in the system prompt.",
+        "scene_dialogue": scene_dialogue,
         "output_schema": {
             "items": [
                 {
@@ -274,7 +280,7 @@ def _generate_instruction_batch_with_llm(
         base_url=base_url,
         endpoint=endpoint,
         model_name=model_name,
-        timeout_sec=min(max(1, timeout_sec), 20),
+        timeout_sec=min(max(1, timeout_sec), 120),  # 문서 정본 프롬프트(scene_dialogue+긴 system)는 응답이 길어 20s 캡이면 타임아웃→fallback. translate(120s)와 동일 상한.
         response_format_json=True,
         system_prompt_override=_SYSTEM_PROMPT,
         user_prompt_override=_build_batch_user_prompt(rows, all_rows=all_rows),

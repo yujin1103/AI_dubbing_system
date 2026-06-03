@@ -362,11 +362,14 @@ def _build_context_refinement_messages(
             "4. Keep each line concise, speakable, and suitable for dubbed performance in the target language.\n"
             "5. Prefer idiomatic spoken Korean over stiff or explanatory wording.\n"
             "6. Keep names and world-specific terms consistent across the scene.\n"
-            "7. Avoid random shifts between 존댓말 and 반말 unless context clearly requires it.\n"
-            "8. If ASR wording is noisy or fragmentary, repair only when the surrounding context strongly supports it. Do not invent new plot facts.\n"
-            "9. Treat the output as a performance script: every number, date, unit, price, and abbreviation must be written exactly the way a voice actor would pronounce it aloud, not as Arabic digits or written shorthand.\n"
-            "10. If a source line is empty, return an empty string for that line.\n"
-            "11. Output JSON only. No markdown, explanations, or extra keys."
+            "7. SPLIT SENTENCES: a source line is often ONE fragment of a sentence that continues in the previous or next line. Translate each fragment so it is a clean, deliverable Korean piece that connects naturally with its neighbours — never leave a dangling subject with no predicate, or a bare noun where the line needs a verb. Keep the SAME register and tense across all fragments of one sentence.\n"
+            "8. Avoid random shifts between 존댓말 and 반말 unless context clearly requires it; a sentence continued across chunks must NOT change register mid-way.\n"
+            "9. Choose the context-correct word sense — do not pick a wrong homonym (e.g. biological 'rebirth' after surviving a life stage is 거듭남/재탄생, NOT 환생/reincarnation).\n"
+            "10. Keep essential arguments (objects such as 나를/날, 그를) when dropping them makes the line unclear or sound truncated.\n"
+            "11. If ASR wording is noisy or fragmentary, repair only when the surrounding context strongly supports it. Do not invent new plot facts.\n"
+            "12. Treat the output as a performance script: every number, date, unit, price, and abbreviation must be written exactly the way a voice actor would pronounce it aloud, not as Arabic digits or written shorthand.\n"
+            "13. If a source line is empty, return an empty string for that line.\n"
+            "14. Output JSON only. No markdown, explanations, or extra keys."
             + _extra_prompt_rules(target_label)
         )
 
