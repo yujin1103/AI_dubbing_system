@@ -174,7 +174,23 @@ def _diarization_stabilization_enabled(config: dict) -> bool:
     return bool(deep_get(config, ("diarization", "stabilization", "enabled"), False))
 
 
+def _preserved_repair_enabled(config: dict) -> bool:
+    return bool((deep_get(config, ("preserved_repair",)) or {}).get("enabled", False))
+
+
+def _diarization_gapfilled_json(config: dict) -> str:
+    # gapfilled 는 raw diarization.json 을 덮어쓰지 않고 별도 파일에 쓴다(부분 재실행 시 9패치 이중적용 방지).
+    raw = require_value(config, ("paths", "diarization_json"))
+    p = Path(raw)
+    return str(p.with_name(p.stem + "_gapfilled" + p.suffix))
+
+
 def _diarization_json_for_merge(config: dict) -> str:
+    # preserved_repair 시 검증된 gapfilled 를 우선 사용(없으면 raw/stabilized fallback).
+    if _preserved_repair_enabled(config):
+        gf = _diarization_gapfilled_json(config)
+        if Path(resolve_project_path(gf)).exists():
+            return gf
     if _diarization_stabilization_enabled(config):
         return require_value(config, ("paths", "diarization_stabilized_json"))
     return require_value(config, ("paths", "diarization_json"))
@@ -318,7 +334,7 @@ def step_apply_preserved_repair(config: dict) -> None:
     apply_all(
         str(resolve_project_path(run_dir)),
         gap_fill_args={
-            "main_merge": float(gf.get("main_merge", 0.45)),
+            "main_merge": float(gf.get("main_merge", 0.99)),
             "bg_merge": float(gf.get("bg_merge", 0.30)),
             "sim_match": float(gf.get("sim_match", 0.45)),
             "pad": float(gf.get("pad", 0.5)),
@@ -346,9 +362,10 @@ def step_apply_gapfilled(config: dict) -> None:
         if _diarization_stabilization_enabled(config)
         else None
     )
+    # raw diarization.json 은 보존(부분 재실행 시 9패치 이중적용 방지) → gapfilled 는 별도 파일로.
     apply_gapfilled_to_diarization(
         str(resolve_project_path(run_dir)),
-        require_value(config, ("paths", "diarization_json")),
+        _diarization_gapfilled_json(config),
         stabilized_json=stabilized,
     )
 

@@ -31,7 +31,6 @@ from __future__ import annotations
 import argparse
 import os
 import subprocess
-import sys
 from pathlib import Path
 from typing import Iterable
 
@@ -80,14 +79,14 @@ def apply_all(
         print(f"\n[run] {name}: {' '.join(cmd)}")
         rc = subprocess.run(cmd).returncode
         if rc != 0:
-            raise SystemExit(f"patch {name!r} failed (rc={rc})")
+            raise RuntimeError(f"patch {name!r} failed (rc={rc})")
     print("\n[done] all patches applied")
 
 
 def build_arg_parser() -> argparse.ArgumentParser:
     ap = argparse.ArgumentParser(description=__doc__.split("\n\n", 1)[0])
     ap.add_argument("run_dir")
-    ap.add_argument("--main-merge", type=float, default=0.45,
+    ap.add_argument("--main-merge", type=float, default=0.99,
                     help="gap_fill main cluster merge threshold (cosine)")
     ap.add_argument("--bg-merge", type=float, default=0.30,
                     help="gap_fill BG cluster merge threshold (cosine)")

@@ -121,7 +121,7 @@ def split_groups(groups, clusters, words):
         # snap cut points to word gaps
         c0 = _snap(intr[0], words, gs, ge)
         c1 = _snap(intr[1], words, gs, ge)
-        c0 = min(max(c0, gs + MIN_SUB * 0), ge); c1 = min(max(c1, gs), ge)
+        c0 = min(max(c0, gs), ge); c1 = min(max(c1, gs), ge)
         cuts = sorted(set(round(x, 3) for x in [gs, c0, c1, ge] if gs <= x <= ge))
         if len(cuts) < 3:
             out.append(g); continue

@@ -554,7 +554,7 @@ def cluster_faces_in_run(
         save_json(diar, output_remapped_json)
         return {"chunks": len(chunk_videos), "tracks": 0, "remapped_segments": 0}
 
-    _faces_out = str(Path(output_face_clusters_json).parent / "faces.json")
+    _faces_out = str(resolve_project_path(str(Path(output_face_clusters_json).parent / "faces.json")))
     face_clusters = _cluster_face_tracks(all_tracks, face_sim_threshold,
                                          faces_out=_faces_out, fps=all_fps)
     spk_dominant = _compute_dominant_speaker(

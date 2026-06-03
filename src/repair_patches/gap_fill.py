@@ -200,13 +200,13 @@ def main(run_dir: str):
 
         # === gap 검출 ===
         gaps = []
-        if groups[0]["group_start"] > GAP_MIN:
+        if groups and groups[0]["group_start"] > GAP_MIN:
             gaps.append((0.0, groups[0]["group_start"]))
         for i in range(len(groups)-1):
             g0, g1 = groups[i]["group_end"], groups[i+1]["group_start"]
             if g1 - g0 >= GAP_MIN:
                 gaps.append((g0, g1))
-        if total_dur - groups[-1]["group_end"] >= GAP_MIN:
+        if groups and total_dur - groups[-1]["group_end"] >= GAP_MIN:
             gaps.append((groups[-1]["group_end"], total_dur))
 
         new_segs = []

@@ -71,7 +71,7 @@ def _build_voice_probe(vocals_path, voice):
     os.environ.setdefault("HF_HUB_OFFLINE", "1")
     try:
         import soundfile as sf
-        sys.path.insert(0, "/workspace/src/daemons")
+        sys.path.insert(0, os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "daemons"))
         from eres2netv2_helper import get_eres2netv2_model, extract_eres2netv2_emb
         get_eres2netv2_model()
         y, sr = sf.read(vocals_path)
