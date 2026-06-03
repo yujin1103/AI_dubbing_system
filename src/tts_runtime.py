@@ -854,6 +854,19 @@ def initialize_tts_session(
     )
 
 
+_HANGUL_SYL_RE = re.compile(r"[가-힣]")
+
+
+def _is_short_interjection(translated_text: str) -> bool:
+    """단음절 감탄사("아"/"어", 원문 "Oh"/"Ah") 판별. 한글 음절 1개면 True.
+
+    CosyVoice3 는 1음소(단모음) 텍스트를 안정적으로 합성 못해 중국어/영어로 샘
+    (언어지시 请用韩语说 로도 해결 안 됨 — 물리적 한계). 이런 청크는 화자 원본
+    오디오를 passthrough 하는 게 자연스럽다(감탄사는 언어 보편적). 2음절 이상은 TTS.
+    """
+    return len(_HANGUL_SYL_RE.findall(translated_text or "")) == 1
+
+
 def process_chunk(row: dict[str, Any], *, config: TtsRuntimeConfig, session: TtsSession) -> None:
     translated_text, _ = _resolve_tts_text(row)
     output_wav = resolve_project_path(row["dub_wav"])
@@ -863,6 +876,17 @@ def process_chunk(row: dict[str, Any], *, config: TtsRuntimeConfig, session: Tts
 
     if _should_skip_existing(row, output_wav, skip_existing=config.skip_existing):
         return
+    # 단음절 감탄사("아"/"어")는 CosyVoice 가 합성 실패(중국어로 샘) → 화자 원본 오디오 passthrough.
+    if _is_short_interjection(translated_text):
+        src_wav = resolve_project_path(row.get("wav") or "")
+        if src_wav.exists():
+            if temp_output_wav.exists():
+                temp_output_wav.unlink()
+            copy_file(src_wav, output_wav)
+            _finalize_chunk_success(row, output_wav, runtime_settings=config.runtime_settings)
+            row["dub_passthrough_interjection"] = True
+            logger.info("Passthrough source audio for short interjection %s (text=%r)", row["chunk_id"], translated_text)
+            return
     if row.get("dub_stale") and output_wav.exists():
         logger.info("Regenerating stale dub wav for %s: %s", row["chunk_id"], output_wav)
     if temp_output_wav.exists():
