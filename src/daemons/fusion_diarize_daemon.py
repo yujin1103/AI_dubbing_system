@@ -54,7 +54,10 @@ PYANNOTE2_URL = os.environ.get("FUSION_PYANNOTE2_URL", "")   # 4th model (3.1)
 VBX_URL = os.environ.get("FUSION_VBX_URL", "")               # 5th model (BUT-FIT VBx)
 
 
-def _call_daemon(url: str, vocals_wav: str, num_speakers, min_duration: float, timeout: int = 300):
+def _call_daemon(url: str, vocals_wav: str, num_speakers, min_duration: float,
+                 timeout: int = int(os.environ.get("FUSION_SUBDAEMON_TIMEOUT", "600"))):
+    # DETERMINISM FIX (2026-06-03): timeout 300→600. DiariZen(WavLM-large)이 이 입력에서
+    # ~288s 걸려 300s 경계를 가끔 넘겨 drop→fusion 비결정+품질저하. 600s 여유로 항상 완료.
     try:
         r = requests.post(
             f"{url}/diarize",
@@ -268,17 +271,18 @@ def diarize(req: DiarizeRequest):
     # PARALLEL_FUSION_PATCH: call all sub-daemons concurrently (was sequential).
     # Each daemon is its own process/GPU, so concurrent calls just overlap HTTP latency.
     # Reduces total wait from sum(times) to max(times).
-    from concurrent.futures import ThreadPoolExecutor, as_completed
     backends = [("diarizen", DIARIZEN_URL, True), ("nemo", NEMO_URL, True)]
     if PYANNOTE_URL:  backends.append(("pyannote_c1", PYANNOTE_URL, False))
     if PYANNOTE2_URL: backends.append(("pyannote_3_1", PYANNOTE2_URL, False))
     if VBX_URL:       backends.append(("vbx", VBX_URL, False))
+    # DETERMINISM FIX (2026-06-03): sub-daemon 을 순차 호출.
+    # 동시호출(이전 PARALLEL_FUSION_PATCH)은 GPU 경합으로 DiariZen(무거운 WavLM)이
+    # 간헐적 300s timeout → _call_daemon 이 None 반환 → dz=0 으로 silently drop →
+    # fusion 결과 비결정(31↔33) + 품질저하(4-way 가 사실상 3-way). 순차 = 경합 없음
+    # → 모든 backend 안정 완료 → 결정적 + 항상 full N-way. (검증: 순차 sub-daemon 호출 결정적)
     results = {}
-    with ThreadPoolExecutor(max_workers=len(backends)) as ex:
-        futs = {ex.submit(_call_daemon, url, req.vocals_wav, req.num_speakers, req.min_duration): name
-                for name, url, _ in backends}
-        for fut in as_completed(futs):
-            results[futs[fut]] = fut.result()
+    for name, url, _ in backends:
+        results[name] = _call_daemon(url, req.vocals_wav, req.num_speakers, req.min_duration)
     diarizen_segs   = results.get("diarizen")
     nemo_segs       = results.get("nemo")
     pyannote_segs   = results.get("pyannote_c1")
