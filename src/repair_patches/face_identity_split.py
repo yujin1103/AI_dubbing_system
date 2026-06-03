@@ -238,6 +238,39 @@ def decompose(voice, tracks, voice_probe=None):
             continue
         extra.append(c)
 
+    # v3 additive (2026-06-03): recover the DOMINANT face of a multi-face voice catch-all.
+    # gate-220 skips a cluster whose face == its voice-speaker's representative face (cos~1.0).
+    # Correct for a CLEAN single speaker (man1: his face IS his own), but WRONG when the
+    # voice-speaker is a CATCH-ALL holding several distinct people: the catch-all's repr face
+    # is just its DOMINANT member (e.g. sean), so gate-220 wrongly skips that member while
+    # minting the others (paramedic, etc). Signal vb is a catch-all = >=1 OTHER distinct face
+    # already minted under the same vb. Then the skipped dominant face is also a distinct
+    # person -> mint it. Clean speakers (no other face minted under their vb) are untouched.
+    if os.environ.get("FID_CATCHALL_DOMFACE_MINT", "1") not in ("0", "false", "False"):
+        def _vb_of(cc):
+            best = None
+            for spk in spks:
+                o = sum(ov(a, b, v["s"], v["e"]) for a, b in cc["spans"] for v in voice if v["spk"] == spk)
+                if o > 0 and (best is None or o > best[0]):
+                    best = (o, spk)
+            return best[1] if best else None
+        _minted_vb = Counter(_vb_of(c) for c in extra)
+        _extra_ids = {c["id"] for c in extra}
+        for c in fclus:
+            if c["id"] in _extra_ids or c["asd"] < V1_ASD or c["dur"] < 0.4 or c["cohes"] < COHES:
+                continue
+            vbc = _vb_of(c)
+            vfc = spk_face.get(vbc)
+            # require >=2 OTHER distinct faces already minted under vb = STRONG multi-person
+            # catch-all (>=3 people: dominant + 2). minted_under=1 is ambiguous (reverse-shot
+            # pair) → don't mint (avoids test6 GT-less over-split). test4 SPEAKER_03=2 → minted.
+            _min_others = int(os.environ.get("FID_CATCHALL_MIN_OTHERS", "2"))
+            if vfc is not None and cos(c["emb"], vfc) >= SPLIT_TH and _minted_vb.get(vbc, 0) >= _min_others:
+                if DEBUG:
+                    print("    [catchall-domface] mint c%d (vb=%s catch-all, minted_under=%d)" % (
+                        c["id"], vbc, _minted_vb.get(vbc, 0)))
+                extra.append(c)
+
     def dom_extra(s, e):
         best = None
         for c in extra:
