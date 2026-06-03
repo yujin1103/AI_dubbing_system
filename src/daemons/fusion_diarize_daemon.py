@@ -275,14 +275,18 @@ def diarize(req: DiarizeRequest):
     if PYANNOTE_URL:  backends.append(("pyannote_c1", PYANNOTE_URL, False))
     if PYANNOTE2_URL: backends.append(("pyannote_3_1", PYANNOTE2_URL, False))
     if VBX_URL:       backends.append(("vbx", VBX_URL, False))
-    # DETERMINISM FIX (2026-06-03): sub-daemon 을 순차 호출.
-    # 동시호출(이전 PARALLEL_FUSION_PATCH)은 GPU 경합으로 DiariZen(무거운 WavLM)이
-    # 간헐적 300s timeout → _call_daemon 이 None 반환 → dz=0 으로 silently drop →
-    # fusion 결과 비결정(31↔33) + 품질저하(4-way 가 사실상 3-way). 순차 = 경합 없음
-    # → 모든 backend 안정 완료 → 결정적 + 항상 full N-way. (검증: 순차 sub-daemon 호출 결정적)
+    # SPEED+DETERMINISM (2026-06-03): PARALLEL sub-daemon calls (wall = max, not sum) WITH
+    # _call_daemon timeout=600s. The non-determinism was the 300s timeout-DROP of DiariZen
+    # (~288s, slower under GPU contention) → dz=0 silently → fusion 비결정+품질저하. NOT
+    # GPU-math (sub-daemons deterministic in isolation). 600s 여유로 DiariZen이 경합에도
+    # 항상 완료 → drop 없음 → 결정적 + 항상 full N-way + 빠름. (3회 동일 검증)
+    from concurrent.futures import ThreadPoolExecutor, as_completed
     results = {}
-    for name, url, _ in backends:
-        results[name] = _call_daemon(url, req.vocals_wav, req.num_speakers, req.min_duration)
+    with ThreadPoolExecutor(max_workers=len(backends)) as ex:
+        futs = {ex.submit(_call_daemon, url, req.vocals_wav, req.num_speakers, req.min_duration): name
+                for name, url, _ in backends}
+        for fut in as_completed(futs):
+            results[futs[fut]] = fut.result()
     diarizen_segs   = results.get("diarizen")
     nemo_segs       = results.get("nemo")
     pyannote_segs   = results.get("pyannote_c1")
