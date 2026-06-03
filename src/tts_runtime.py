@@ -318,6 +318,33 @@ def _language_token_for_target_language(target_language: str) -> str:
     return ""
 
 
+def _chinese_language_directive(target_language: str) -> str:
+    """CosyVoice3 instruct2 출력 언어를 강제하는 중국어 자연어 지시(예 '请用韩语说。').
+
+    CosyVoice3 의 언어/방언 제어는 중국어로 학습됨(README: '请用广东话表达'). 따라서
+    <|ko|> 특수토큰(토크나이저에 없어 'ko' 로 읽힘)이 아니라 '请用韩语说。' 같은 중국어
+    지시문을 instruct 앞에 끼우면 음성 LM 생성단계가 해당 언어 운율로 조건화된다.
+    이게 없으면 짧은 한국어 텍스트가 모델 기본값(중국어/영어) 운율로 새는 문제 발생.
+    """
+    normalized = (target_language or "").strip().lower()
+    if normalized in {"ko", "korean"} or "korea" in normalized:
+        return "请用韩语说。"
+    if normalized in {"ja", "jp", "japanese"} or "japan" in normalized:
+        return "请用日语说。"
+    if normalized in {"en", "english"}:
+        return "请用英语说。"
+    if normalized in {"es", "spanish"}:
+        return "请用西班牙语说。"
+    if normalized in {"fr", "french"}:
+        return "请用法语说。"
+    if normalized in {"de", "german"}:
+        return "请用德语说。"
+    if normalized in {"yue", "cantonese"}:
+        return "请用广东话说。"
+    # 중국어 타깃이거나 미지 언어면 지시 없음(모델 기본)
+    return ""
+
+
 def _build_cross_lingual_text(
     tts_text: str,
     system_prompt: str,
@@ -1027,9 +1054,21 @@ def _run_cosyvoice_inference(
                 )
             row.pop("tts_instruct_applied", None)
         elif inputs.instruct_text:
+            # cross-lingual(영어화자→한국어 등): instruct 에 중국어 언어지시('请用韩语说。')를
+            # 프리픽스 뒤·감정절 앞에 끼워 출력 언어를 강제한다. 없으면 짧은 텍스트가
+            # 모델 기본 언어(중국어/영어) 운율로 샘. (tts_text 한국어는 건드리지 않음)
+            _instruct = inputs.instruct_text
+            if config.use_cross_lingual:
+                _lang_dir = _chinese_language_directive(config.target_language)
+                if _lang_dir and _lang_dir not in _instruct:
+                    _prefix = "You are a helpful assistant."
+                    if _instruct.startswith(_prefix):
+                        _instruct = f"{_prefix} {_lang_dir}{_instruct[len(_prefix):].lstrip()}"
+                    else:
+                        _instruct = f"{_lang_dir}{_instruct}"
             result_iterator = session.cosyvoice.inference_instruct2(
                 inputs.translated_text,
-                inputs.instruct_text,
+                _instruct,
                 str(inputs.prompt_audio_for_tts),
                 stream=config.stream,
                 speed=config.speed,
