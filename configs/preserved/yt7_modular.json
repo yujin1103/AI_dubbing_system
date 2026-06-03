@@ -33,10 +33,10 @@
     "final_bitrate": "192k"
   },
   "models": {
-    "asr": "models/asr/Qwen3-ASR-1.7B",
-    "tts": "models/tts/Fun-CosyVoice3-0.5B",
+    "asr": "/workspace/media/model_cache/huggingface/hub/models--Qwen--Qwen3-ASR-1.7B/snapshots/7278e1e70fe206f11671096ffdd38061171dd6e5",
+    "tts": "media/model_cache/modelscope/hub/FunAudioLLM/Fun-CosyVoice3-0.5B-2512",
     "cosyvoice_repo": "third_party/CosyVoice",
-    "emotion": "models/emotion/emotion2vec-large"
+    "emotion": "iic/emotion2vec_plus_large"
   },
   "runtime": {
     "device": "cuda:0",
@@ -98,6 +98,7 @@
   },
   "tts": {
     "engine": "cosyvoice",
+    "prewarm": true,
     "passthrough_on_copy_source": true,
     "min_prompt_sec": 3.0,
     "speed": 1.0,

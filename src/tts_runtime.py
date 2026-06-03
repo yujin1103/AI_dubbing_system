@@ -4,6 +4,7 @@ import importlib.util
 import re
 import shutil
 import sys
+import threading
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -23,6 +24,69 @@ from quality_gate import assess_reference_candidate, assess_tts_output, attach_s
 from reference_policy import build_speaker_reference_bank, choose_reference_for_row
 
 logger = get_logger("run_tts")
+
+# === CosyVoice 모델 캐시 + 프리워밍 ===========================================
+# 모델 로드(~47s)는 run_tts 시작에서 직렬 수행되어 그 직전 네트워크 LLM
+# (translate+instruct, GPU idle) 동안 GPU가 놀게 된다. prewarm_cosyvoice_model 을
+# 백그라운드 스레드로 미리 호출하면 로드를 네트워크 LLM 시간 아래로 숨긴다.
+# 캐시된 모델 객체를 재사용하므로 합성 결과는 byte-identical(무손실).
+_MODEL_CACHE: dict[str, Any] = {}
+_MODEL_CACHE_LOCK = threading.Lock()
+
+
+def _load_cosyvoice_model(model_dir: str | Path, cosyvoice_repo: str | Path | None):
+    """CosyVoice 모델만 로드(캐시 미사용). prewarm 과 세션 초기화 양쪽에서 호출."""
+    if not cosyvoice_repo:
+        raise RuntimeError("CosyVoice repo path is required")
+    _prepare_cosyvoice_imports(cosyvoice_repo)
+    _validate_whisper_package()
+    try:
+        from cosyvoice.cli.cosyvoice import AutoModel, CosyVoice3
+    except ImportError as exc:
+        raise RuntimeError(
+            f"CosyVoice import failed: {exc}. "
+            "The repo path is visible, but a required dependency is missing in the active environment."
+        ) from exc
+    import os as _os
+    _md = str(resolve_project_path(model_dir))
+    # AutoModel 은 cosyvoice2.yaml 을 먼저 감지해 CosyVoice2 로 오판(이 모델은 v2/v3 yaml 둘 다 보유).
+    # cosyvoice_daemon 과 동일하게 cosyvoice3.yaml 있으면 CosyVoice3 강제(instruct2 감정 경로 보존).
+    if _os.path.exists(_os.path.join(_md, "cosyvoice3.yaml")):
+        return CosyVoice3(_md)
+    return AutoModel(model_dir=_md)
+
+
+def _get_cosyvoice_model(model_dir: str | Path, cosyvoice_repo: str | Path | None):
+    """캐시된 CosyVoice 모델 반환(없으면 로드+캐시). thread-safe.
+
+    prewarm 스레드가 로드 중이면 lock 에서 대기 → 중복 로드 없음.
+    """
+    key = str(resolve_project_path(model_dir))
+    with _MODEL_CACHE_LOCK:
+        model = _MODEL_CACHE.get(key)
+        if model is None:
+            import time as _t
+            _t0 = _t.time()
+            logger.info("Loading CosyVoice model (%s)...", key)
+            model = _load_cosyvoice_model(model_dir, cosyvoice_repo)
+            _MODEL_CACHE[key] = model
+            logger.info("CosyVoice model loaded (%.1fs)", _t.time() - _t0)
+        else:
+            logger.info("Reusing prewarmed CosyVoice model (%s)", key)
+        return model
+
+
+def prewarm_cosyvoice_model(model_dir: str | Path, cosyvoice_repo: str | Path | None) -> None:
+    """백그라운드 프리워밍 진입점 — translate/instruct(네트워크) 동안 GPU 로드 오버랩.
+
+    실패해도 비치명적: run_tts 가 lazy 로드로 폴백. 결과 무손실.
+    """
+    try:
+        _get_cosyvoice_model(model_dir, cosyvoice_repo)
+        logger.info("CosyVoice prewarm complete")
+    except Exception as exc:  # noqa: BLE001 — 프리워밍 실패는 lazy 로드로 폴백
+        logger.warning("CosyVoice prewarm failed (non-fatal, lazy load will retry): %s", exc)
+
 
 COMPACT_TIMELINE_KEYS = (
     "chunk_id",
@@ -731,10 +795,9 @@ def initialize_tts_session(
 
     try:
         import soundfile as sf
-        from cosyvoice.cli.cosyvoice import AutoModel, CosyVoice3
     except ImportError as exc:
         raise RuntimeError(
-            f"CosyVoice import failed: {exc}. "
+            f"soundfile import failed: {exc}. "
             "The repo path is visible, but a required dependency is missing in the active environment."
         ) from exc
 
@@ -753,14 +816,8 @@ def initialize_tts_session(
         for row in rows
         if row.get("chunk_id")
     }
-    # AutoModel 은 cosyvoice2.yaml 을 먼저 감지해 CosyVoice2 로 오판(이 모델은 v2/v3 yaml 둘 다 보유).
-    # cosyvoice_daemon 과 동일하게 cosyvoice3.yaml 있으면 CosyVoice3 강제(instruct2 감정 경로 보존).
-    import os as _os
-    _md = str(resolve_project_path(model_dir))
-    if _os.path.exists(_os.path.join(_md, "cosyvoice3.yaml")):
-        cosyvoice = CosyVoice3(_md)
-    else:
-        cosyvoice = AutoModel(model_dir=_md)
+    # 모델 로드는 캐시 경유(프리워밍 스레드가 이미 로드했으면 즉시 재사용 → 무손실).
+    cosyvoice = _get_cosyvoice_model(model_dir, cosyvoice_repo)
     return TtsSession(
         cosyvoice=cosyvoice,
         sf=sf,

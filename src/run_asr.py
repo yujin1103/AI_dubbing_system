@@ -119,12 +119,17 @@ def transcribe_chunks(
 ) -> list[dict[str, Any]]:
     _prepare_qwen_asr_imports()
 
-    try:
-        from qwen_asr import Qwen3ASRModel
-    except ImportError as exc:
-        raise RuntimeError(
-            "qwen-asr is not installed. Install it with `pip install -U qwen-asr` or clone the repo into `third_party/Qwen3-ASR`."
-        ) from exc
+    # ASR 데몬 라우팅: 파이프라인 venv(venv_lipsync)에 qwen_asr가 없으면(멀티-venv: ASR=venv_asr)
+    # ASR 데몬(8902, venv_asr)으로 전사. env ASR_DAEMON_URL 로 강제 가능. build_repair_inputs 동일 패턴.
+    import os as _os
+    _asr_daemon = _os.environ.get("ASR_DAEMON_URL", "").strip()
+    Qwen3ASRModel = None
+    if not _asr_daemon:
+        try:
+            from qwen_asr import Qwen3ASRModel
+        except ImportError:
+            _asr_daemon = "http://127.0.0.1:8902"
+            logger.info("qwen_asr 미설치 — ASR 데몬(%s)으로 전사", _asr_daemon)
 
     chunk_records = load_json(chunk_json)
     if not chunk_records:
@@ -158,14 +163,33 @@ def transcribe_chunks(
     else:
         language_arg = [language] * len(audio_paths)
 
-    model = Qwen3ASRModel.from_pretrained(
-        str(resolve_project_path(model_dir)),
-        dtype=_resolve_torch_dtype(dtype),
-        device_map=device,
-        max_inference_batch_size=max_inference_batch_size,
-        max_new_tokens=max_new_tokens,
-    )
-    results = model.transcribe(audio=audio_paths, language=language_arg)
+    if _asr_daemon:
+        import requests as _rq
+        results = []
+        for _wav in audio_paths:
+            try:
+                _resp = _rq.post(
+                    f"{_asr_daemon}/transcribe",
+                    json={"audio_path": _wav, "language": (language or "English")},
+                    timeout=300,
+                ).json()
+                _ok = _resp.get("success", True)
+                results.append({
+                    "text": (_resp.get("text", "") if _ok else ""),
+                    "language": _resp.get("detected_language"),
+                })
+            except Exception as _e:
+                logger.warning("ASR 데몬 전사 실패 (%s): %s", _wav, _e)
+                results.append({"text": "", "language": None})
+    else:
+        model = Qwen3ASRModel.from_pretrained(
+            str(resolve_project_path(model_dir)),
+            dtype=_resolve_torch_dtype(dtype),
+            device_map=device,
+            max_inference_batch_size=max_inference_batch_size,
+            max_new_tokens=max_new_tokens,
+        )
+        results = model.transcribe(audio=audio_paths, language=language_arg)
 
     asr_rows: list[dict[str, Any]] = []
     for item, result in zip(chunk_records, results):

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import argparse
+import threading
 from pathlib import Path
 from typing import Callable
 
@@ -20,6 +21,7 @@ from rttm_to_json import convert_rttm_to_json
 from run_asr import transcribe_chunks
 from stabilize_diarization import stabilize_diarization_file
 from run_tts import synthesize_dub_chunks
+from tts_runtime import prewarm_cosyvoice_model
 from separate_audio import separate_audio
 from translate_chunks import build_translation_entries
 from validate_tts_output import validate_tts_output
@@ -382,7 +384,42 @@ def step_extract_emotion(config: dict) -> None:
     )
 
 
+_PREWARM_STARTED = False
+
+
+def _maybe_prewarm_tts(config: dict) -> None:
+    """LLM 파이프라이닝: TTS 모델(CosyVoice ~47s)을 translate/instruct(네트워크 LLM,
+    GPU idle) 동안 백그라운드 스레드로 미리 로드해 로드 시간을 숨긴다.
+
+    config tts.prewarm=true 일 때만 동작(기본 off → 기존 직렬 경로 무변경).
+    ⚠ dub-half 는 진단 데몬 언로드 후 실행되어야 VRAM 충돌 없음(run_tts 자체 전제).
+    프리워밍 실패는 비치명적(run_tts lazy 로드 폴백). 결과 byte-identical(무손실).
+    """
+    global _PREWARM_STARTED
+    if _PREWARM_STARTED:
+        return
+    if not bool(deep_get(config, ("tts", "prewarm"), False)):
+        return
+    engine = str(deep_get(config, ("tts", "engine"), "cosyvoice")).strip().lower()
+    if engine != "cosyvoice":
+        return
+    translation_mode = str(deep_get(config, ("translation", "mode"), "copy_source"))
+    if bool(deep_get(config, ("tts", "passthrough_on_copy_source"), True)) and translation_mode == "copy_source":
+        return  # passthrough 면 TTS 모델 불필요
+    model_dir = require_value(config, ("models", "tts"))
+    cosyvoice_repo = deep_get(config, ("models", "cosyvoice_repo"))
+    _PREWARM_STARTED = True
+    threading.Thread(
+        target=prewarm_cosyvoice_model,
+        args=(model_dir, cosyvoice_repo),
+        daemon=True,
+        name="cosyvoice-prewarm",
+    ).start()
+    logger.info("Started CosyVoice prewarm thread (overlap with translate/instruct network LLM)")
+
+
 def step_translate(config: dict) -> None:
+    _maybe_prewarm_tts(config)
     build_translation_entries(
         require_value(config, ("paths", "asr_json")),
         require_value(config, ("paths", "translated_json")),
