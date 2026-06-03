@@ -1,0 +1,127 @@
+{
+  "_note": "test5 MODULAR fresh — pipeline.py end-to-end (bridge build_repair_inputs -> 4-way -> 청크 dub). main_merge=0.99.",
+  "input_video": "media/input/test5.mp4",
+  "paths": {
+    "raw_audio": "audio/{input_stem}/raw.wav",
+    "dialogue_audio": "audio/{input_stem}/dialogue.wav",
+    "bgm_audio": "audio/{input_stem}/bgm.wav",
+    "diarization_rttm": "meta/{input_stem}/diarization.rttm",
+    "diarization_json": "meta/{input_stem}/diarization.json",
+    "diarization_stabilized_json": "meta/{input_stem}/diarization_stabilized.json",
+    "speaker_chunks_json": "meta/{input_stem}/speaker_chunks.json",
+    "emotion_json": "meta/{input_stem}/emotion.json",
+    "asr_json": "meta/{input_stem}/asr.json",
+    "translated_json": "meta/{input_stem}/translated.json",
+    "master_timeline_json": "meta/{input_stem}/master_timeline_{tts_engine}.json",
+    "chunks_dir": "chunks/{input_stem}",
+    "dub_dir": "dub/{input_stem}_{tts_engine}",
+    "final_dub_audio": "output/{input_stem}/final_dub_{tts_engine}.wav",
+    "output_video": "output/{input_stem}/output_{tts_engine}.mp4"
+  },
+  "audio": {
+    "sample_rate": 16000,
+    "channels": 1,
+    "source_sample_rate": 44100,
+    "source_channels": 2,
+    "chunk_source": "audio/{input_stem}/dialogue.wav",
+    "final_sample_rate": 44100,
+    "final_channels": 2,
+    "background_gain": 0.8,
+    "dub_gain": 1.0,
+    "target_peak_dbfs": -1.0,
+    "final_codec": "aac",
+    "final_bitrate": "192k"
+  },
+  "models": {
+    "asr": "models/asr/Qwen3-ASR-1.7B",
+    "tts": "models/tts/Fun-CosyVoice3-0.5B",
+    "cosyvoice_repo": "third_party/CosyVoice",
+    "emotion": "models/emotion/emotion2vec-large"
+  },
+  "runtime": {
+    "device": "cuda:0",
+    "dtype": "float16"
+  },
+  "chunking": {
+    "speaker_merge_gap_sec": 0.2,
+    "min_chunk_sec": 0.2,
+    "max_chunk_sec": 15
+  },
+  "diarization": {
+    "engine": "fusion_4way",
+    "fusion_url": "http://127.0.0.1:8903",
+    "num_speakers": null,
+    "min_duration": 0.3,
+    "fusion_timeout": 900
+  },
+  "preserved_repair": {
+    "_note": "test5 = main 4명(엄마/아빠/의사/션) + BG. main_merge=0.99(=병합 거의 안함): gap_fill MAIN_MERGE는 sim>=임계값이면 두 메인을 병합하므로, 낮으면(0.40) 덜닮은 화자도 병합돼 엄마가 의사로 흡수되고 catch-all이 사라져 S2 face-split이 무력화됨(2026-06-01 실측: 0.40→3명, 0.99→4-way 재현). sim_match 높여서 BG 분리.",
+    "enabled": true,
+    "run_dir": "media/runs/test5_modular",
+    "gap_fill": {
+      "main_merge": 0.99,
+      "bg_merge": 0.3,
+      "sim_match": 0.45,
+      "pad": 0.5
+    },
+    "skip": [],
+    "venv_python": "/opt/venv_diarizen/bin/python"
+  },
+  "asr": {
+    "boost_subchunk": {
+      "_note": "초반 0-30s 부분 3x boost + 4s window sub-chunk. test5 141 → 156 words, Adam x2 detect.",
+      "enabled": true,
+      "volume": 3.0,
+      "win_sec": 4.0,
+      "hop_sec": 3.0,
+      "area_start": 0,
+      "area_end": 30,
+      "workdir": "audio/{input_stem}/boost_subchunks"
+    }
+  },
+  "translation": {
+    "mode": "vectorengine_gpt",
+    "source_language": "English",
+    "target_language": "Korean",
+    "env_file": ".env",
+    "timeout_sec": 120,
+    "context_refine": true,
+    "context_batch_size": 12,
+    "duration_control": true,
+    "max_budget_rewrites": 2
+  },
+  "tts": {
+    "engine": "cosyvoice",
+    "passthrough_on_copy_source": true,
+    "min_prompt_sec": 3.0,
+    "speed": 1.0,
+    "style_priority": "balanced",
+    "reference_mode": "auto",
+    "fit_to_duration": true,
+    "trim_silence": true,
+    "silence_trim_threshold_dbfs": -45.0,
+    "max_leading_silence_sec": 0.1,
+    "max_trailing_silence_sec": 0.2,
+    "cap_risky_self_reference": true,
+    "prompt_cap_max_sec": 4.5
+  },
+  "_env_vars_required": {
+    "LATENTSYNC_OUTLIER_FAR_THRESH": "0.70"
+  },
+  "_bg_speaker_no_translate": {
+    "_note": "SPEAKER_BG_* 화자는 영어 원본 그대로 유지 (번역 skip). orchestrator.py _is_dialogue patch 참고.",
+    "skip_translate_pattern": "^SPEAKER_BG"
+  },
+  "pipeline": {
+    "use_separator": true,
+    "face_clustering": {
+      "enabled": true,
+      "venv_python": "/opt/venv_lipsync/bin/python",
+      "light_asd_dir": "/opt/Light-ASD",
+      "face_sim_threshold": 0.4,
+      "min_speak_score": 0.5,
+      "dominant_ratio": 0.5,
+      "min_evidence_frames": 5
+    }
+  }
+}

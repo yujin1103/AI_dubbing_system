@@ -1,0 +1,129 @@
+{
+  "_note": "test6 MODULAR fresh (GT 없음, 커버리지만). main_merge=0.99",
+  "input_video": "media/input/test6.mp4",
+  "paths": {
+    "raw_audio": "audio/{input_stem}/raw.wav",
+    "dialogue_audio": "audio/{input_stem}/dialogue.wav",
+    "bgm_audio": "audio/{input_stem}/bgm.wav",
+    "diarization_rttm": "meta/{input_stem}/diarization.rttm",
+    "diarization_json": "meta/{input_stem}/diarization.json",
+    "diarization_stabilized_json": "meta/{input_stem}/diarization_stabilized.json",
+    "speaker_chunks_json": "meta/{input_stem}/speaker_chunks.json",
+    "emotion_json": "meta/{input_stem}/emotion.json",
+    "asr_json": "meta/{input_stem}/asr.json",
+    "translated_json": "meta/{input_stem}/translated.json",
+    "master_timeline_json": "meta/{input_stem}/master_timeline_{tts_engine}.json",
+    "chunks_dir": "chunks/{input_stem}",
+    "dub_dir": "dub/{input_stem}_{tts_engine}",
+    "final_dub_audio": "output/{input_stem}/final_dub_{tts_engine}.wav",
+    "output_video": "output/{input_stem}/output_{tts_engine}.mp4"
+  },
+  "audio": {
+    "sample_rate": 16000,
+    "channels": 1,
+    "source_sample_rate": 44100,
+    "source_channels": 2,
+    "chunk_source": "audio/{input_stem}/dialogue.wav",
+    "final_sample_rate": 44100,
+    "final_channels": 2,
+    "background_gain": 0.8,
+    "dub_gain": 1.0,
+    "target_peak_dbfs": -1.0,
+    "final_codec": "aac",
+    "final_bitrate": "192k",
+    "subtractive_ensemble": {
+      "models": [
+        "model_bs_roformer_ep_317_sdr_12.9755.ckpt"
+      ],
+      "weights": [
+        1.0
+      ],
+      "model_dir": "/workspace/media/model_cache/audio_separator"
+    }
+  },
+  "models": {
+    "asr": "models/asr/Qwen3-ASR-1.7B",
+    "tts": "models/tts/Fun-CosyVoice3-0.5B",
+    "cosyvoice_repo": "third_party/CosyVoice",
+    "emotion": "models/emotion/emotion2vec-large",
+    "diarization": "fusion_4way",
+    "diarization_embedding": "fusion_4way"
+  },
+  "runtime": {
+    "device": "cuda:0",
+    "dtype": "float16"
+  },
+  "chunking": {
+    "speaker_merge_gap_sec": 0.2,
+    "min_chunk_sec": 0.2,
+    "max_chunk_sec": 15
+  },
+  "diarization": {
+    "engine": "fusion_4way",
+    "fusion_url": "http://127.0.0.1:8903",
+    "num_speakers": null,
+    "min_duration": 0.3,
+    "fusion_timeout": 900
+  },
+  "pipeline": {
+    "use_separator": true,
+    "face_clustering": {
+      "enabled": true,
+      "venv_python": "/opt/venv_lipsync/bin/python",
+      "light_asd_dir": "/opt/Light-ASD",
+      "face_sim_threshold": 0.4,
+      "min_speak_score": 0.5,
+      "dominant_ratio": 0.5,
+      "min_evidence_frames": 5
+    }
+  },
+  "preserved_repair": {
+    "_note": "8 patches — word_split + focused_nemo + visual_asd + face_cluster_match + gap_fill + postprocess",
+    "enabled": true,
+    "run_dir": "media/runs/test6_modular",
+    "gap_fill": {
+      "main_merge": 0.99,
+      "bg_merge": 0.3,
+      "sim_match": 0.1,
+      "pad": 0.5
+    },
+    "skip": [],
+    "venv_python": "/opt/venv_diarizen/bin/python"
+  },
+  "asr": {
+    "boost_subchunk": {
+      "_note": "test4 에서는 boost 비활성화 (검증된 v305f는 boost 안 씀)",
+      "enabled": false
+    }
+  },
+  "translation": {
+    "mode": "vectorengine_gpt",
+    "source_language": "English",
+    "target_language": "Korean",
+    "env_file": ".env",
+    "timeout_sec": 120,
+    "context_refine": true,
+    "context_batch_size": 12,
+    "duration_control": true,
+    "max_budget_rewrites": 2
+  },
+  "tts": {
+    "engine": "cosyvoice",
+    "_note": "CosyVoice3-0.5B inference_instruct2 + fade-in/out (fixed 2026-05-15)",
+    "passthrough_on_copy_source": true,
+    "min_prompt_sec": 3.0,
+    "speed": 1.0,
+    "style_priority": "balanced",
+    "reference_mode": "auto",
+    "fit_to_duration": true,
+    "trim_silence": true,
+    "silence_trim_threshold_dbfs": -45.0,
+    "max_leading_silence_sec": 0.1,
+    "max_trailing_silence_sec": 0.2,
+    "cap_risky_self_reference": true,
+    "prompt_cap_max_sec": 4.5
+  },
+  "_env_vars_required": {
+    "LATENTSYNC_OUTLIER_OFF": "1"
+  }
+}
