@@ -138,10 +138,22 @@ def compose_audio(
     mix = np.zeros((total_samples, channels), dtype="float32")
     if len(background_audio):
         mix[: len(background_audio)] += background_audio[:total_samples]
-    for start_index, audio in prepared:
-        end_index = min(total_samples, start_index + len(audio))
-        if end_index > start_index:
-            mix[start_index:end_index] += audio[: end_index - start_index]
+    # 겹침 가드(문서 정본): 각 더빙을 '다음 청크 시작'을 넘지 않게 캡 + 25ms 페이드아웃 → 음성 겹침 0.
+    # (일부 화자 세그먼트가 시간상 겹쳐 더빙이 다음 청크를 침범하면 목소리가 겹쳐 들리는 것을 방지)
+    prepared.sort(key=lambda item: item[0])
+    fade_samples = max(1, int(round(0.025 * sample_rate)))
+    for idx, (start_index, audio) in enumerate(prepared):
+        next_start = prepared[idx + 1][0] if idx + 1 < len(prepared) else total_samples
+        end_index = min(total_samples, start_index + len(audio), next_start)
+        seg_len = end_index - start_index
+        if seg_len <= 0:
+            continue
+        seg = audio[:seg_len].astype("float32", copy=True)
+        if seg_len < len(audio):  # 캡으로 잘렸으면 끝에 페이드아웃(클릭 방지)
+            fade = min(fade_samples, seg_len)
+            ramp = np.linspace(1.0, 0.0, fade, dtype="float32").reshape(-1, 1)
+            seg[seg_len - fade:seg_len] *= ramp
+        mix[start_index:end_index] += seg
 
     mix = _limit_peak(mix, target_peak_dbfs=target_peak_dbfs)
 
