@@ -539,9 +539,12 @@ def step_run_tts(config: dict) -> None:
 
 
 def step_validate_tts(config: dict) -> None:
+    # 문서 정본: validate_tts 는 기본 비활성("옵션 ASR 재검증"). 기본 활성이면 ASR 데몬이
+    # 내려간 상태(예: dub-half TTS 위해 진단 데몬 정지)에서 전사가 빈값→전 청크 false-fail→
+    # dub_stale 표시→compose 가 목소리 drop(무음). 켜려면 tts.validation.enabled=true 명시.
     validation_config = deep_get(config, ("tts", "validation"), {}) or {}
-    if not bool(deep_get(config, ("tts", "validation", "enabled"), True)):
-        logger.info("Skipping TTS ASR validation because tts.validation.enabled=false")
+    if not bool(deep_get(config, ("tts", "validation", "enabled"), False)):
+        logger.info("Skipping TTS ASR validation (tts.validation.enabled 미설정 — 문서상 기본 비활성)")
         return
     master_timeline_json = str(require_value(config, ("paths", "master_timeline_json")))
     output_json = deep_get(config, ("paths", "tts_validation_json"))
