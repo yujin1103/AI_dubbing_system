@@ -1,0 +1,105 @@
+{
+  "_note": "kdrama_test(한국어) → 영어 더빙. 단일 DiariZen 데몬(8903) diarize, separator/face/repair OFF(새 영상 robust), f0_guard.",
+  "input_video": "media/input/kdrama_test.mp4",
+  "paths": {
+    "raw_audio": "audio/{input_stem}/raw.wav",
+    "dialogue_audio": "audio/{input_stem}/dialogue.wav",
+    "bgm_audio": "audio/{input_stem}/bgm.wav",
+    "diarization_rttm": "meta/{input_stem}/diarization.rttm",
+    "diarization_json": "meta/{input_stem}/diarization.json",
+    "diarization_stabilized_json": "meta/{input_stem}/diarization_stabilized.json",
+    "speaker_chunks_json": "meta/{input_stem}/speaker_chunks.json",
+    "emotion_json": "meta/{input_stem}/emotion.json",
+    "asr_json": "meta/{input_stem}/asr.json",
+    "translated_json": "meta/{input_stem}/translated_en.json",
+    "master_timeline_json": "meta/{input_stem}/master_timeline_{tts_engine}_en.json",
+    "chunks_dir": "chunks/{input_stem}",
+    "dub_dir": "dub/{input_stem}_{tts_engine}_en",
+    "final_dub_audio": "output/{input_stem}/final_dub_{tts_engine}_en.wav",
+    "output_video": "output/{input_stem}/output_{tts_engine}_en.mp4"
+  },
+  "audio": {
+    "sample_rate": 16000,
+    "channels": 1,
+    "source_sample_rate": 44100,
+    "source_channels": 2,
+    "chunk_source": "audio/{input_stem}/dialogue.wav",
+    "final_sample_rate": 44100,
+    "final_channels": 2,
+    "background_gain": 0.3,
+    "dub_gain": 1.0,
+    "target_peak_dbfs": -1.0,
+    "final_codec": "aac",
+    "final_bitrate": "192k"
+  },
+  "models": {
+    "asr": "/workspace/media/model_cache/huggingface/hub/models--Qwen--Qwen3-ASR-1.7B/snapshots/7278e1e70fe206f11671096ffdd38061171dd6e5",
+    "tts": "media/model_cache/modelscope/hub/FunAudioLLM/Fun-CosyVoice3-0.5B-2512",
+    "cosyvoice_repo": "/opt/CosyVoice",
+    "emotion": "iic/emotion2vec_plus_large"
+  },
+  "runtime": {
+    "device": "cuda:0",
+    "dtype": "float16"
+  },
+  "chunking": {
+    "speaker_merge_gap_sec": 0.2,
+    "min_chunk_sec": 0.2,
+    "max_chunk_sec": 15
+  },
+  "diarization": {
+    "engine": "fusion_4way",
+    "fusion_url": "http://127.0.0.1:8903",
+    "num_speakers": null,
+    "min_duration": 0.3,
+    "fusion_timeout": 900
+  },
+  "pipeline": {
+    "use_separator": true,
+    "face_clustering": {
+      "enabled": false
+    }
+  },
+  "preserved_repair": {
+    "enabled": false
+  },
+  "asr": {
+    "language": "Korean",
+    "boost_subchunk": {
+      "enabled": false
+    }
+  },
+  "translation": {
+    "mode": "vectorengine_gpt",
+    "source_language": "Korean",
+    "target_language": "English",
+    "env_file": ".env",
+    "timeout_sec": 120,
+    "context_refine": true,
+    "context_batch_size": 12,
+    "duration_control": true,
+    "max_budget_rewrites": 2
+  },
+  "tts": {
+    "engine": "cosyvoice",
+    "prewarm": false,
+    "pipelined": false,
+    "f0_guard": true,
+    "f0_guard_attempts": 6,
+    "passthrough_on_copy_source": true,
+    "min_prompt_sec": 3.0,
+    "speed": 1.0,
+    "style_priority": "balanced",
+    "reference_mode": "auto",
+    "fit_to_duration": true,
+    "trim_silence": true,
+    "silence_trim_threshold_dbfs": -45.0,
+    "max_leading_silence_sec": 0.1,
+    "max_trailing_silence_sec": 0.2,
+    "cap_risky_self_reference": true,
+    "prompt_cap_max_sec": 4.5
+  },
+  "_env_vars_required": {
+    "LATENTSYNC_OUTLIER_OFF": "1"
+  }
+}
