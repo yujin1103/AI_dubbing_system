@@ -932,6 +932,9 @@ _HANGUL_SYL_RE = re.compile(r"[가-힣]")
 # 다국어 감탄사 음절: 한글 음절 + 일본어 히라가나/가타카나 + 한자(CJK). 영어/숫자는 제외.
 # (한국어 텍스트엔 kana/kanji 가 없으므로 한국어 동작은 기존과 byte-identical)
 _INTERJECTION_SYL_RE = re.compile(r"[가-힣぀-ゟ゠-ヿ一-鿿]")
+# 무발화 게이트 임계: 청크 voiced_ratio(=1-silence_ratio, 에너지기준)가 이 미만이면 무음 단편으로 보고
+# 더빙 스킵. 실발화는 보통 voiced_ratio≥0.5, 무음 단편은 ≈0.0 이라 0.05 면 무음만 안전하게 제거.
+_NONSPEECH_VOICED_MIN = 0.05
 
 
 def _is_short_interjection(translated_text: str) -> bool:
@@ -1050,8 +1053,21 @@ def process_chunk(row: dict[str, Any], *, config: TtsRuntimeConfig, session: Tts
 
     if _should_skip_existing(row, output_wav, skip_existing=config.skip_existing):
         return
-    # 단음절 감탄사("아"/"어")는 CosyVoice 가 합성 실패(중국어로 샘) → 화자 원본 오디오 passthrough.
+    # 단음절 감탄사("아"/"어"/"Oh"/"Yeah"…)는 CosyVoice 합성 실패(중국어로 샘) → 화자 원본 passthrough.
     if _is_short_interjection(translated_text):
+        # ★무발화 게이트(감탄사 한정): 그 원본이 사실상 무음(voiced_ratio≈0)이면 passthrough 해도 faint
+        # 잔음만 남아 '아/어 끝몰림'이 되므로 drop(무음 처리). voicing 기준이라 실발화 감탄사(voiced>0)는
+        # 그대로 passthrough. ※감탄사(1음절)에만 적용 — 분리과정에서 조용해진 실제 대사(여러 단어)는 무영향.
+        _feat = session.feature_map.get(str(row.get("chunk_id", "") or "").strip(), {})
+        _vr = _feat.get("voiced_ratio")
+        if _vr is not None and _vr < _NONSPEECH_VOICED_MIN:
+            if output_wav.exists():
+                output_wav.unlink()
+            row["dub_nonspeech_skip"] = True
+            row.pop("dub_error", None)
+            row.pop("dub_stale", None)
+            logger.info("Non-speech gate: drop silent interjection %s (voiced_ratio=%.3f)", row["chunk_id"], _vr)
+            return
         src_wav = resolve_project_path(row.get("wav") or "")
         if src_wav.exists():
             if temp_output_wav.exists():
