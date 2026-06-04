@@ -144,6 +144,8 @@ def compose_audio(
     fade_samples = max(1, int(round(0.025 * sample_rate)))
     for idx, (start_index, audio) in enumerate(prepared):
         next_start = prepared[idx + 1][0] if idx + 1 < len(prepared) else total_samples
+        # 길이 맞춤은 fit_to_duration(단일 패스)이 raw 합성에서 이미 수행 → compose 는 재압축하지 않고
+        # 다음 청크 시작까지만 캡(겹침 방지). 잔여 초과는 드물며(=budget/fit 처리), 그때만 끝 페이드.
         end_index = min(total_samples, start_index + len(audio), next_start)
         seg_len = end_index - start_index
         if seg_len <= 0:

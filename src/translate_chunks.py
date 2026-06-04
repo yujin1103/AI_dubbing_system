@@ -91,12 +91,15 @@ def _compute_duration_budget(
     source_units = _count_spoken_units(source_text, target_language=target_language)
     pause_count = int((chunk_feature or {}).get("pause_count", 0) or 0)
 
+    # max_rate = 번역이 허용되는 최대 음절밀도. CosyVoice 자연 발화속도(≈target_rate)에서 fit 1회로
+    # 슬롯에 들어가도록 max_rate ≲ target_rate × fit_max_tempo 로 잡는다(과거 6.2는 너무 커서 fit 후에도
+    # 슬롯 초과 → compose 잘림). 살짝 낮춰 번역이 시간에 맞게 + 잔여만 fit 단일패스가 흡수.
     if _is_korean_target(target_language):
-        min_rate, target_rate, max_rate = 3.6, 4.8, 6.2
+        min_rate, target_rate, max_rate = 3.6, 4.8, 5.7
     elif _is_japanese_target(target_language):
-        min_rate, target_rate, max_rate = 4.2, 5.8, 7.4
+        min_rate, target_rate, max_rate = 4.2, 5.8, 6.8
     else:
-        min_rate, target_rate, max_rate = 2.0, 3.0, 4.2
+        min_rate, target_rate, max_rate = 2.0, 3.0, 4.0
 
     min_units = max(1, int(round(duration_sec * min_rate))) if duration_sec > 0 else 0
     target_units = max(1, int(round(duration_sec * target_rate))) if duration_sec > 0 else source_units

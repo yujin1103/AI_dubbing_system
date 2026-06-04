@@ -50,7 +50,7 @@
   },
   "tts": {
     "engine": "cosyvoice", "prewarm": false, "pipelined": false,
-    "f0_guard": true, "f0_guard_attempts": 6,
+    "f0_guard": true, "f0_guard_attempts": 6, "duration_fit_max_tempo": 1.4,
     "passthrough_on_copy_source": true, "min_prompt_sec": 3.0, "speed": 1.0,
     "style_priority": "balanced", "reference_mode": "auto", "fit_to_duration": true,
     "trim_silence": true, "silence_trim_threshold_dbfs": -45.0,
