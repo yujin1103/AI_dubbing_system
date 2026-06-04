@@ -377,20 +377,28 @@ def _build_context_refinement_messages(
             + _extra_prompt_rules(target_label)
         )
 
-    # 전체 일관 화법 강제(자동 판정된 register 를 Pass B 가 실제 적용 — 청크별 혼용 제거).
+    # 자동 판정된 register 를 Pass B 가 적용. ★언어별 표준이 다름:
+    #  - 한국어: 강연=일관 존댓말이 맞음 → 전 줄 강제(hard).
+    #  - 일본어: 강연/내레이션도 です・ます(직접진술)와 常体(일반진술·내레이션)를 자연히 혼용 →
+    #    100% 강제는 부자연 + 丁寧>plain 이라 길어져 슬롯초과 악화. 전체 톤만 유지+문장내 급변 금지(soft).
     _norm_reg = (register_hint or "").strip().lower()
     if _norm_reg in {"polite", "casual"}:
         if _is_korean_target(target_language):
             _forms = "존댓말 (-요/-ㅂ니다)" if _norm_reg == "polite" else "반말 (-아/-어/-다)"
+            system_prompt += (
+                f"\nCRITICAL REGISTER — the ENTIRE piece is in {_norm_reg} register. EVERY line MUST "
+                f"consistently use {_forms}. If a draft line uses the other register, REWRITE it to "
+                f"{_forms}. Never mix registers across lines."
+            )
         elif japanese_target:
-            _forms = "丁寧体 (です・ます)" if _norm_reg == "polite" else "常体・plain (だ・である)"
-        else:
-            _forms = _norm_reg + " register"
-        system_prompt += (
-            f"\nCRITICAL REGISTER — the ENTIRE piece is in {_norm_reg} register. EVERY line MUST "
-            f"consistently use {_forms}. If a draft line uses the other register, REWRITE it to "
-            f"{_forms}. Never mix registers across lines."
-        )
+            _tone = "丁寧 (です・ます 基調)" if _norm_reg == "polite" else "くだけた (常体 基調)"
+            system_prompt += (
+                f"\nREGISTER — overall tone is {_norm_reg} ({_tone}). Use です・ます for direct statements and "
+                "addresses; plain/常体 forms are natural and preferred for narration and general description. "
+                "Keep the overall tone consistent and do NOT flip register within one sentence, but natural "
+                "Japanese register mixing across lines is expected — do not force every line into one form."
+            )
+        # 문법적 화법이 없는 언어(영어 등)는 register 강제 안 함
 
     batch_payload: list[dict[str, Any]] = []
     for row in batch_rows:
