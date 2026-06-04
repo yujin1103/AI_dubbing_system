@@ -1028,6 +1028,60 @@ def generate_scene_context(
         return ""
 
 
+_REGISTER_DECISION_SYSTEM = (
+    "You decide the SINGLE most appropriate speech register for dubbing this whole video. "
+    "From the speaker-tagged transcript, decide whether the delivery should be FORMAL/POLITE "
+    "(a lecture, talk, presentation, narration, documentary, news, an address to an audience or "
+    "to strangers, a professional/public setting) or CASUAL/INFORMAL (intimate conversation among "
+    "friends, family, lovers, close peers). Many target languages grammatically encode this and it "
+    "must stay CONSISTENT across the entire piece (e.g. Korean 존댓말 vs 반말, Japanese です/ます vs plain). "
+    "Reply with EXACTLY one word: 'polite' or 'casual'. Only if the piece genuinely requires different "
+    "registers for different speaker relationships with no single dominant one, reply 'mixed'."
+)
+
+
+def generate_register_decision(
+    asr_rows: list[dict[str, Any]],
+    *,
+    source_language: str,
+    target_language: str,
+    env_file: str | Path = ".env",
+    timeout_sec: int = 60,
+) -> str:
+    """전사본을 LLM 1회 분류 → 더빙 전체의 일관 화법을 자동 결정(반말/존댓말 등 섞임 방지).
+    'polite'|'casual' 반환, 'mixed'/불확실/실패는 '' (강제 안 함). 다국어 무관(개념 보편)."""
+    load_env_file(env_file)
+    api_key = os.environ.get("VECTORENGINE_API_KEY", "").strip()
+    if not api_key:
+        return ""
+    base_url = os.environ.get("VECTORENGINE_BASE_URL", "https://api.vectorengine.ai/").strip()
+    model_name = os.environ.get("VECTORENGINE_MODEL", "gpt-5.4").strip()
+    endpoint = os.environ.get("VECTORENGINE_ENDPOINT", "/v1/chat/completions").strip()
+    transcript = "\n".join(
+        f"[{r.get('speaker', '?')}] {(r.get('text_src') or '').strip()}"
+        for r in asr_rows if (r.get('text_src') or '').strip()
+    )[:6000]
+    if not transcript.strip():
+        return ""
+    try:
+        resp = _translate_with_vectorengine_api(
+            "", source_language=source_language, target_language=target_language,
+            target_duration_sec=None, duration_budget=None, register_hint="",
+            api_key=api_key, base_url=base_url, endpoint=endpoint, model_name=model_name,
+            timeout_sec=timeout_sec, response_format_json=False,
+            system_prompt_override=_REGISTER_DECISION_SYSTEM,
+            user_prompt_override="Transcript:\n" + transcript,
+        )
+    except Exception as exc:
+        logger.warning("auto register 결정 실패: %s", exc)
+        return ""
+    word = (resp or "").strip().lower()
+    for token in ("polite", "casual"):  # 'mixed'/기타는 강제 안 함
+        if token in word:
+            return token
+    return ""
+
+
 def build_translation_entries(
     asr_json: str | Path,
     output_json: str | Path,
@@ -1044,6 +1098,7 @@ def build_translation_entries(
     scene_context: str = "",
     register_override: str = "",
     auto_scene_context: bool = False,
+    auto_register: bool = True,
 ) -> list[dict[str, Any]]:
     # 프롬프트 보강(씬 컨텍스트/격식)을 모듈 전역에 1회 설정 → 모든 번역/정제 프롬프트에 주입.
     global _SCENE_CONTEXT, _REGISTER_OVERRIDE
@@ -1081,6 +1136,16 @@ def build_translation_entries(
             if _auto_ctx:
                 _SCENE_CONTEXT = _auto_ctx
                 logger.info("auto scene_context 생성: %s", _auto_ctx[:200])
+        # 수동 register 없고 auto 켜졌으면 전사본에서 일관 화법 자동 결정 → 모든 청크 동일 화법
+        # (반말↔존댓말 무작위 혼용 방지; 강연=존댓말·친구대화=반말 자동). 'mixed'면 강제 안 함.
+        if auto_register and not _REGISTER_OVERRIDE:
+            _auto_reg = generate_register_decision(
+                asr_rows, source_language=source_language, target_language=target_language,
+                env_file=env_file, timeout_sec=timeout_sec,
+            )
+            if _auto_reg:
+                _REGISTER_OVERRIDE = _auto_reg
+                logger.info("auto register 결정: %s (전체 일관 적용)", _auto_reg)
 
     translated_rows: list[dict[str, Any]] = []
     speaker_register_memory: dict[str, str] = {}

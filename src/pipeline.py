@@ -435,6 +435,7 @@ def step_translate(config: dict) -> None:
         scene_context=str(deep_get(config, ("translation", "scene_context"), "")),
         register_override=str(deep_get(config, ("translation", "register"), "")),
         auto_scene_context=bool(deep_get(config, ("translation", "auto_scene_context"), False)),
+        auto_register=bool(deep_get(config, ("translation", "auto_register"), True)),
     )
 
 
