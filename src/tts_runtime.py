@@ -948,6 +948,22 @@ def _is_short_interjection(translated_text: str) -> bool:
     return len(_INTERJECTION_SYL_RE.findall(translated_text or "")) == 1
 
 
+# 반응 감탄사(filler) — 원문(text_src) 기준이라 타깃언어 무관. 무음이면 드롭 판정에 사용.
+# (Yeah/Okay/No 등 '실제 응답'은 제외 → 합성 유지.) EN·KO·JA 흔한 filler.
+_SOURCE_FILLER_WORDS = {
+    "oh", "ohh", "ah", "ahh", "uh", "uhh", "um", "umm", "mm", "mmm", "hmm", "hm",
+    "eh", "ehh", "ooh", "oof", "huh",
+    "어", "아", "음", "오", "으", "에", "어어", "아아", "으음", "오오",
+    "あ", "ああ", "あっ", "えっ", "うっ", "ええ", "おお", "ん",
+}
+
+
+def _is_source_filler(source_text: str) -> bool:
+    """원문이 반응 감탄사 한 마디인지(언어 무관). 무발화 게이트의 '아/어 끝몰림' 판별에 사용."""
+    t = re.sub(r"[^0-9A-Za-z가-힣ぁ-ヿ一-鿿]", "", (source_text or "").strip().lower())
+    return bool(t) and t in _SOURCE_FILLER_WORDS
+
+
 # F0-가이드 재합성: 교차언어 클로닝이 화자 피치를 못 지켜 음역이 바뀌는(예 남성→여성대) 문제를
 # seed 다양화로 여러 번 합성 → 원본 화자 F0 에 가장 가까운 take 자동 선택. 언어 무관.
 _F0_GUARD_SEEDS = (13, 42, 100, 7, 1, 2024, 77, 555)
@@ -1053,11 +1069,12 @@ def process_chunk(row: dict[str, Any], *, config: TtsRuntimeConfig, session: Tts
 
     if _should_skip_existing(row, output_wav, skip_existing=config.skip_existing):
         return
-    # 단음절 감탄사("아"/"어"/"Oh"/"Yeah"…)는 CosyVoice 합성 실패(중국어로 샘) → 화자 원본 passthrough.
-    if _is_short_interjection(translated_text):
-        # ★무발화 게이트(감탄사 한정): 그 원본이 사실상 무음(voiced_ratio≈0)이면 passthrough 해도 faint
-        # 잔음만 남아 '아/어 끝몰림'이 되므로 drop(무음 처리). voicing 기준이라 실발화 감탄사(voiced>0)는
-        # 그대로 passthrough. ※감탄사(1음절)에만 적용 — 분리과정에서 조용해진 실제 대사(여러 단어)는 무영향.
+    source_text = (row.get("text_src") or "").strip()
+    # ★무발화 게이트(언어무관): 원문이 반응 감탄사(Oh/Ah/어/아…)이거나 번역이 1음절 감탄사인데, 그 원본이
+    # 사실상 무음(voiced_ratio≈0)이면 더빙을 만들지 않는다(합성·passthrough 둘 다 X). 무음구간에 "あっ"나
+    # faint 잔음이 끼어드는 '아/어 끝몰림'을 타깃언어 무관하게 차단. ※원문 기준이라 'Oh'→어(KO)·あっ(JA) 둘 다
+    # 잡힘. 여러 단어 실대사(분리로 조용해진 overlap)는 filler/1음절이 아니라 영향 없음 → 합성 유지.
+    if _is_source_filler(source_text) or _is_short_interjection(translated_text):
         _feat = session.feature_map.get(str(row.get("chunk_id", "") or "").strip(), {})
         _vr = _feat.get("voiced_ratio")
         if _vr is not None and _vr < _NONSPEECH_VOICED_MIN:
@@ -1066,8 +1083,10 @@ def process_chunk(row: dict[str, Any], *, config: TtsRuntimeConfig, session: Tts
             row["dub_nonspeech_skip"] = True
             row.pop("dub_error", None)
             row.pop("dub_stale", None)
-            logger.info("Non-speech gate: drop silent interjection %s (voiced_ratio=%.3f)", row["chunk_id"], _vr)
+            logger.info("Non-speech gate: drop silent filler %s (src=%r voiced=%.3f)", row["chunk_id"], source_text[:10], _vr)
             return
+    # 실발화 1음절 감탄사("아"/"어"/"Oh")는 CosyVoice 합성 실패(중국어로 샘) → 화자 원본 passthrough.
+    if _is_short_interjection(translated_text):
         src_wav = resolve_project_path(row.get("wav") or "")
         if src_wav.exists():
             if temp_output_wav.exists():
