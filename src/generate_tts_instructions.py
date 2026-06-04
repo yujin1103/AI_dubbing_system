@@ -372,25 +372,35 @@ def generate_tts_instructions(
     llm_results: dict[str, str] = {}
     batch_errors: dict[str, str] = {}
     if mode == "vectorengine_gpt" and api_key:
-        for batch in _batched(pending_rows, batch_size):
+        # 무손실 속도: instruct 배치 LLM 호출을 동시 실행(배치 독립·all_rows 고정 컨텍스트 → 동일 출력).
+        # _translate_with_vectorengine_api 는 stateless(호출별 urllib Request)라 thread-safe.
+        _ibatches = list(_batched(pending_rows, batch_size))
+
+        def _instr_call(_batch):
             try:
-                llm_results.update(
-                    _generate_instruction_batch_with_llm(
-                        batch,
-                        api_key=api_key,
-                        base_url=base_url,
-                        endpoint=endpoint,
-                        model_name=model_name,
-                        timeout_sec=timeout_sec,
-                        all_rows=rows,
-                    )
-                )
-            except Exception as exc:
+                return ("ok", _batch, _generate_instruction_batch_with_llm(
+                    _batch, api_key=api_key, base_url=base_url, endpoint=endpoint,
+                    model_name=model_name, timeout_sec=timeout_sec, all_rows=rows))
+            except Exception as _exc:  # noqa: BLE001 — 배치 실패는 fallback 경로로
+                return ("err", _batch, _exc)
+
+        import os as _os
+        from concurrent.futures import ThreadPoolExecutor as _TPE
+        _conc = max(1, int(_os.environ.get("TRANSLATE_LLM_CONCURRENCY", "8")))
+        if len(_ibatches) > 1 and _conc > 1:
+            with _TPE(max_workers=min(_conc, len(_ibatches))) as _ex:
+                _ires = list(_ex.map(_instr_call, _ibatches))
+        else:
+            _ires = [_instr_call(b) for b in _ibatches]
+        for _status, _batch, _payload in _ires:
+            if _status == "ok":
+                llm_results.update(_payload)  # 키 disjoint(chunk_id) — 메인스레드 단일 update
+            else:
                 if not fallback_on_error:
-                    raise
-                logger.warning("Instruction LLM batch failed for %s rows: %s", len(batch), exc)
-                for row in batch:
-                    batch_errors[str(row.get("chunk_id", "") or "")] = str(exc)
+                    raise _payload
+                logger.warning("Instruction LLM batch failed for %s rows: %s", len(_batch), _payload)
+                for row in _batch:
+                    batch_errors[str(row.get("chunk_id", "") or "")] = str(_payload)
 
     generated = 0
     fallback_count = 0

@@ -764,36 +764,56 @@ def _refine_translations_with_context(
     )
 
     refined_map: dict[str, dict[str, Any]] = {}
-    for batch_index, batch in enumerate(batches, start=1):
-        system_prompt, user_prompt = _build_context_refinement_messages(
-            batch,
-            full_transcript=full_transcript,
-            source_language=source_language,
-            target_language=target_language,
-        )
+
+    # 무손실 속도: 문맥정제 배치 LLM 호출을 동시 실행(배치 독립·full_transcript 고정 입력 → 동일 출력).
+    # 결과(_refine_pre)는 아래 순차 루프에서 조회해 파싱/검증/적용은 단일스레드로 수행.
+    _refine_pre: dict[int, tuple[str, Any]] = {}
+    def _refine_call(_ib):
+        _bi, _batch = _ib
+        _sp, _up = _build_context_refinement_messages(_batch, full_transcript=full_transcript, source_language=source_language, target_language=target_language)
         try:
-            raw_response = _translate_with_vectorengine_api(
-                "",
-                source_language=source_language,
-                target_language=target_language,
-                target_duration_sec=None,
-                duration_budget=None,
-                register_hint="",
-                api_key=api_key,
-                base_url=base_url,
-                endpoint=endpoint,
-                model_name=model_name,
-                timeout_sec=timeout_sec,
-                response_format_json=True,
-                system_prompt_override=system_prompt,
-                user_prompt_override=user_prompt,
-            )
-        except TranslationBlocked as exc:
-            # batch 가 통째로 차단되면 first-pass 번역을 유지하고 다음 batch 로.
-            logger.warning("Context refinement batch %s blocked by translator: %s", batch_index, exc.reason)
+            _resp = _translate_with_vectorengine_api(
+                "", source_language=source_language, target_language=target_language,
+                target_duration_sec=None, duration_budget=None, register_hint="",
+                api_key=api_key, base_url=base_url, endpoint=endpoint, model_name=model_name,
+                timeout_sec=timeout_sec, response_format_json=True,
+                system_prompt_override=_sp, user_prompt_override=_up)
+            return (_bi, ("ok", _resp))
+        except TranslationBlocked as _exc:
+            return (_bi, ("blocked", _exc.reason))
+    if len(batches) > 1:
+        import os as _os4
+        from concurrent.futures import ThreadPoolExecutor as _TPE4
+        _conc4 = max(1, int(_os4.environ.get("TRANSLATE_LLM_CONCURRENCY", "8")))
+        if _conc4 > 1:
+            with _TPE4(max_workers=min(_conc4, len(batches))) as _ex4:
+                for _bi, _res in _ex4.map(_refine_call, list(enumerate(batches, start=1))):
+                    _refine_pre[_bi] = _res
+
+    for batch_index, batch in enumerate(batches, start=1):
+        _pre = _refine_pre.get(batch_index)
+        if _pre is not None and _pre[0] == "blocked":
+            logger.warning("Context refinement batch %s blocked by translator: %s", batch_index, _pre[1])
             for row in batch:
                 refined_map[row["chunk_id"]] = row
             continue
+        if _pre is not None:
+            raw_response = _pre[1]
+        else:
+            system_prompt, user_prompt = _build_context_refinement_messages(
+                batch, full_transcript=full_transcript, source_language=source_language, target_language=target_language)
+            try:
+                raw_response = _translate_with_vectorengine_api(
+                    "", source_language=source_language, target_language=target_language,
+                    target_duration_sec=None, duration_budget=None, register_hint="",
+                    api_key=api_key, base_url=base_url, endpoint=endpoint, model_name=model_name,
+                    timeout_sec=timeout_sec, response_format_json=True,
+                    system_prompt_override=system_prompt, user_prompt_override=user_prompt)
+            except TranslationBlocked as exc:
+                logger.warning("Context refinement batch %s blocked by translator: %s", batch_index, exc.reason)
+                for row in batch:
+                    refined_map[row["chunk_id"]] = row
+                continue
         parsed_items = _parse_context_refinement_response(raw_response, target_language=target_language)
         parsed_map = {item["chunk_id"]: item for item in parsed_items}
         expected_ids = [row["chunk_id"] for row in batch]
@@ -889,6 +909,8 @@ def _apply_duration_budget_control(
     timeout_sec: int,
     chunk_feature_map: dict[str, dict[str, Any]],
 ) -> list[dict[str, Any]]:
+    # setup(예산/fit 계산)은 순차(LLM 없음·빠름). 과예산 행만 모아 rewrite LLM 체인을 병렬 실행.
+    _over_rows: list[tuple[dict[str, Any], dict[str, Any]]] = []
     for row in translated_rows:
         chunk_id = str(row.get("chunk_id", "")).strip()
         chunk_feature = chunk_feature_map.get(chunk_id)
@@ -900,42 +922,47 @@ def _apply_duration_budget_control(
         row.setdefault("text_translated_initial", row.get("text_translated", ""))
         row["text_translated_budgeted"] = row.get("text_translated", "")
         row["translation_revision_count"] = int(row.get("translation_revision_count", 0) or 0)
-
         if enabled and not row.get("translation_blocked") and row.get("text_src") and row.get("text_translated") and not fit["within_budget"]:
-            attempts = 0
-            while attempts < max_budget_rewrites and not fit["within_budget"]:
-                try:
-                    revised_translation, revised_tts = _rewrite_translation_to_budget(
-                        row,
-                        source_language=source_language,
-                        target_language=target_language,
-                        budget=fit,
-                        register_hint=str(row.get("translation_style_hint", "") or ""),
-                        api_key=api_key,
-                        base_url=base_url,
-                        endpoint=endpoint,
-                        model_name=model_name,
-                        timeout_sec=timeout_sec,
-                    )
-                except TranslationBlocked as exc:
-                    logger.warning("Budget rewrite for %s blocked by translator: %s", chunk_id, exc.reason)
-                    break
-                attempts += 1
-                if revised_translation:
-                    row["text_translated"] = revised_translation
-                    row["text_translated_budgeted"] = revised_translation
-                    if revised_tts:
-                        row["text_tts"] = revised_tts
-                    row["translation_style_hint"] = detect_register(revised_translation)
-                    fit = _measure_budget_fit(
-                        str(row.get("text_translated", "") or ""),
-                        target_language=target_language,
-                        budget=budget,
-                    )
-                    row["translation_budget"] = fit
-                else:
-                    break
-            row["translation_revision_count"] = int(row.get("translation_revision_count", 0) or 0) + attempts
+            _over_rows.append((row, budget))
+
+    def _rewrite_row(_rb: tuple[dict[str, Any], dict[str, Any]]) -> None:
+        row, budget = _rb
+        chunk_id = str(row.get("chunk_id", "")).strip()
+        fit = row["translation_budget"]
+        attempts = 0
+        while attempts < max_budget_rewrites and not fit["within_budget"]:
+            try:
+                revised_translation, revised_tts = _rewrite_translation_to_budget(
+                    row, source_language=source_language, target_language=target_language,
+                    budget=fit, register_hint=str(row.get("translation_style_hint", "") or ""),
+                    api_key=api_key, base_url=base_url, endpoint=endpoint,
+                    model_name=model_name, timeout_sec=timeout_sec)
+            except TranslationBlocked as exc:
+                logger.warning("Budget rewrite for %s blocked by translator: %s", chunk_id, exc.reason)
+                break
+            attempts += 1
+            if revised_translation:
+                row["text_translated"] = revised_translation
+                row["text_translated_budgeted"] = revised_translation
+                if revised_tts:
+                    row["text_tts"] = revised_tts
+                row["translation_style_hint"] = detect_register(revised_translation)
+                fit = _measure_budget_fit(str(row.get("text_translated", "") or ""), target_language=target_language, budget=budget)
+                row["translation_budget"] = fit
+            else:
+                break
+        row["translation_revision_count"] = int(row.get("translation_revision_count", 0) or 0) + attempts
+
+    if _over_rows:
+        import os as _os3
+        from concurrent.futures import ThreadPoolExecutor as _TPE3
+        _conc3 = max(1, int(_os3.environ.get("TRANSLATE_LLM_CONCURRENCY", "8")))
+        if len(_over_rows) > 1 and _conc3 > 1:
+            with _TPE3(max_workers=min(_conc3, len(_over_rows))) as _ex3:
+                list(_ex3.map(_rewrite_row, _over_rows))
+        else:
+            for _rb in _over_rows:
+                _rewrite_row(_rb)
 
         attach_stage_quality(
             row,
@@ -1055,6 +1082,42 @@ def build_translation_entries(
     translated_rows: list[dict[str, Any]] = []
     speaker_register_memory: dict[str, str] = {}
     reset_count = 0
+
+    # 무손실 속도: Pass A 초기번역 LLM 호출을 동시 실행(청크 독립·temp=0.1·동일 프롬프트 → 동일 출력).
+    # register_hint 의 speaker별 순차 누적만 제거(=_REGISTER_OVERRIDE 사용); 레지스터 일관성은
+    # Pass B 문맥정제(full transcript)가 보장. _translate_with_vectorengine_api 는 stateless(호출별
+    # urllib Request) → thread-safe. 동시성 env TRANSLATE_LLM_CONCURRENCY(기본 8); 동일 API 가
+    # 3_dub_pipeline 에서 max_workers=10 으로 검증됨. 결과는 아래 순차 루프에서 _llm_pre 로 조회.
+    _llm_pre: dict[str, tuple[str, Any]] = {}
+    if mode == "vectorengine_gpt":
+        def _pre_translate(_row):
+            _existing = existing_map.get(_row["chunk_id"], {})
+            _csrc = _normalize_text(_row.get("text_src", ""))
+            if _can_preserve_existing_translation(_existing, current_src=_csrc, target_language=target_language):
+                return None  # 기존 보존 — LLM 불필요
+            _dur = None
+            if _row.get("start") is not None and _row.get("end") is not None:
+                _dur = max(0.0, float(_row["end"]) - float(_row["start"]))
+            _bud = _compute_duration_budget(
+                {"duration": _dur, "text_src": _row.get("text_src", "")},
+                target_language=target_language, chunk_feature=chunk_feature_map.get(str(_row["chunk_id"])))
+            try:
+                _resp = _translate_with_vectorengine_api(
+                    _row.get("text_src", ""), source_language=source_language, target_language=target_language,
+                    target_duration_sec=_dur, duration_budget=_bud, register_hint=(_REGISTER_OVERRIDE or ""),
+                    api_key=api_key, base_url=base_url, endpoint=endpoint, model_name=model_name, timeout_sec=timeout_sec)
+                return (_row["chunk_id"], ("ok", _resp))
+            except TranslationBlocked as _exc:
+                return (_row["chunk_id"], ("blocked", _exc.reason))
+        import os as _os
+        from concurrent.futures import ThreadPoolExecutor as _TPE
+        _conc = max(1, int(_os.environ.get("TRANSLATE_LLM_CONCURRENCY", "8")))
+        if len(asr_rows) > 1 and _conc > 1:
+            with _TPE(max_workers=_conc) as _ex:
+                for _r in _ex.map(_pre_translate, asr_rows):
+                    if _r is not None:
+                        _llm_pre[_r[0]] = _r[1]
+
     for row in asr_rows:
         existing = existing_map.get(row["chunk_id"], {})
         text_src = row.get("text_src", "")
@@ -1106,30 +1169,33 @@ def build_translation_entries(
                 blocked_reason = existing.get("translation_blocked_reason") if existing.get("translation_blocked") else None
             else:
                 blocked_reason = None
-                try:
-                    raw_response = _translate_with_vectorengine_api(
-                        text_src,
-                        source_language=source_language,
-                        target_language=target_language,
-                        target_duration_sec=duration,
-                        duration_budget=budget,
-                        register_hint=register_hint,
-                        api_key=api_key,
-                        base_url=base_url,
-                        endpoint=endpoint,
-                        model_name=model_name,
-                        timeout_sec=timeout_sec,
-                    )
-                except TranslationBlocked as exc:
-                    # 차단된 청크는 본문을 비워 두고 사용자가 Chunks 페이지에서 수동 입력하도록 마킹. 전체 단계는 실패시키지 않는다.
-                    logger.warning("Chunk %s blocked by translator: %s", row.get("chunk_id"), exc.reason)
+                _pre = _llm_pre.get(row["chunk_id"])  # 병렬 pre-pass 결과(있으면 재호출 안 함)
+                if _pre is not None and _pre[0] == "blocked":
+                    logger.warning("Chunk %s blocked by translator: %s", row.get("chunk_id"), _pre[1])
                     text_translated = ""
                     text_tts = None
-                    blocked_reason = exc.reason
+                    blocked_reason = _pre[1]
                 else:
-                    text_translated, text_tts = _parse_translation_response(raw_response, target_language=target_language)
-                    if existing.get("text_translated") and _normalize_text(existing.get("text_translated", "")) != _normalize_text(text_translated):
-                        reset_count += 1
+                    if _pre is not None:
+                        raw_response = _pre[1]
+                    else:
+                        try:
+                            raw_response = _translate_with_vectorengine_api(
+                                text_src, source_language=source_language, target_language=target_language,
+                                target_duration_sec=duration, duration_budget=budget, register_hint=register_hint,
+                                api_key=api_key, base_url=base_url, endpoint=endpoint,
+                                model_name=model_name, timeout_sec=timeout_sec,
+                            )
+                        except TranslationBlocked as exc:
+                            logger.warning("Chunk %s blocked by translator: %s", row.get("chunk_id"), exc.reason)
+                            text_translated = ""
+                            text_tts = None
+                            blocked_reason = exc.reason
+                            raw_response = None
+                    if blocked_reason is None:
+                        text_translated, text_tts = _parse_translation_response(raw_response, target_language=target_language)
+                        if existing.get("text_translated") and _normalize_text(existing.get("text_translated", "")) != _normalize_text(text_translated):
+                            reset_count += 1
         else:
             raise ValueError(f"Unsupported translation mode: {mode}")
 
