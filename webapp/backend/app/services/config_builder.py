@@ -57,6 +57,17 @@ def build_run_config(
             continue
         _set_nested(config, _OVERRIDE_MAP[field], value)
 
+    # UI 런은 단계별 실행 + 청크별 instruct/감정 편집이라 '단일 invocation' 전용 최적화를 끈다:
+    #  - tts.pipelined: generate_tts_instructions 를 run_tts 에 융합해 chunk_instruction_edit/
+    #    chunk_emotion_edit 편집 단계를 없애므로 UI 편집 워크플로와 충돌 → 강제 OFF.
+    #  - tts.prewarm: UI 는 단계마다 별도 subprocess 라 translate 에서 띄운 모델 프리워밍이
+    #    run_tts(다른 프로세스)로 이어지지 않음(무효 + GPU 낭비) → 강제 OFF.
+    # ※ translate/instruct LLM 호출 병렬화(TRANSLATE_LLM_CONCURRENCY)는 step 내부라 자동 적용 →
+    #   UI 도 그대로 빨라진다(여긴 끄지 않음). pipelined/prewarm 은 headless 배치 전용.
+    if isinstance(config.get("tts"), dict):
+        config["tts"]["pipelined"] = False
+        config["tts"]["prewarm"] = False
+
     RUN_CONFIG_DIR.mkdir(parents=True, exist_ok=True)
     out_path = RUN_CONFIG_DIR / f"{run_id}.json"
     with out_path.open("w", encoding="utf-8") as fp:
