@@ -964,6 +964,9 @@ def _apply_duration_budget_control(
             for _rb in _over_rows:
                 _rewrite_row(_rb)
 
+    # 모든 행의 translation quality gate 를 (예산재작성 반영된) 최종 상태로 갱신.
+    # (병렬화 리팩터로 이 호출이 if _over_rows 블록 안 leaked row=마지막 행에만 돌던 회귀 수정 — 매 행 수행)
+    for row in translated_rows:
         attach_stage_quality(
             row,
             "translation",
