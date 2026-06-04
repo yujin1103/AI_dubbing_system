@@ -20,7 +20,7 @@ from redirect_nonspeech import redirect_nonspeech_to_bgm
 from rttm_to_json import convert_rttm_to_json
 from run_asr import transcribe_chunks
 from stabilize_diarization import stabilize_diarization_file
-from run_tts import synthesize_dub_chunks
+from run_tts import synthesize_dub_chunks, synthesize_dub_pipelined
 from tts_runtime import prewarm_cosyvoice_model
 from separate_audio import separate_audio
 from translate_chunks import build_translation_entries
@@ -479,6 +479,10 @@ def step_build_timeline(config: dict) -> None:
 
 
 def step_generate_tts_instructions(config: dict) -> None:
+    # pipelined 모드: instruct 생성을 run_tts(fused)가 TTS와 오버랩해 수행하므로 이 단계는 스킵.
+    if bool(deep_get(config, ("tts", "pipelined"), False)):
+        logger.info("Skipping standalone instruction generation (tts.pipelined — fused with run_tts)")
+        return
     # style_priority='voice' 는 instruct 자체를 무시하는 별도 모드 — instruction 생성 스킵
     style_priority = str(deep_get(config, ("tts", "style_priority"), "")).strip().lower()
     if style_priority == "voice":
@@ -508,8 +512,7 @@ def step_run_tts(config: dict) -> None:
         raise ValueError(f"Unsupported TTS engine after cleanup: {tts_engine}")
     passthrough_source_audio = bool(deep_get(config, ("tts", "passthrough_on_copy_source"), True)) and translation_mode == "copy_source"
     use_cross_lingual = bool(source_language.strip()) and bool(target_language.strip()) and source_language.strip().lower() != target_language.strip().lower()
-    synthesize_dub_chunks(
-        require_value(config, ("paths", "master_timeline_json")),
+    _tts_kwargs = dict(
         model_dir=require_value(config, ("models", "tts")),
         cosyvoice_repo=deep_get(config, ("models", "cosyvoice_repo")),
         system_prompt=str(deep_get(config, ("tts", "system_prompt"), "")),
@@ -536,6 +539,22 @@ def step_run_tts(config: dict) -> None:
         prompt_cap_max_sec=float(deep_get(config, ("tts", "prompt_cap_max_sec"), 4.5)),
         style_priority=str(deep_get(config, ("tts", "style_priority"), "instruction")),
     )
+    _pipelined = bool(deep_get(config, ("tts", "pipelined"), False))
+    if _pipelined and not passthrough_source_audio:
+        # instruct↔TTS 오버랩: instruct 생성(producer)을 TTS(consumer) 아래로 숨김.
+        logger.info("Running pipelined dub (instruct↔TTS overlap)")
+        synthesize_dub_pipelined(
+            require_value(config, ("paths", "master_timeline_json")),
+            instruct_mode=str(deep_get(config, ("tts", "instruction", "mode"), "vectorengine_gpt")),
+            instruct_env_file=str(deep_get(config, ("tts", "instruction", "env_file"), deep_get(config, ("translation", "env_file"), ".env"))),
+            instruct_timeout_sec=int(deep_get(config, ("tts", "instruction", "timeout_sec"), deep_get(config, ("translation", "timeout_sec"), 60))),
+            instruct_skip_existing=bool(deep_get(config, ("tts", "instruction", "skip_existing"), True)),
+            instruct_fallback_on_error=bool(deep_get(config, ("tts", "instruction", "fallback_on_error"), True)),
+            instruct_batch_size=int(deep_get(config, ("tts", "instruction", "batch_size"), 6)),
+            **_tts_kwargs,
+        )
+    else:
+        synthesize_dub_chunks(require_value(config, ("paths", "master_timeline_json")), **_tts_kwargs)
 
 
 def step_validate_tts(config: dict) -> None:

@@ -338,8 +338,14 @@ def generate_tts_instructions(
     skip_existing: bool = True,
     fallback_on_error: bool = True,
     batch_size: int = 6,
+    on_ready: Any = None,
+    rows: list[dict[str, Any]] | None = None,
+    save_result: bool = True,
 ) -> list[dict[str, Any]]:
-    rows = load_json(master_timeline_json)
+    # on_ready(row): 각 청크 instruct 확정 즉시 호출(instruct↔TTS 오버랩 producer 용).
+    # rows: 제공 시 파일 로드 대신 in-memory 공유(fused 모드). save_result=False 면 저장 생략(consumer 가 저장).
+    if rows is None:
+        rows = load_json(master_timeline_json)
     api_key = ""
     base_url = ""
     endpoint = ""
@@ -369,78 +375,88 @@ def generate_tts_instructions(
             continue
         pending_rows.append(row)
 
-    llm_results: dict[str, str] = {}
-    batch_errors: dict[str, str] = {}
-    if mode == "vectorengine_gpt" and api_key:
-        # 무손실 속도: instruct 배치 LLM 호출을 동시 실행(배치 독립·all_rows 고정 컨텍스트 → 동일 출력).
-        # _translate_with_vectorengine_api 는 stateless(호출별 urllib Request)라 thread-safe.
-        _ibatches = list(_batched(pending_rows, batch_size))
-
-        def _instr_call(_batch):
-            try:
-                return ("ok", _batch, _generate_instruction_batch_with_llm(
-                    _batch, api_key=api_key, base_url=base_url, endpoint=endpoint,
-                    model_name=model_name, timeout_sec=timeout_sec, all_rows=rows))
-            except Exception as _exc:  # noqa: BLE001 — 배치 실패는 fallback 경로로
-                return ("err", _batch, _exc)
-
-        import os as _os
-        from concurrent.futures import ThreadPoolExecutor as _TPE
-        _conc = max(1, int(_os.environ.get("TRANSLATE_LLM_CONCURRENCY", "8")))
-        if len(_ibatches) > 1 and _conc > 1:
-            with _TPE(max_workers=min(_conc, len(_ibatches))) as _ex:
-                _ires = list(_ex.map(_instr_call, _ibatches))
-        else:
-            _ires = [_instr_call(b) for b in _ibatches]
-        for _status, _batch, _payload in _ires:
-            if _status == "ok":
-                llm_results.update(_payload)  # 키 disjoint(chunk_id) — 메인스레드 단일 update
-            else:
-                if not fallback_on_error:
-                    raise _payload
-                logger.warning("Instruction LLM batch failed for %s rows: %s", len(_batch), _payload)
-                for row in _batch:
-                    batch_errors[str(row.get("chunk_id", "") or "")] = str(_payload)
+    # 비-pending(이미 instruct 보유 / no-text) row 는 즉시 ready (오버랩 consumer 가 바로 TTS 가능).
+    _pending_ids = {str(r.get("chunk_id", "") or "") for r in pending_rows}
+    if on_ready is not None:
+        for row in rows:
+            if str(row.get("chunk_id", "") or "") not in _pending_ids:
+                on_ready(row)
 
     generated = 0
     fallback_count = 0
-    for row in pending_rows:
-        chunk_id = str(row.get("chunk_id", "") or "")
-        instruction = llm_results.get(chunk_id, "")
-        source = "llm" if instruction else "fallback"
-        error = batch_errors.get(chunk_id, "")
-        if mode == "vectorengine_gpt" and api_key:
-            pass
+
+    def _assign_and_ready(_batch_rows, _results, _errors):
+        # 배치 결과를 row 에 배정 + on_ready 호출. as_completed 루프(메인스레드)에서만 불려 race 없음.
+        nonlocal generated, fallback_count
+        for row in _batch_rows:
+            chunk_id = str(row.get("chunk_id", "") or "")
+            instruction = _results.get(chunk_id, "")
+            source = "llm" if instruction else "fallback"
+            error = _errors.get(chunk_id, "")
+            if not (mode == "vectorengine_gpt" and api_key):
+                error = f"Instruction mode {mode} used without API call" if mode == "fallback" else "VECTORENGINE_API_KEY is missing"
+            if not instruction:
+                instruction = _fallback_instruction(row)
+                fallback_count += 1
+            else:
+                generated += 1
+            row["tts_instruct_text"] = instruction
+            row["tts_instruct_source"] = source
+            row["tts_instruct_emotion_label"] = _emotion_label(row)
+            if error:
+                row["tts_instruct_error"] = error
+            else:
+                row.pop("tts_instruct_error", None)
+            output_wav = resolve_project_path(row.get("dub_wav", ""))
+            existing_signature = str(row.get("dub_input_signature", "") or "")
+            current_signature = build_dub_input_signature(row, runtime=row.get("dub_runtime", {}) or {})
+            if output_wav.exists() and existing_signature and existing_signature != current_signature:
+                row["dub_stale"] = True
+            if on_ready is not None:
+                on_ready(row)
+
+    if mode == "vectorengine_gpt" and api_key and pending_rows:
+        # 무손실 속도: instruct 배치 LLM 호출을 동시 실행(배치 독립·all_rows 고정). 배치 완료 즉시 배정+ready.
+        _ibatches = list(_batched(pending_rows, batch_size))
+        import os as _os
+        from concurrent.futures import ThreadPoolExecutor as _TPE, as_completed as _ac
+        _conc = max(1, int(_os.environ.get("TRANSLATE_LLM_CONCURRENCY", "8")))
+        if len(_ibatches) > 1 and _conc > 1:
+            with _TPE(max_workers=min(_conc, len(_ibatches))) as _ex:
+                _futs = {_ex.submit(_generate_instruction_batch_with_llm, b, api_key=api_key,
+                                    base_url=base_url, endpoint=endpoint, model_name=model_name,
+                                    timeout_sec=timeout_sec, all_rows=rows): b for b in _ibatches}
+                for _fut in _ac(_futs):
+                    _batch = _futs[_fut]
+                    try:
+                        _res = _fut.result(); _errs = {}
+                    except Exception as _exc:  # noqa: BLE001
+                        if not fallback_on_error:
+                            raise
+                        logger.warning("Instruction LLM batch failed for %s rows: %s", len(_batch), _exc)
+                        _res = {}; _errs = {str(r.get("chunk_id", "") or ""): str(_exc) for r in _batch}
+                    _assign_and_ready(_batch, _res, _errs)
         else:
-            error = f"Instruction mode {mode} used without API call" if mode == "fallback" else "VECTORENGINE_API_KEY is missing"
+            for _batch in _ibatches:
+                try:
+                    _res = _generate_instruction_batch_with_llm(
+                        _batch, api_key=api_key, base_url=base_url, endpoint=endpoint,
+                        model_name=model_name, timeout_sec=timeout_sec, all_rows=rows); _errs = {}
+                except Exception as _exc:  # noqa: BLE001
+                    if not fallback_on_error:
+                        raise
+                    logger.warning("Instruction LLM batch failed for %s rows: %s", len(_batch), _exc)
+                    _res = {}; _errs = {str(r.get("chunk_id", "") or ""): str(_exc) for r in _batch}
+                _assign_and_ready(_batch, _res, _errs)
+    else:
+        # fallback mode / no api_key: 전 pending 을 fallback 으로 배정
+        _assign_and_ready(pending_rows, {}, {})
 
-        if not instruction:
-            instruction = _fallback_instruction(row)
-            fallback_count += 1
-        else:
-            generated += 1
-
-        row["tts_instruct_text"] = instruction
-        row["tts_instruct_source"] = source
-        row["tts_instruct_emotion_label"] = _emotion_label(row)
-        if error:
-            row["tts_instruct_error"] = error
-        else:
-            row.pop("tts_instruct_error", None)
-
-        output_wav = resolve_project_path(row.get("dub_wav", ""))
-        existing_signature = str(row.get("dub_input_signature", "") or "")
-        current_signature = build_dub_input_signature(row, runtime=row.get("dub_runtime", {}) or {})
-        if output_wav.exists() and existing_signature and existing_signature != current_signature:
-            row["dub_stale"] = True
-
-    save_json(rows, master_timeline_json)
+    if save_result:
+        save_json(rows, master_timeline_json)
     logger.info(
         "Prepared TTS instructions at %s | llm=%s | fallback=%s | skipped=%s",
-        master_timeline_json,
-        generated,
-        fallback_count,
-        skipped,
+        master_timeline_json, generated, fallback_count, skipped,
     )
     return rows
 

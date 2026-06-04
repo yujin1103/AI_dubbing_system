@@ -111,6 +111,112 @@ def synthesize_dub_chunks(
     return rows
 
 
+def synthesize_dub_pipelined(
+    master_timeline_json: str | Path,
+    *,
+    # instruct(producer) 설정
+    instruct_mode: str = "vectorengine_gpt",
+    instruct_env_file: str | Path = ".env",
+    instruct_timeout_sec: int = 60,
+    instruct_skip_existing: bool = True,
+    instruct_fallback_on_error: bool = True,
+    instruct_batch_size: int = 6,
+    # TTS(consumer) 설정 — synthesize_dub_chunks 와 동일
+    model_dir: str | Path,
+    cosyvoice_repo: str | Path | None = None,
+    system_prompt: str = "",
+    stream: bool = False,
+    skip_existing: bool = True,
+    min_prompt_sec: float = 1.2,
+    passthrough_source_audio: bool = False,
+    use_cross_lingual: bool = False,
+    target_language: str = "",
+    fit_to_duration: bool = False,
+    output_json: str | Path | None = None,
+    engine: str = "cosyvoice",
+    device: str = "cuda:0",
+    speed: float = 1.0,
+    reference_mode: str = "auto",
+    compact_timeline: bool = False,
+    duration_fit_min_tempo: float = 0.85,
+    duration_fit_max_tempo: float = 1.2,
+    duration_fit_trim_overlong: bool = False,
+    trim_silence: bool = False,
+    silence_trim_threshold_dbfs: float = -45.0,
+    max_leading_silence_sec: float = 0.1,
+    max_trailing_silence_sec: float = 0.2,
+    cap_risky_self_reference: bool = True,
+    prompt_cap_max_sec: float = 4.5,
+    style_priority: str = "instruction",
+) -> list[dict[str, Any]]:
+    """instruct↔TTS 오버랩: instruct(네트워크 LLM)를 producer 스레드로 돌리며, 각 청크 instruct가
+    확정되는 즉시 consumer(메인 스레드, GPU)가 그 청크 TTS를 합성한다. instruct(~100s)를 TTS(GPU)
+    아래로 숨겨 dub-half 단축. 결과는 generate_tts_instructions + synthesize_dub_chunks 순차와 동일."""
+    import threading
+    from generate_tts_instructions import generate_tts_instructions
+
+    rows = load_json(master_timeline_json)
+    config = TtsRuntimeConfig.from_kwargs(
+        model_dir=model_dir, system_prompt=system_prompt, stream=stream, skip_existing=skip_existing,
+        min_prompt_sec=min_prompt_sec, passthrough_source_audio=passthrough_source_audio,
+        use_cross_lingual=use_cross_lingual, target_language=target_language, fit_to_duration=fit_to_duration,
+        engine=engine, device=device, speed=speed, reference_mode=reference_mode, compact_timeline=compact_timeline,
+        duration_fit_min_tempo=duration_fit_min_tempo, duration_fit_max_tempo=duration_fit_max_tempo,
+        duration_fit_trim_overlong=duration_fit_trim_overlong, trim_silence=trim_silence,
+        silence_trim_threshold_dbfs=silence_trim_threshold_dbfs, max_leading_silence_sec=max_leading_silence_sec,
+        max_trailing_silence_sec=max_trailing_silence_sec, cap_risky_self_reference=cap_risky_self_reference,
+        prompt_cap_max_sec=prompt_cap_max_sec, style_priority=style_priority,
+    )
+    output_target = output_json or master_timeline_json
+
+    if config.passthrough_source_audio:
+        rows = passthrough_source_chunks(rows, runtime_settings=config.runtime_settings, skip_existing=config.skip_existing)
+        save_json(_compact_timeline_rows(rows) if config.compact_timeline else rows, output_target)
+        return rows
+
+    # 청크별 ready 이벤트 — producer 가 instruct 확정 즉시 set, consumer 가 wait.
+    ready: dict[str, threading.Event] = {str(r.get("chunk_id", "") or ""): threading.Event() for r in rows}
+    prod_err: list[Exception] = []
+
+    if str(style_priority).strip().lower() == "voice":
+        # voice 모드는 instruct 무시 → 전부 즉시 ready
+        for _ev in ready.values():
+            _ev.set()
+    else:
+        def _producer():
+            try:
+                generate_tts_instructions(
+                    master_timeline_json, rows=rows, save_result=False,
+                    on_ready=lambda r: ready[str(r.get("chunk_id", "") or "")].set(),
+                    mode=instruct_mode, env_file=instruct_env_file, timeout_sec=instruct_timeout_sec,
+                    skip_existing=instruct_skip_existing, fallback_on_error=instruct_fallback_on_error,
+                    batch_size=instruct_batch_size,
+                )
+            except Exception as exc:  # noqa: BLE001
+                prod_err.append(exc)
+            finally:
+                for _ev in ready.values():  # 실패해도 consumer 가 멈추지 않도록 남은 이벤트 해제
+                    _ev.set()
+        threading.Thread(target=_producer, daemon=True, name="instruct-producer").start()
+
+    session = initialize_tts_session(
+        model_dir=model_dir, cosyvoice_repo=cosyvoice_repo, rows=rows,
+        normalized_reference_mode=config.normalized_reference_mode,
+        min_prompt_sec=config.min_prompt_sec, output_target_path=output_target,
+    )
+    logger.info("Pipelined dub: instruct↔TTS overlap for %s rows", len(rows))
+    for row in rows:
+        ev = ready.get(str(row.get("chunk_id", "") or ""))
+        if ev is not None:
+            ev.wait()
+        process_chunk(row, config=config, session=session)
+    save_json(_compact_timeline_rows(rows) if config.compact_timeline else rows, output_target)
+    if prod_err:
+        raise prod_err[0]
+    logger.info("Pipelined dub complete: %s chunks", len(rows))
+    return rows
+
+
 def build_arg_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description="Run CosyVoice TTS for each translated chunk.")
     parser.add_argument("master_timeline_json")

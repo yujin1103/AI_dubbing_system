@@ -100,6 +100,7 @@
     "engine": "cosyvoice",
     "_note": "CosyVoice3-0.5B inference_instruct2 + fade-in/out (fixed 2026-05-15)",
     "prewarm": true,
+    "pipelined": true,
     "passthrough_on_copy_source": true,
     "min_prompt_sec": 3.0,
     "speed": 1.0,
