@@ -322,6 +322,7 @@ def _build_context_refinement_messages(
     full_transcript: str,
     source_language: str,
     target_language: str,
+    register_hint: str = "",
 ) -> tuple[str, str]:
     source_label = source_language or "source language"
     target_label = target_language or "target language"
@@ -371,6 +372,21 @@ def _build_context_refinement_messages(
             "13. If a source line is empty, return an empty string for that line.\n"
             "14. Output JSON only. No markdown, explanations, or extra keys."
             + _extra_prompt_rules(target_label)
+        )
+
+    # 전체 일관 화법 강제(자동 판정된 register 를 Pass B 가 실제 적용 — 청크별 혼용 제거).
+    _norm_reg = (register_hint or "").strip().lower()
+    if _norm_reg in {"polite", "casual"}:
+        if _is_korean_target(target_language):
+            _forms = "존댓말 (-요/-ㅂ니다)" if _norm_reg == "polite" else "반말 (-아/-어/-다)"
+        elif japanese_target:
+            _forms = "丁寧体 (です・ます)" if _norm_reg == "polite" else "常体・plain (だ・である)"
+        else:
+            _forms = _norm_reg + " register"
+        system_prompt += (
+            f"\nCRITICAL REGISTER — the ENTIRE piece is in {_norm_reg} register. EVERY line MUST "
+            f"consistently use {_forms}. If a draft line uses the other register, REWRITE it to "
+            f"{_forms}. Never mix registers across lines."
         )
 
     batch_payload: list[dict[str, Any]] = []
@@ -770,7 +786,7 @@ def _refine_translations_with_context(
     _refine_pre: dict[int, tuple[str, Any]] = {}
     def _refine_call(_ib):
         _bi, _batch = _ib
-        _sp, _up = _build_context_refinement_messages(_batch, full_transcript=full_transcript, source_language=source_language, target_language=target_language)
+        _sp, _up = _build_context_refinement_messages(_batch, full_transcript=full_transcript, source_language=source_language, target_language=target_language, register_hint=(_REGISTER_OVERRIDE or ""))
         try:
             _resp = _translate_with_vectorengine_api(
                 "", source_language=source_language, target_language=target_language,
@@ -801,7 +817,7 @@ def _refine_translations_with_context(
             raw_response = _pre[1]
         else:
             system_prompt, user_prompt = _build_context_refinement_messages(
-                batch, full_transcript=full_transcript, source_language=source_language, target_language=target_language)
+                batch, full_transcript=full_transcript, source_language=source_language, target_language=target_language, register_hint=(_REGISTER_OVERRIDE or ""))
             try:
                 raw_response = _translate_with_vectorengine_api(
                     "", source_language=source_language, target_language=target_language,
@@ -1063,23 +1079,68 @@ def generate_register_decision(
     )[:6000]
     if not transcript.strip():
         return ""
-    try:
-        resp = _translate_with_vectorengine_api(
-            "", source_language=source_language, target_language=target_language,
-            target_duration_sec=None, duration_budget=None, register_hint="",
-            api_key=api_key, base_url=base_url, endpoint=endpoint, model_name=model_name,
-            timeout_sec=timeout_sec, response_format_json=False,
-            system_prompt_override=_REGISTER_DECISION_SYSTEM,
-            user_prompt_override="Transcript:\n" + transcript,
-        )
-    except Exception as exc:
-        logger.warning("auto register 결정 실패: %s", exc)
-        return ""
+    import time as _time
+    resp = ""
+    for _attempt in range(3):  # transient 429(throttle) 대비 backoff 재시도
+        try:
+            resp = _translate_with_vectorengine_api(
+                "", source_language=source_language, target_language=target_language,
+                target_duration_sec=None, duration_budget=None, register_hint="",
+                api_key=api_key, base_url=base_url, endpoint=endpoint, model_name=model_name,
+                timeout_sec=timeout_sec, response_format_json=False,
+                system_prompt_override=_REGISTER_DECISION_SYSTEM,
+                user_prompt_override="Transcript:\n" + transcript,
+            )
+            break
+        except Exception as exc:
+            logger.warning("auto register 결정 시도 %d/3 실패: %s", _attempt + 1, exc)
+            if _attempt < 2:
+                _time.sleep(2.0 * (_attempt + 1))
     word = (resp or "").strip().lower()
     for token in ("polite", "casual"):  # 'mixed'/기타는 강제 안 함
         if token in word:
             return token
     return ""
+
+
+def _register_token(text: str, target_language: str) -> str:
+    """번역 1줄의 화법을 어미로 'polite'/'casual'/'' 분류(언어별, API 호출 없음).
+    한국어 존댓말/반말·일본어 丁寧(です/ます, katakana 포함)/plain. 문법적 화법 없는 언어는 ''."""
+    t = (text or "").strip().rstrip(" 。.!?…\"”'’」』）)")
+    if not t:
+        return ""
+    if _is_korean_target(target_language):
+        if re.search(r"(요|니다|니까|세요|십시오|시오|어요|아요|에요|예요|죠|군요|네요|는데요|던데요)$", t):
+            return "polite"
+        if re.search(r"(어|아|야|해|지|네|다|군|걸|까|냐|자|래|거든|는데|던데|는걸|을걸|을게|ㄴ다|는다)$", t):
+            return "casual"
+        return ""
+    if _is_japanese_target(target_language):
+        if re.search(r"(ます|ません|ました|ませんでした|ましょう|です|でした|でしょう|ください|ますか|ですか|マス|マセン|マシタ|デス|デシタ|マショウ|クダサイ)$", t):
+            return "polite"
+        if re.search(r"(だ|だった|である|する|した|ない|なかった|てる|てた|だろう|よ|ね|ぞ|わ|る|い)$", t):
+            return "casual"
+        return ""
+    return ""
+
+
+def _dominant_register(rows: list[dict[str, Any]], target_language: str) -> str:
+    """번역 결과 전체의 어미 화법 다수결 → 'polite'/'casual'/'' (동률·미지원 언어·무표본은 '')."""
+    if not (_is_korean_target(target_language) or _is_japanese_target(target_language)):
+        return ""
+    from collections import Counter
+    counts: "Counter[str]" = Counter()
+    for r in rows:
+        tok = _register_token((r.get("text_tts") or r.get("text_translated") or ""), target_language)
+        if tok:
+            counts[tok] += 1
+    p, q = counts.get("polite", 0), counts.get("casual", 0)
+    total = p + q
+    if total == 0 or p == q:
+        return ""
+    winner, n = ("polite", p) if p > q else ("casual", q)
+    # 명확한 다수(>=60%)일 때만 채택 — 박빙(번역 자연 산포)은 LLM 분류에 맡기고 강제 안 함.
+    return winner if (n / total) >= 0.6 else ""
 
 
 def build_translation_entries(
@@ -1306,6 +1367,15 @@ def build_translation_entries(
         translated_rows.append(translated_row)
         if mode == "vectorengine_gpt":
             save_json(translated_rows, output_json)
+
+    # 화법 자동 판정(robust fallback): LLM 분류 호출이 실패/rate-limit/미설정이면, Pass A 번역
+    # 결과의 어미 다수결로 영상 화법을 결정한다(추가 API 호출 없음). Pass B 문맥정제가 이 화법으로
+    # 전 청크를 통일 → 반말/존댓말(존댓말/plain) 무작위 혼용 방지. 'mixed'/동률은 강제 안 함.
+    if mode == "vectorengine_gpt" and auto_register and not _REGISTER_OVERRIDE:
+        _dom = _dominant_register(translated_rows, target_language)
+        if _dom:
+            _REGISTER_OVERRIDE = _dom
+            logger.info("auto register(번역 다수결 자동판정): %s — Pass B 에서 전체 통일", _dom)
 
     if mode == "vectorengine_gpt" and context_refine:
         translated_rows = _refine_translations_with_context(
