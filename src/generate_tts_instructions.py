@@ -171,6 +171,23 @@ How to write the directive:
 )
 
 
+def _row_tts_text_language(row: dict[str, Any]) -> str:
+    """row 번역 품질 메트릭에 기록된 target_language(예 'Japanese')를 읽어 instruct LLM 에
+    '이 대사가 어떤 언어로 발화되는지' 알려준다. 다국어 무관 — 언어 하드코딩 없음.
+    메트릭이 없으면 '' (언어 미상; 특정 언어로 가정하지 않음).
+    (translate 단계 assess_translation_row 가 quality_gates.translation.metrics.target_language 로 기록)."""
+    quality_gates = row.get("quality_gates")
+    if isinstance(quality_gates, dict):
+        gate = quality_gates.get("translation")
+        if isinstance(gate, dict):
+            metrics = gate.get("metrics")
+            if isinstance(metrics, dict):
+                lang = str(metrics.get("target_language", "") or "").strip()
+                if lang:
+                    return lang
+    return ""
+
+
 def _build_user_prompt(row: dict[str, Any], all_rows: list[dict[str, Any]] | None = None) -> str:
     chunk_id = str(row.get("chunk_id", "") or "")
     prev_line, next_line = _adjacent_lines(all_rows or [], chunk_id) if all_rows else ("", "")
@@ -180,7 +197,7 @@ def _build_user_prompt(row: dict[str, Any], all_rows: list[dict[str, Any]] | Non
         "previous_line": prev_line,
         "current_line": _normalize_text(str(row.get("text_src", "") or "")),
         "next_line": next_line,
-        "target_tts_text_language": "Korean",
+        "target_tts_text_language": _row_tts_text_language(row),
         "emotion2vec": {
             "label": _emotion_label(row),
             "confidence": emotion.get("confidence") if isinstance(emotion, dict) else None,
@@ -203,7 +220,7 @@ def _build_batch_user_prompt(rows: list[dict[str, Any]], all_rows: list[dict[str
                 "previous_line": prev_line,
                 "current_line": _normalize_text(str(row.get("text_src", "") or "")),
                 "next_line": next_line,
-                "target_tts_text_language": "Korean",
+                "target_tts_text_language": _row_tts_text_language(row),
                 "emotion2vec": {
                     "label": _emotion_label(row),
                     "confidence": emotion.get("confidence") if isinstance(emotion, dict) else None,

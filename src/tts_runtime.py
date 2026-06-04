@@ -263,9 +263,27 @@ class InferenceInputs:
 
 
 def _prepare_cosyvoice_imports(repo_dir: str | Path) -> None:
-    repo_path = resolve_project_path(repo_dir)
-    matcha_path = repo_path / "third_party" / "Matcha-TTS"
-    for candidate in (repo_path, matcha_path):
+    """CosyVoice repo + Matcha-TTS 를 sys.path 에 추가. 설정 경로에 cosyvoice 패키지가 없으면
+    알려진 위치(/opt/CosyVoice · 리포 루트 CosyVoice · third_party/CosyVoice)를 자동 탐색 —
+    설정의 경로 하드코딩에 의존하지 않고 어느 환경에서도 cosyvoice 를 임포트 가능하게 한다."""
+    def _resolve(p: str | Path) -> Path:
+        ps = str(p)
+        return Path(ps) if ps.startswith("/") else resolve_project_path(ps)
+
+    candidates: list[Path] = []
+    if repo_dir:
+        candidates.append(_resolve(repo_dir))
+    for extra in ("/opt/CosyVoice", "CosyVoice", "third_party/CosyVoice"):
+        try:
+            candidates.append(_resolve(extra))
+        except Exception:
+            continue
+    # cosyvoice 패키지가 실제로 있는 첫 후보 선택(없으면 설정 경로 그대로 — 기존 동작 보존)
+    repo_path = next((c for c in candidates if (c / "cosyvoice").is_dir()),
+                     candidates[0] if candidates else None)
+    if repo_path is None:
+        return
+    for candidate in (repo_path, repo_path / "third_party" / "Matcha-TTS"):
         if candidate.exists():
             candidate_str = str(candidate)
             if candidate_str not in sys.path:
@@ -318,31 +336,81 @@ def _language_token_for_target_language(target_language: str) -> str:
     return ""
 
 
-def _chinese_language_directive(target_language: str) -> str:
-    """CosyVoice3 instruct2 출력 언어를 강제하는 중국어 자연어 지시(예 '请用韩语说。').
+# 검증된 언어→중국어 출력지시 시드(테스트 완료, 정확성 보장). 미등록 언어는 LLM 으로 자동 생성·캐시.
+# 这是 cache+fallback 이지 언어 화이트리스트가 아님 — 어떤 target_language 든 _llm_language_directive 로 자동 처리.
+_LANG_DIRECTIVE_SEED: dict[str, str] = {
+    "korean": "请用韩语说。", "ko": "请用韩语说。",
+    "japanese": "请用日语说。", "ja": "请用日语说。", "jp": "请用日语说。",
+    "english": "请用英语说。", "en": "请用英语说。",
+    "spanish": "请用西班牙语说。", "es": "请用西班牙语说。",
+    "french": "请用法语说。", "fr": "请用法语说。",
+    "german": "请用德语说。", "de": "请用德语说。",
+    "cantonese": "请用广东话说。", "yue": "请用广东话说。",
+    "chinese": "", "zh": "", "": "",  # 중국어/미지정은 지시 없음(모델 기본)
+}
+_LANG_DIRECTIVE_CACHE: dict[str, str] = dict(_LANG_DIRECTIVE_SEED)
+_LANG_DIRECTIVE_LOCK = threading.Lock()
 
-    CosyVoice3 의 언어/방언 제어는 중국어로 학습됨(README: '请用广东话表达'). 따라서
-    <|ko|> 특수토큰(토크나이저에 없어 'ko' 로 읽힘)이 아니라 '请用韩语说。' 같은 중국어
-    지시문을 instruct 앞에 끼우면 음성 LM 생성단계가 해당 언어 운율로 조건화된다.
-    이게 없으면 짧은 한국어 텍스트가 모델 기본값(중국어/영어) 운율로 새는 문제 발생.
+
+def _llm_language_directive(target_language: str) -> str:
+    """임의 target_language → CosyVoice3 중국어 출력지시(请用X语说。)를 LLM 으로 자동 생성.
+    언어 하드코딩 테이블 없이 '모든 언어'를 지원하기 위함. 키 없음/실패 시 '' (모델 기본 언어)."""
+    import os
+    try:
+        from common import load_env_file
+        from translate_chunks import _translate_with_vectorengine_api  # lazy: 순환참조 회피
+    except Exception:
+        return ""
+    try:
+        load_env_file(os.environ.get("DUB_ENV_FILE", ".env"))
+    except Exception:
+        pass
+    api_key = os.environ.get("VECTORENGINE_API_KEY", "").strip()
+    if not api_key:
+        return ""
+    system_prompt = (
+        "You map a language name to a Mandarin Chinese TTS directive. Output EXACTLY one line in the form "
+        "请用X语说。 where X is the Chinese name of the target language "
+        "(Japanese->请用日语说。, Italian->请用意大利语说。, Cantonese->请用广东话说。, Arabic->请用阿拉伯语说。). "
+        "Output only that single line — no quotes, no explanation."
+    )
+    try:
+        raw = _translate_with_vectorengine_api(
+            "",
+            source_language="English", target_language="Chinese",
+            target_duration_sec=None, duration_budget=None, register_hint="",
+            api_key=api_key,
+            base_url=os.environ.get("VECTORENGINE_BASE_URL", "https://api.vectorengine.ai/").strip(),
+            endpoint=os.environ.get("VECTORENGINE_ENDPOINT", "/v1/chat/completions").strip(),
+            model_name=os.environ.get("VECTORENGINE_MODEL", "gpt-5.4").strip(),
+            timeout_sec=30, response_format_json=False,
+            system_prompt_override=system_prompt,
+            user_prompt_override=f"Target language: {target_language}",
+        )
+    except Exception:
+        return ""
+    line = raw.strip().splitlines()[0].strip() if (raw and raw.strip()) else ""
+    # 안전 가드: 정확히 请用…说 형태만 수용(LLM 잡설/오류 방지)
+    if line.startswith("请用") and "说" in line and len(line) <= 24:
+        return line
+    return ""
+
+
+def _chinese_language_directive(target_language: str) -> str:
+    """CosyVoice3 instruct2 출력 언어를 강제하는 중국어 자연어 지시(请用X语说。).
+
+    CosyVoice3 의 언어/방언 제어는 중국어로 학습됨(README '请用广东话表达'). instruct 앞에
+    이 지시를 끼우면 음성 LM 이 해당 언어 운율로 조건화된다(없으면 짧은 텍스트가 모델 기본
+    언어로 샘). 검증 시드 캐시 우선, 미등록 언어는 LLM 으로 자동 확장 — 언어 하드코딩 없음.
     """
     normalized = (target_language or "").strip().lower()
-    if normalized in {"ko", "korean"} or "korea" in normalized:
-        return "请用韩语说。"
-    if normalized in {"ja", "jp", "japanese"} or "japan" in normalized:
-        return "请用日语说。"
-    if normalized in {"en", "english"}:
-        return "请用英语说。"
-    if normalized in {"es", "spanish"}:
-        return "请用西班牙语说。"
-    if normalized in {"fr", "french"}:
-        return "请用法语说。"
-    if normalized in {"de", "german"}:
-        return "请用德语说。"
-    if normalized in {"yue", "cantonese"}:
-        return "请用广东话说。"
-    # 중국어 타깃이거나 미지 언어면 지시 없음(모델 기본)
-    return ""
+    with _LANG_DIRECTIVE_LOCK:
+        if normalized in _LANG_DIRECTIVE_CACHE:
+            return _LANG_DIRECTIVE_CACHE[normalized]
+    directive = _llm_language_directive(target_language)
+    with _LANG_DIRECTIVE_LOCK:
+        _LANG_DIRECTIVE_CACHE[normalized] = directive  # '' 도 캐시(런 내 반복 호출 방지)
+    return directive
 
 
 def _build_cross_lingual_text(
@@ -855,16 +923,20 @@ def initialize_tts_session(
 
 
 _HANGUL_SYL_RE = re.compile(r"[가-힣]")
+# 다국어 감탄사 음절: 한글 음절 + 일본어 히라가나/가타카나 + 한자(CJK). 영어/숫자는 제외.
+# (한국어 텍스트엔 kana/kanji 가 없으므로 한국어 동작은 기존과 byte-identical)
+_INTERJECTION_SYL_RE = re.compile(r"[가-힣぀-ゟ゠-ヿ一-鿿]")
 
 
 def _is_short_interjection(translated_text: str) -> bool:
-    """단음절 감탄사("아"/"어", 원문 "Oh"/"Ah") 판별. 한글 음절 1개면 True.
+    """단음절 감탄사("아"/"어", 일본어 "あ"/"え", 원문 "Oh"/"Ah") 판별. 음절 1개면 True.
 
     CosyVoice3 는 1음소(단모음) 텍스트를 안정적으로 합성 못해 중국어/영어로 샘
-    (언어지시 请用韩语说 로도 해결 안 됨 — 물리적 한계). 이런 청크는 화자 원본
+    (언어지시 请用韩语说/请用日语说 로도 해결 안 됨 — 물리적 한계). 이런 청크는 화자 원본
     오디오를 passthrough 하는 게 자연스럽다(감탄사는 언어 보편적). 2음절 이상은 TTS.
+    다국어: 한글·kana·kanji 음절을 세며, 한국어 텍스트엔 kana/kanji 가 없어 무회귀.
     """
-    return len(_HANGUL_SYL_RE.findall(translated_text or "")) == 1
+    return len(_INTERJECTION_SYL_RE.findall(translated_text or "")) == 1
 
 
 def process_chunk(row: dict[str, Any], *, config: TtsRuntimeConfig, session: TtsSession) -> None:

@@ -30,22 +30,22 @@ def _word_count(text: str) -> int:
     normalized = _normalize_text(text)
     if not normalized:
         return 0
-    return len(re.findall(r"[A-Za-z0-9\u3131-\u318E\uAC00-\uD7A3]+", normalized))
+    return len(re.findall(r"[^\W_]+", normalized))
 
 
 def _repetition_ratio(text: str) -> float:
-    tokens = re.findall(r"[A-Za-z0-9\u3131-\u318E\uAC00-\uD7A3]+", _normalize_text(text).lower())
+    tokens = re.findall(r"[^\W_]+", _normalize_text(text).lower())
     if len(tokens) < 3:
         return 0.0
     return 1.0 - _safe_ratio(float(len(set(tokens))), float(len(tokens)))
 
 
 def _content_text(value: str) -> str:
-    return "".join(re.findall(r"[A-Za-z0-9\u3131-\u318E\uAC00-\uD7A3]+", _normalize_text(value).lower()))
+    return "".join(re.findall(r"[^\W_]+", _normalize_text(value).lower()))
 
 
 def _first_content_token(value: str) -> str:
-    tokens = re.findall(r"[A-Za-z0-9\u3131-\u318E\uAC00-\uD7A3]+", _normalize_text(value).lower())
+    tokens = re.findall(r"[^\W_]+", _normalize_text(value).lower())
     return tokens[0] if tokens else ""
 
 
