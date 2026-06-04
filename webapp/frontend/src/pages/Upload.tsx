@@ -8,12 +8,25 @@ import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { PillInput } from "@/components/ui/pill-input";
 
+// 백엔드가 임의 언어를 자동 지원(중국어 출력지시를 LLM 으로 자동 생성)하므로 목록은 빠른 선택용일 뿐,
+// 검색창에 아무 언어나 입력하면 그대로 target_language 로 사용 가능(자유입력).
 const COSYVOICE_LANGUAGES = [
-  { label: "Korean", token: "<|ko|>", aliases: "ko korea 한국어 Korean" },
-  { label: "Japanese", token: "<|ja|>", aliases: "ja jp japan 일본어 Japanese" },
-  { label: "English", token: "<|en|>", aliases: "en 영어 English" },
-  { label: "Chinese", token: "<|zh|>", aliases: "zh china 중국어 Mandarin Chinese" },
-  { label: "Cantonese", token: "<|yue|>", aliases: "yue 홍콩어 광둥어 Cantonese" },
+  { label: "Korean", aliases: "ko korea 한국어" },
+  { label: "Japanese", aliases: "ja jp japan 일본어" },
+  { label: "English", aliases: "en 영어" },
+  { label: "Chinese", aliases: "zh china 중국어 mandarin" },
+  { label: "Cantonese", aliases: "yue 홍콩어 광둥어" },
+  { label: "Spanish", aliases: "es 스페인어" },
+  { label: "French", aliases: "fr 프랑스어" },
+  { label: "German", aliases: "de 독일어" },
+  { label: "Italian", aliases: "it 이탈리아어" },
+  { label: "Portuguese", aliases: "pt 포르투갈어" },
+  { label: "Russian", aliases: "ru 러시아어" },
+  { label: "Vietnamese", aliases: "vi 베트남어" },
+  { label: "Thai", aliases: "th 태국어" },
+  { label: "Indonesian", aliases: "id 인도네시아어" },
+  { label: "Arabic", aliases: "ar 아랍어" },
+  { label: "Hindi", aliases: "hi 힌디어" },
 ] as const;
 
 export function Upload() {
@@ -228,30 +241,40 @@ function Knobs({ overrides, onChange }: { overrides: RunOverrides; onChange: (ne
 
 function LanguagePicker({ value, onChange }: { value: string; onChange: (value: string) => void }) {
   const [query, setQuery] = useState("");
+  const needle = query.trim().toLowerCase();
   const filtered = useMemo(() => {
-    const needle = query.trim().toLowerCase();
     if (!needle) return COSYVOICE_LANGUAGES;
-    return COSYVOICE_LANGUAGES.filter((lang) => `${lang.label} ${lang.token} ${lang.aliases}`.toLowerCase().includes(needle));
-  }, [query]);
+    return COSYVOICE_LANGUAGES.filter((lang) => `${lang.label} ${lang.aliases}`.toLowerCase().includes(needle));
+  }, [needle]);
+  const custom = query.trim();
+  const hasExact = COSYVOICE_LANGUAGES.some((lang) => lang.label.toLowerCase() === needle);
+  const isPreset = COSYVOICE_LANGUAGES.some((lang) => lang.label === value);
 
   return (
     <div className="space-y-2 md:col-span-2">
       <div className="flex items-end justify-between gap-3">
         <label className="text-body-sm-strong text-primary">target_language</label>
-        <span className="font-mono text-code-sm text-mute">CosyVoice tokens</span>
+        <span className="font-mono text-code-sm text-mute">any language — auto</span>
       </div>
-      <PillInput value={query} onChange={(e) => setQuery(e.target.value)} placeholder="Search Korean, Japanese, English..." />
+      <PillInput value={query} onChange={(e) => setQuery(e.target.value)} placeholder="Korean, Japanese, Spanish, Vietnamese… or type any language" />
       <div className="flex flex-wrap gap-2">
         {filtered.map((lang) => {
           const selected = value === lang.label;
           return (
             <button key={lang.label} type="button" onClick={() => onChange(lang.label)} className={`inline-flex h-9 items-center gap-2 rounded-full px-4 text-button-md ${selected ? "bg-primary text-white" : "bg-surface-soft text-primary hover:bg-surface-container"}`}>
               {lang.label}
-              <span className={selected ? "text-white/70" : "text-mute"}>{lang.token}</span>
             </button>
           );
         })}
+        {custom && !hasExact && (
+          <button type="button" onClick={() => onChange(custom)} className={`inline-flex h-9 items-center gap-2 rounded-full px-4 text-button-md ${value === custom ? "bg-primary text-white" : "bg-surface-soft text-primary hover:bg-surface-container"}`}>
+            Use “{custom}”
+          </button>
+        )}
       </div>
+      {value && !isPreset && (
+        <p className="text-caption-sm text-mute">선택됨: {value} — 백엔드가 언어 지시를 자동 생성합니다.</p>
+      )}
     </div>
   );
 }

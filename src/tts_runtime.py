@@ -146,6 +146,8 @@ class TtsRuntimeConfig:
     passthrough_source_audio: bool
     device: str
     style_priority: str
+    f0_guard: bool
+    f0_guard_attempts: int
 
     @classmethod
     def from_kwargs(
@@ -175,6 +177,8 @@ class TtsRuntimeConfig:
         cap_risky_self_reference: bool = True,
         prompt_cap_max_sec: float = 4.5,
         style_priority: str = "instruction",
+        f0_guard: bool = False,
+        f0_guard_attempts: int = 4,
     ) -> TtsRuntimeConfig:
         normalized_engine = (engine or "cosyvoice").strip().lower()
         if normalized_engine != "cosyvoice":
@@ -229,6 +233,8 @@ class TtsRuntimeConfig:
             passthrough_source_audio=passthrough_source_audio,
             device=device,
             style_priority=normalized_style_priority,
+            f0_guard=bool(f0_guard),
+            f0_guard_attempts=int(f0_guard_attempts),
         )
 
 
@@ -939,6 +945,102 @@ def _is_short_interjection(translated_text: str) -> bool:
     return len(_INTERJECTION_SYL_RE.findall(translated_text or "")) == 1
 
 
+# F0-가이드 재합성: 교차언어 클로닝이 화자 피치를 못 지켜 음역이 바뀌는(예 남성→여성대) 문제를
+# seed 다양화로 여러 번 합성 → 원본 화자 F0 에 가장 가까운 take 자동 선택. 언어 무관.
+_F0_GUARD_SEEDS = (13, 42, 100, 7, 1, 2024, 77, 555)
+_F0_DRIFT_OCTAVES = 0.5    # |log2(take/src)| 이 값 초과면 드리프트로 보고 재합성(트리거)
+_F0_ACCEPT_OCTAVES = 0.3   # 이 값 이하 take 확보 시 조기종료(원본 음역에 충분히 근접)
+_F0_SRC_MIN_HZ = 80.0      # 원본 F0 신뢰범위 — 밖이면 pyin 옥타브오류/도달불가로 보고 가드 스킵
+_F0_SRC_MAX_HZ = 340.0
+
+
+def _median_f0_hz(wav_path: str | Path) -> float | None:
+    """voiced 프레임 median F0(Hz). 무성/짧음/실패면 None. (librosa.pyin)"""
+    try:
+        import numpy as _np
+        import librosa as _lb
+        y, _sr = _lb.load(str(wav_path), sr=16000, mono=True)
+        if y is None or len(y) < int(16000 * 0.2):
+            return None
+        f0, _vf, _vp = _lb.pyin(y, fmin=65, fmax=500, sr=16000, frame_length=1024)
+        v = f0[~_np.isnan(f0)]
+        if len(v) < 3:
+            return None
+        return float(_np.median(v))
+    except Exception:
+        return None
+
+
+def _synthesize_with_f0_guard(
+    row: dict[str, Any],
+    reference: "ChunkReference",
+    *,
+    config: TtsRuntimeConfig,
+    session: TtsSession,
+    temp_output_wav: Path,
+) -> bool:
+    """1차 합성 후 원본 화자 F0 대비 피치 드리프트를 측정, 크면 seed 를 바꿔 재합성하여
+    원본 음역에 가장 가까운 take 를 채택. 비드리프트 청크는 1차 take 그대로(기존 동작 무변경)."""
+    import math
+    output_wav = resolve_project_path(row["dub_wav"])
+
+    def _one_take() -> bool:
+        # 매 take 마다 inputs 재생성(temp prompt audio 가 _run 의 finally 에서 소거되므로).
+        inputs = _prepare_inference_inputs(row, reference, config=config, session=session)
+        return _run_cosyvoice_inference(
+            row, inputs, config=config, session=session, temp_output_wav=temp_output_wav
+        )
+
+    # take0: ambient RNG — guard 비대상(비드리프트) 청크는 이 결과 그대로라 기존과 동일.
+    if not _one_take():
+        return False
+
+    src_ref = resolve_project_path(row.get("wav") or "")
+    src_f0 = _median_f0_hz(src_ref) if (src_ref and src_ref.exists()) else None
+    if src_f0 is None or not (_F0_SRC_MIN_HZ <= src_f0 <= _F0_SRC_MAX_HZ):
+        return True  # 원본 무성/측정불가/극단(옥타브오류·도달불가) → 가드 스킵(take0 유지)
+    take_f0 = _median_f0_hz(output_wav)
+    if take_f0 is None:
+        return True
+
+    def _score(f: float | None) -> float:
+        return abs(math.log2(f / src_f0)) if (f and f > 0) else 99.0
+
+    best_score = _score(take_f0)
+    if best_score <= _F0_DRIFT_OCTAVES:
+        return True  # 이미 원본 음역에 충분히 가까움
+
+    try:
+        from cosyvoice.utils.common import set_all_random_seed
+    except Exception:
+        return True
+
+    best_copy = output_wav.with_suffix(".f0best.wav")
+    copy_file(output_wav, best_copy)
+    logger.info(
+        "F0 guard %s: src=%.0fHz take0=%.0fHz (drift %.2f oct) → 재합성 시도",
+        row["chunk_id"], src_f0, take_f0, best_score,
+    )
+    attempts = max(1, min(int(config.f0_guard_attempts), len(_F0_GUARD_SEEDS)))
+    for seed in _F0_GUARD_SEEDS[:attempts]:
+        set_all_random_seed(int(seed))
+        if not _one_take():
+            continue
+        sc = _score(_median_f0_hz(output_wav))
+        if sc < best_score:
+            best_score = sc
+            copy_file(output_wav, best_copy)
+        if best_score <= _F0_ACCEPT_OCTAVES:
+            break
+    copy_file(best_copy, output_wav)
+    try:
+        best_copy.unlink()
+    except OSError:
+        pass
+    logger.info("F0 guard %s: 채택 take 거리 %.2f oct (src %.0fHz)", row["chunk_id"], best_score, src_f0)
+    return True
+
+
 def process_chunk(row: dict[str, Any], *, config: TtsRuntimeConfig, session: TtsSession) -> None:
     translated_text, _ = _resolve_tts_text(row)
     output_wav = resolve_project_path(row["dub_wav"])
@@ -973,8 +1075,12 @@ def process_chunk(row: dict[str, Any], *, config: TtsRuntimeConfig, session: Tts
     if reference is None:
         return
 
-    inputs = _prepare_inference_inputs(row, reference, config=config, session=session)
-    if not _run_cosyvoice_inference(row, inputs, config=config, session=session, temp_output_wav=temp_output_wav):
+    if config.f0_guard and config.use_cross_lingual:
+        ok = _synthesize_with_f0_guard(row, reference, config=config, session=session, temp_output_wav=temp_output_wav)
+    else:
+        inputs = _prepare_inference_inputs(row, reference, config=config, session=session)
+        ok = _run_cosyvoice_inference(row, inputs, config=config, session=session, temp_output_wav=temp_output_wav)
+    if not ok:
         return
 
     _finalize_chunk_success(row, output_wav, runtime_settings=config.runtime_settings)

@@ -538,6 +538,8 @@ def step_run_tts(config: dict) -> None:
         cap_risky_self_reference=bool(deep_get(config, ("tts", "cap_risky_self_reference"), True)),
         prompt_cap_max_sec=float(deep_get(config, ("tts", "prompt_cap_max_sec"), 4.5)),
         style_priority=str(deep_get(config, ("tts", "style_priority"), "instruction")),
+        f0_guard=bool(deep_get(config, ("tts", "f0_guard"), False)),
+        f0_guard_attempts=int(deep_get(config, ("tts", "f0_guard_attempts"), 4)),
     )
     _pipelined = bool(deep_get(config, ("tts", "pipelined"), False))
     if _pipelined and not passthrough_source_audio:

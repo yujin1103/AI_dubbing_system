@@ -45,6 +45,8 @@ def synthesize_dub_chunks(
     cap_risky_self_reference: bool = True,
     prompt_cap_max_sec: float = 4.5,
     style_priority: str = "instruction",
+    f0_guard: bool = False,
+    f0_guard_attempts: int = 4,
 ) -> list[dict[str, Any]]:
     rows = load_json(master_timeline_json)
     config = TtsRuntimeConfig.from_kwargs(
@@ -72,6 +74,8 @@ def synthesize_dub_chunks(
         cap_risky_self_reference=cap_risky_self_reference,
         prompt_cap_max_sec=prompt_cap_max_sec,
         style_priority=style_priority,
+        f0_guard=f0_guard,
+        f0_guard_attempts=f0_guard_attempts,
     )
     output_target = output_json or master_timeline_json
 
@@ -148,6 +152,8 @@ def synthesize_dub_pipelined(
     cap_risky_self_reference: bool = True,
     prompt_cap_max_sec: float = 4.5,
     style_priority: str = "instruction",
+    f0_guard: bool = False,
+    f0_guard_attempts: int = 4,
 ) -> list[dict[str, Any]]:
     """instruct↔TTS 오버랩: instruct(네트워크 LLM)를 producer 스레드로 돌리며, 각 청크 instruct가
     확정되는 즉시 consumer(메인 스레드, GPU)가 그 청크 TTS를 합성한다. instruct(~100s)를 TTS(GPU)
@@ -166,6 +172,7 @@ def synthesize_dub_pipelined(
         silence_trim_threshold_dbfs=silence_trim_threshold_dbfs, max_leading_silence_sec=max_leading_silence_sec,
         max_trailing_silence_sec=max_trailing_silence_sec, cap_risky_self_reference=cap_risky_self_reference,
         prompt_cap_max_sec=prompt_cap_max_sec, style_priority=style_priority,
+        f0_guard=f0_guard, f0_guard_attempts=f0_guard_attempts,
     )
     output_target = output_json or master_timeline_json
 
