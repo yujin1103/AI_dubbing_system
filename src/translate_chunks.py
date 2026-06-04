@@ -588,7 +588,12 @@ def _build_payload(
             ],
             "temperature": 0.1,
         }
-        if japanese_target or response_format_json:
+        # japanese_target 가 json_object 를 강제하는 건 JP '번역' 프롬프트가 JSON 출력을 쓰기 때문.
+        # 그러나 override(register 분류·scene_context 등 plain-text 응답)에는 강제하면 안 된다 —
+        # 그 프롬프트엔 'json' 단어가 없어 API 가 거부(HTTP 4xx: "messages must contain 'json'").
+        # 과거 이걸로 JP register/scene_context 호출이 항상 실패→약한 fallback 으로 샜음.
+        using_override = system_prompt_override is not None or user_prompt_override is not None
+        if response_format_json or (japanese_target and not using_override):
             payload["response_format"] = {"type": "json_object"}
         return payload
 
