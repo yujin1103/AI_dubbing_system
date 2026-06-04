@@ -1070,21 +1070,21 @@ def process_chunk(row: dict[str, Any], *, config: TtsRuntimeConfig, session: Tts
     if _should_skip_existing(row, output_wav, skip_existing=config.skip_existing):
         return
     source_text = (row.get("text_src") or "").strip()
-    # ★무발화 게이트(언어무관): 원문이 반응 감탄사(Oh/Ah/어/아…)이거나 번역이 1음절 감탄사인데, 그 원본이
-    # 사실상 무음(voiced_ratio≈0)이면 더빙을 만들지 않는다(합성·passthrough 둘 다 X). 무음구간에 "あっ"나
-    # faint 잔음이 끼어드는 '아/어 끝몰림'을 타깃언어 무관하게 차단. ※원문 기준이라 'Oh'→어(KO)·あっ(JA) 둘 다
-    # 잡힘. 여러 단어 실대사(분리로 조용해진 overlap)는 filler/1음절이 아니라 영향 없음 → 합성 유지.
-    if _is_source_filler(source_text) or _is_short_interjection(translated_text):
-        _feat = session.feature_map.get(str(row.get("chunk_id", "") or "").strip(), {})
-        _vr = _feat.get("voiced_ratio")
-        if _vr is not None and _vr < _NONSPEECH_VOICED_MIN:
-            if output_wav.exists():
-                output_wav.unlink()
-            row["dub_nonspeech_skip"] = True
-            row.pop("dub_error", None)
-            row.pop("dub_stale", None)
-            logger.info("Non-speech gate: drop silent filler %s (src=%r voiced=%.3f)", row["chunk_id"], source_text[:10], _vr)
-            return
+    # ★무발화 게이트(전체): 분리 dialogue 가 사실상 무음(voiced_ratio<min)인 청크는 더빙을 만들지 않는다.
+    # = 그 화자가 그 시점에 가청 발화를 안 함(화면상 입 닫힘). 합성하면 '입 닫았는데 말 나옴'(유령 발화),
+    # passthrough 하면 faint 잔음('아/어 끝몰림')이 된다. 타깃언어·텍스트 무관(원본 오디오 기준) — ASR 이
+    # 무음/잡음/분리잔여를 텍스트로 옮긴 모든 가짜 청크 제거. 실발화(voiced>=min)만 합성/passthrough.
+    # ※energy 기반 silence 라 voiced=0 은 '가청 발화 없음'을 뜻함. test4 에서 실발화는 voiced≥0.7 로 명확히 갈림.
+    _feat = session.feature_map.get(str(row.get("chunk_id", "") or "").strip(), {})
+    _vr = _feat.get("voiced_ratio")
+    if _vr is not None and _vr < _NONSPEECH_VOICED_MIN:
+        if output_wav.exists():
+            output_wav.unlink()
+        row["dub_nonspeech_skip"] = True
+        row.pop("dub_error", None)
+        row.pop("dub_stale", None)
+        logger.info("Non-speech gate: drop silent chunk %s (src=%r voiced=%.3f)", row["chunk_id"], source_text[:16], _vr)
+        return
     # 실발화 1음절 감탄사("아"/"어"/"Oh")는 CosyVoice 합성 실패(중국어로 샘) → 화자 원본 passthrough.
     if _is_short_interjection(translated_text):
         src_wav = resolve_project_path(row.get("wav") or "")

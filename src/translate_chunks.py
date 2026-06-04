@@ -187,7 +187,11 @@ def _build_budget_rewrite_messages(
             "Preserve the original meaning, tone, emotion, and scene intent.\n"
             "Do not add plot facts, explanations, stage directions, or markdown.\n"
             "Treat the output as a performance script: every number, date, unit, price, and abbreviation must be written exactly the way a voice actor would pronounce it aloud, not as Arabic digits or written shorthand.\n"
-            f"Fit the spoken line into roughly {min_units}-{max_units} speech units, preferably near {target_units}.\n"
+            f"CRITICAL LENGTH — the spoken line MUST fit {min_units}-{max_units} speech units (near {target_units}). "
+        "Translate the CORE meaning in the FEWEST natural words; do NOT pad, elaborate, or add words/clauses beyond "
+        "the source — output a tight line, not an expanded one. If the current translation is too long, CONDENSE: "
+        "cut redundancy, drop non-essential modifiers, merge clauses, use shorter synonyms. Fitting the spoken time "
+        "is a HARD requirement; minor detail loss is acceptable when the core meaning is preserved.\n"
             + register_rule
         )
         user_prompt = (
@@ -204,7 +208,11 @@ def _build_budget_rewrite_messages(
         "Preserve meaning, tone, subtext, and character voice.\n"
         "Do not add explanations, stage directions, or markdown.\n"
         "Treat the output as a performance script: every number, date, unit, price, and abbreviation must be written exactly the way a voice actor would pronounce it aloud, not as Arabic digits or written shorthand.\n"
-        f"Fit the spoken line into roughly {min_units}-{max_units} speech units, preferably near {target_units}.\n"
+        f"CRITICAL LENGTH — the spoken line MUST fit {min_units}-{max_units} speech units (near {target_units}). "
+        "Translate the CORE meaning in the FEWEST natural words; do NOT pad, elaborate, or add words/clauses beyond "
+        "the source — output a tight line, not an expanded one. If the current translation is too long, CONDENSE: "
+        "cut redundancy, drop non-essential modifiers, merge clauses, use shorter synonyms. Fitting the spoken time "
+        "is a HARD requirement; minor detail loss is acceptable when the core meaning is preserved.\n"
         "Prefer a line an actor could say naturally in one take.\n"
         + register_rule
     )
