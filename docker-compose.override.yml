@@ -1,0 +1,36 @@
+# 라이브 더빙 연결 — 새 GPU 이미지 빌드 없이, 이미 있는 dubbing_pipeline:full(모든 venv+모델)을
+# controller 서비스로 재사용. 모든 단계는 PIPELINE_ALL_IN_SERVICE=controller 로 이 단일 컨테이너에서 실행.
+# (Compose Go 파서는 YAML `<<` merge anchor 를 거부하므로 서비스별 명시.)
+services:
+  controller:
+    image: dubbing_pipeline:full
+    gpus: all
+    ipc: host
+    shm_size: "8gb"
+    # full 이미지 ENTRYPOINT=["sleep"] + base command ["sleep","infinity"] → `sleep sleep infinity` 로 깨짐.
+    # entrypoint+command 명시로 `sleep infinity` 고정(idle, docker compose exec 수신).
+    entrypoint: ["sleep"]
+    command: ["infinity"]
+    environment:
+      # runner 의 `python src/pipeline.py` 가 venv_lipsync python 이 되도록 PATH 선두 배치.
+      PATH: "/opt/venv_lipsync/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
+      PYTHONPATH: /workspace/project/src:/workspace/project
+      HF_HOME: /workspace/project/.hf-cache
+      TRANSFORMERS_CACHE: /workspace/project/.hf-cache
+      HUGGINGFACE_HUB_CACHE: /workspace/project/.hf-cache
+      # full 이미지에 박힌 MODELSCOPE_CACHE=/workspace/media/... 는 옛 마운트 경로(/project 누락)라
+      # 캐시된 emotion2vec 등을 못 찾고 1.8GB 재다운로드함 → 실제 마운트 경로로 교정.
+      MODELSCOPE_CACHE: /workspace/project/media/model_cache/modelscope
+      # TORCH_HOME 도 옛 경로(/workspace/media, 빈 디렉토리)라 torch.hub 사용 시 재다운로드 위험 →
+      # 실제 캐시(silero·checkpoints 존재)가 있는 마운트 경로로 교정.
+      TORCH_HOME: /workspace/project/media/model_cache/torch
+      # eres2netv2_helper.py 의 LOCAL_CACHE 기본값이 옛 경로(/workspace/media/model_cache/eres2netv2,
+      # /project 누락)라 repair_patches(gap_fill·focused_nemo_split 등)가 ERes2NetV2 로드 시 208MB
+      # 재다운로드함 → 실제 캐시(.ckpt+.msc 존재)가 있는 마운트 경로로 교정. (검증: 캐시히트 9.6s, 무다운로드)
+      ERES2NETV2_CACHE_DIR: /workspace/project/media/model_cache/eres2netv2
+
+  webapp-backend:
+    environment:
+      PIPELINE_ALL_IN_SERVICE: controller
+    # --reload 제거 — repo 전체(.hf-cache/meta/output) 감시로 더빙 중 백엔드가 재시작돼 run 을 죽였음.
+    command: ["uvicorn", "webapp.backend.app.main:app", "--host", "0.0.0.0", "--port", "8000"]
