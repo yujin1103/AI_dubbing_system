@@ -5,8 +5,10 @@ from typing import Any, Literal, Optional
 
 from pydantic import BaseModel, Field
 
-# 17단계 파이프라인 step 이름 — src/pipeline.py:STEP_FUNCTIONS 와 동기 유지
-# (face_clustering 은 신규 face service. 보존 v305f 의 face_clusters 결과 재현용.)
+# 20단계 파이프라인 step 이름 — src/pipeline.py:STEP_FUNCTIONS 와 동기 유지
+# (face_clustering 은 face service. build_repair_inputs/apply_preserved_repair/apply_gapfilled 은
+#  검증된 4-way fusion + 8 repair patch 를 모듈 pipeline 안에서 재현하는 화자분리 보정 단계 —
+#  preserved_repair.enabled=false 인 config 면 각 단계가 no-op 스킵된다.)
 PIPELINE_STEPS: tuple[str, ...] = (
     "extract_audio",
     "separate_audio",
@@ -14,6 +16,9 @@ PIPELINE_STEPS: tuple[str, ...] = (
     "diarize",
     "rttm_to_json",
     "face_clustering",
+    "build_repair_inputs",
+    "apply_preserved_repair",
+    "apply_gapfilled",
     "merge_chunks",
     "cut_chunks",
     "extract_emotion",
@@ -29,7 +34,7 @@ PIPELINE_STEPS: tuple[str, ...] = (
 
 StepName = Literal[
     "extract_audio", "separate_audio", "redirect_nonspeech", "diarize", "rttm_to_json",
-    "face_clustering", "merge_chunks",
+    "face_clustering", "build_repair_inputs", "apply_preserved_repair", "apply_gapfilled", "merge_chunks",
     "cut_chunks", "extract_emotion", "run_asr", "translate", "build_timeline",
     "generate_tts_instructions", "run_tts", "validate_tts", "compose_audio", "mux",
 ]
@@ -41,6 +46,7 @@ class RunOverrides(BaseModel):
     """UI 가 노출하는 knob — 이 외 필드는 base config 그대로 유지."""
 
     target_language: Optional[str] = None
+    source_language: Optional[str] = None  # 원본 영상 언어 수동 지정(빈 문자열=자동감지/미override)
     fit_to_duration: Optional[bool] = None
     duration_fit_max_tempo: Optional[float] = Field(default=None, ge=0.5, le=2.0)
     use_separator: Optional[bool] = None
@@ -125,6 +131,8 @@ class ReferenceCandidate(BaseModel):
     wav: Optional[str] = None
     accepted: bool = False
     score: Optional[float] = None
+    mos: Optional[float] = None  # MOS 품질점수(1~5) — reference_mos.json 채점 결과(있을 때만)
+    mos_recommended: bool = False  # 해당 화자 후보 중 MOS 최고(추천 배지) — 기존 선택 로직 불변
     warnings: list[str] = Field(default_factory=list)
     critical_flags: list[str] = Field(default_factory=list)
 
@@ -241,6 +249,7 @@ ActivityKind = Literal[
     "chunk_reference_edit",
     "chunk_redub",
     "step_rerun",
+    "mos_scored",
 ]
 
 

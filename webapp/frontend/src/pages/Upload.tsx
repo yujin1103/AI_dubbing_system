@@ -7,6 +7,7 @@ import { api, type ConfigEntry, type InputFile, type RunOverrides } from "@/api/
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { PillInput } from "@/components/ui/pill-input";
+import { toStaticUrl, fileName } from "@/lib/staticUrl";
 
 // 백엔드가 임의 언어를 자동 지원(중국어 출력지시를 LLM 으로 자동 생성)하므로 목록은 빠른 선택용일 뿐,
 // 검색창에 아무 언어나 입력하면 그대로 target_language 로 사용 가능(자유입력).
@@ -128,6 +129,7 @@ export function Upload() {
         </div>
 
         <aside className="space-y-6">
+          <VideoPreview path={selectedInput} />
           <ServicesHealth services={healthQuery.data?.services} />
           <Card className="sticky top-[80px] space-y-5 rounded-[2rem] p-5">
             <div>
@@ -150,13 +152,38 @@ export function Upload() {
   );
 }
 
+// 선택한 입력 영상을 오른쪽에 미리보기(첫 프레임 섬네일 + 재생 가능)로 보여준다
+function VideoPreview({ path }: { path: string }) {
+  const url = toStaticUrl(path);
+  return (
+    <Card className="space-y-3 rounded-[2rem] p-5">
+      <div>
+        <p className="font-mono text-data-label uppercase text-data-label">Preview</p>
+        <h2 className="mt-1 font-display text-heading-sm text-primary">영상 미리보기</h2>
+      </div>
+      {url ? (
+        <video
+          key={url}
+          src={url}
+          controls
+          muted
+          preload="metadata"
+          className="aspect-video w-full rounded-[1.25rem] border border-border-hairline bg-black object-contain"
+        />
+      ) : (
+        <div className="flex aspect-video w-full items-center justify-center rounded-[1.25rem] border border-dashed border-border-hairline bg-surface-soft p-6 text-center text-body-sm text-mute">
+          영상을 선택하면 미리보기가 표시됩니다.
+        </div>
+      )}
+      <p className="truncate font-mono text-code-sm text-mute">{fileName(path)}</p>
+    </Card>
+  );
+}
+
 function ServicesHealth({ services }: { services?: Record<string, string> }) {
+  // 모든 단계를 단일 controller 컨테이너에서 실행(PIPELINE_ALL_IN_SERVICE)하므로 상태도 하나로 표시.
   const labels: Record<string, string> = {
-    controller: "controller",
-    separator: "separator",
-    diarizer: "diarizer",
-    speaker: "speaker",
-    "tts-cosyvoice": "tts",
+    controller: "pipeline",
   };
   return (
     <Card className="space-y-4 rounded-[2rem] p-5">
@@ -226,6 +253,14 @@ function Knobs({ overrides, onChange }: { overrides: RunOverrides; onChange: (ne
   return (
     <div className="grid grid-cols-1 gap-5 md:grid-cols-2">
       <LanguagePicker value={overrides.target_language ?? "Korean"} onChange={(value) => set("target_language", value)} />
+      <LanguagePicker
+        value={overrides.source_language ?? ""}
+        onChange={(value) => set("source_language", value)}
+        label="source_language"
+        hint="원본 영상 언어 — 비우면 자동"
+        placeholder="English, Korean… (비우면 자동감지)"
+        allowAuto
+      />
       <TempoStepper value={overrides.duration_fit_max_tempo ?? 1.25} onChange={(value) => set("duration_fit_max_tempo", value)} />
       <div className="space-y-2">
         <label className="text-body-sm-strong text-primary">옵션</label>
@@ -239,7 +274,21 @@ function Knobs({ overrides, onChange }: { overrides: RunOverrides; onChange: (ne
   );
 }
 
-function LanguagePicker({ value, onChange }: { value: string; onChange: (value: string) => void }) {
+function LanguagePicker({
+  value,
+  onChange,
+  label = "target_language",
+  hint = "any language — auto",
+  placeholder = "Korean, Japanese, Spanish, Vietnamese… or type any language",
+  allowAuto = false,
+}: {
+  value: string;
+  onChange: (value: string) => void;
+  label?: string;
+  hint?: string;
+  placeholder?: string;
+  allowAuto?: boolean;
+}) {
   const [query, setQuery] = useState("");
   const needle = query.trim().toLowerCase();
   const filtered = useMemo(() => {
@@ -249,15 +298,21 @@ function LanguagePicker({ value, onChange }: { value: string; onChange: (value: 
   const custom = query.trim();
   const hasExact = COSYVOICE_LANGUAGES.some((lang) => lang.label.toLowerCase() === needle);
   const isPreset = COSYVOICE_LANGUAGES.some((lang) => lang.label === value);
+  const isAuto = !value;
 
   return (
     <div className="space-y-2 md:col-span-2">
       <div className="flex items-end justify-between gap-3">
-        <label className="text-body-sm-strong text-primary">target_language</label>
-        <span className="font-mono text-code-sm text-mute">any language — auto</span>
+        <label className="text-body-sm-strong text-primary">{label}</label>
+        <span className="font-mono text-code-sm text-mute">{hint}</span>
       </div>
-      <PillInput value={query} onChange={(e) => setQuery(e.target.value)} placeholder="Korean, Japanese, Spanish, Vietnamese… or type any language" />
+      <PillInput value={query} onChange={(e) => setQuery(e.target.value)} placeholder={placeholder} />
       <div className="flex flex-wrap gap-2">
+        {allowAuto && (
+          <button type="button" onClick={() => onChange("")} className={`inline-flex h-9 items-center gap-2 rounded-full px-4 text-button-md ${isAuto ? "bg-primary text-white" : "bg-surface-soft text-primary hover:bg-surface-container"}`}>
+            자동감지
+          </button>
+        )}
         {filtered.map((lang) => {
           const selected = value === lang.label;
           return (
@@ -274,6 +329,9 @@ function LanguagePicker({ value, onChange }: { value: string; onChange: (value: 
       </div>
       {value && !isPreset && (
         <p className="text-caption-sm text-mute">선택됨: {value} — 백엔드가 언어 지시를 자동 생성합니다.</p>
+      )}
+      {allowAuto && isAuto && (
+        <p className="text-caption-sm text-mute">자동감지 — 원본 영상 언어를 ASR이 인식합니다(config 기본값 사용).</p>
       )}
     </div>
   );

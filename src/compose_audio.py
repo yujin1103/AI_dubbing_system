@@ -109,7 +109,7 @@ def compose_audio(
             )
         background_audio = background_audio * float(background_gain)
 
-    prepared: list[tuple[int, np.ndarray]] = []
+    prepared: list[tuple[int, int, np.ndarray]] = []  # (start_index, slot_end_index, audio)
     total_samples = len(background_audio)
 
     for row in timeline:
@@ -129,7 +129,8 @@ def compose_audio(
         audio = _normalize_chunk_peak(audio, per_chunk_peak_dbfs=per_chunk_peak_dbfs)
         audio = audio * float(dub_gain)
         start_index = int(round(float(row["start"]) * sample_rate))
-        prepared.append((start_index, audio))
+        slot_end_index = int(round(float(row["end"]) * sample_rate))
+        prepared.append((start_index, slot_end_index, audio))
         total_samples = max(total_samples, start_index + len(audio))
 
     if total_samples == 0 and timeline:
@@ -142,10 +143,18 @@ def compose_audio(
     # (일부 화자 세그먼트가 시간상 겹쳐 더빙이 다음 청크를 침범하면 목소리가 겹쳐 들리는 것을 방지)
     prepared.sort(key=lambda item: item[0])
     fade_samples = max(1, int(round(0.025 * sample_rate)))
-    for idx, (start_index, audio) in enumerate(prepared):
-        next_start = prepared[idx + 1][0] if idx + 1 < len(prepared) else total_samples
+    for idx, (start_index, slot_end, audio) in enumerate(prepared):
+        # 캡은 '다음 순차 턴'(현재 청크 slot 끝 이후에 시작하는 청크) 시작까지만 한다. 현재 청크 slot
+        # 안에 nested 된 짧은 동시발화(끼어듦)는 캡 기준에서 제외 — 안 그러면 긴 발화가 끼어듦 지점에서
+        # 잘려 그 뒤 내용이 통째로 사라진다(test6 51s 독백 → 끼어듦 "야"로 잘림 버그). 끼어듦 청크는
+        # 별도로 제자리에 overlay(additive mix)되어 둘 다 들린다(원본 동시발화에 충실).
+        next_start = total_samples
+        for j in range(idx + 1, len(prepared)):
+            if prepared[j][0] >= slot_end:
+                next_start = prepared[j][0]
+                break
         # 길이 맞춤은 fit_to_duration(단일 패스)이 raw 합성에서 이미 수행 → compose 는 재압축하지 않고
-        # 다음 청크 시작까지만 캡(겹침 방지). 잔여 초과는 드물며(=budget/fit 처리), 그때만 끝 페이드.
+        # 다음 순차 턴 시작까지만 캡. 잔여 초과는 드물며(=budget/fit 처리), 그때만 끝 페이드.
         end_index = min(total_samples, start_index + len(audio), next_start)
         seg_len = end_index - start_index
         if seg_len <= 0:

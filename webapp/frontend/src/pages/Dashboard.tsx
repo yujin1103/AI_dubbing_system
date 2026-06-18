@@ -170,29 +170,32 @@ function KpiCard({ label, value, hint, linkTo }: { label: string; value: number 
 }
 
 function SystemHealth({ services, ok }: { services: Record<string, string>; ok: boolean }) {
-  const order = ["controller", "separator", "diarizer", "speaker", "tts-cosyvoice"] as const;
+  // 모든 파이프라인 단계가 controller 한 컨테이너에서 실행됨(PIPELINE_ALL_IN_SERVICE=controller).
+  // separator/diarizer/speaker/tts-cosyvoice 는 별도 컨테이너가 아니라 controller 내부 단계이므로,
+  // 5개를 나열해 4개가 stopped(빨강)로 보이는 대신 단일 "더빙 파이프라인" 상태로 합쳐 표시한다.
+  const engineState = services["controller"] ?? "unknown";
+  const running = engineState === "running";
+  const tone = running
+    ? "bg-status-done/10 text-status-done"
+    : engineState === "stopped"
+      ? "bg-status-failed/10 text-status-failed"
+      : "bg-surface-container text-mute";
   return (
     <div className="rounded-[2rem] border border-border-hairline bg-surface-container-lowest p-5">
       <div className="mb-4 flex items-center justify-between">
         <div>
           <p className="font-mono text-data-label uppercase text-data-label">System Health</p>
-          <h2 className="mt-1 font-display text-heading-sm text-primary">파이프라인 서비스 5개</h2>
+          <h2 className="mt-1 font-display text-heading-sm text-primary">더빙 파이프라인</h2>
         </div>
         <span className={`rounded-full px-3 py-1 font-mono text-caption-strong ${ok ? "bg-status-done/10 text-status-done" : "bg-status-failed/10 text-status-failed"}`}>
           {ok ? "docker ok" : "docker offline"}
         </span>
       </div>
       <ul className="space-y-2">
-        {order.map((name) => {
-          const state = services[name] ?? "unknown";
-          const tone = state === "running" ? "bg-status-done/10 text-status-done" : state === "stopped" ? "bg-status-failed/10 text-status-failed" : "bg-surface-container text-mute";
-          return (
-            <li key={name} className="flex items-center justify-between rounded-[1rem] bg-surface-soft px-4 py-3">
-              <span className="font-mono text-code-sm text-primary">{name}</span>
-              <span className={`rounded-full px-3 py-1 font-mono text-caption-strong ${tone}`}>{state}</span>
-            </li>
-          );
-        })}
+        <li className="flex items-center justify-between rounded-[1rem] bg-surface-soft px-4 py-3">
+          <span className="font-mono text-code-sm text-primary">pipeline</span>
+          <span className={`rounded-full px-3 py-1 font-mono text-caption-strong ${tone}`}>{running ? "running" : engineState}</span>
+        </li>
       </ul>
     </div>
   );

@@ -72,3 +72,18 @@ stitch_modern_slick_interface/
 # 잘못 생성된 시스템 경로 (절대 추적 금지)
 C:/
 /C:/
+
+# 대용량 venv / TensorRT 작업 디렉터리 (깃 추적 제외)
+venv_trt/
+trt_work/
+
+# ASR/ASD 실험 출력 디렉터리 (대용량, 재생성 가능)
+_asd_full/
+_asd_t5/
+_asd_test/
+test4_korean_dub_v*/
+speaker_refs_test4_*/
+tmp/
+
+# 보고서/문서 바이너리 백업 (이 레포는 코드 본체만 추적)
+*.docx.bak

@@ -31,9 +31,37 @@ def _set_nested(target: dict, dotted: str, value) -> None:
     cur[parts[-1]] = value
 
 
-# UI knob 만 허용 — 그 외 base config 필드는 절대 덮어쓰지 않는다
-_OVERRIDE_MAP: dict[str, str] = {
+def _scope_paths_to_run(paths: dict, run_id: str) -> dict:
+    """런별 격리: per-run 산출물(meta/chunks/dub/output) 경로에 run_id 를 끼워 넣어
+    같은 영상의 여러 런이 서로 덮어쓰지 않게 한다. audio(분리본)·asd_tracks(얼굴+LightASD 점수)는
+    소스 영상만의 함수라 결정적·재계산 비싸 영상 단위 공유 유지(격리 제외).
+    {input_stem}/{tts_engine} 플레이스홀더는 그대로 두고 run_id 만 리터럴로 삽입(나중에 expand)."""
+    shared_video_level = {"asd_tracks_json"}
+    scoped: dict = {}
+    for key, val in paths.items():
+        if not isinstance(val, str) or key in shared_video_level:
+            scoped[key] = val
+            continue
+        if val.startswith("meta/{input_stem}/"):
+            val = "meta/{input_stem}/" + run_id + "/" + val[len("meta/{input_stem}/"):]
+        elif val.startswith("output/{input_stem}/"):
+            val = "output/{input_stem}/" + run_id + "/" + val[len("output/{input_stem}/"):]
+        elif val.startswith("chunks/{input_stem}"):
+            val = "chunks/{input_stem}/" + run_id + val[len("chunks/{input_stem}"):]
+        elif val.startswith("dub/{input_stem}"):
+            val = "dub/{input_stem}/" + run_id + val[len("dub/{input_stem}"):]
+        # audio/... 및 그 외는 공유(미변경)
+        scoped[key] = val
+    return scoped
+
+
+# UI knob 만 허용 — 그 외 base config 필드는 절대 덮어쓰지 않는다.
+# 값이 list 면 같은 override 를 여러 config 경로에 동시 적용한다(예: source_language 는
+# 번역과 ASR 양쪽이 봐야 함 — asr.language 가 명시된 config(kdrama)는 translation.source_language
+# 만 바꾸면 ASR 이 안 따라오므로 둘 다 세팅).
+_OVERRIDE_MAP: dict[str, str | list[str]] = {
     "target_language": "translation.target_language",
+    "source_language": ["translation.source_language", "asr.language"],
     "fit_to_duration": "tts.fit_to_duration",
     "duration_fit_max_tempo": "tts.duration_fit_max_tempo",
     "use_separator": "pipeline.use_separator",
@@ -51,11 +79,19 @@ def build_run_config(
     """base config 사본 → overrides 적용 → input_video 셋 → configs/runs/{run_id}.json 으로 저장."""
     config = copy.deepcopy(_load_base(base_config))
     config["input_video"] = input_video
+    config["run_id"] = run_id
+    # 런별 격리 — per-run 산출물 경로에 run_id 삽입(같은 영상 여러 런이 서로 덮어쓰던 문제 해결).
+    config["paths"] = _scope_paths_to_run(config.get("paths", {}), run_id)
 
     for field, value in overrides.model_dump(exclude_none=True).items():
         if field not in _OVERRIDE_MAP:
             continue
-        _set_nested(config, _OVERRIDE_MAP[field], value)
+        # 빈 문자열 override 는 무시 — source_language="" = 자동감지(base config 값 유지)
+        if isinstance(value, str) and not value.strip():
+            continue
+        targets = _OVERRIDE_MAP[field]
+        for dotted in (targets if isinstance(targets, list) else [targets]):
+            _set_nested(config, dotted, value)
 
     # UI 런은 단계별 실행 + 청크별 instruct/감정 편집이라 '단일 invocation' 전용 최적화를 끈다:
     #  - tts.pipelined: generate_tts_instructions 를 run_tts 에 융합해 chunk_instruction_edit/

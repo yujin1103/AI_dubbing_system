@@ -149,6 +149,25 @@ Evaluated fully automatically (caches cleared, no per-video tuning) against grou
 | silero-vad | voice activity detection | MIT |
 | emotion2vec_plus_large | emotion classification | Apache 2.0 |
 
+### Runtime Environment & Experiment Log (2026-06-18)
+
+**Verified local runtime** — single self-contained root `Capstone_dub/`:
+
+| Component | Value |
+|---|---|
+| GPU | NVIDIA RTX 5080, 16 GB VRAM |
+| Host | Windows 11 + WSL2 + Docker Desktop |
+| Driver / CUDA | driver CUDA 13.2; container base images `nvidia/cuda:12.1.1` / `12.4.1` |
+| Python | 3.10 (CPU services) – 3.12 (GPU services), one venv per service |
+
+Models load fully offline from the in-repo `media/model_cache` mount. `docker-compose.override.yml` repins `HF_HOME` / `MODELSCOPE_CACHE` / `TORCH_HOME` / `ERES2NETV2_CACHE_DIR` to `/workspace/project/...` so no re-download occurs. `src/daemon_lifecycle.py` juggles the diarize (8903) / ASR (8902) daemons one at a time to fit the single 16 GB GPU. Full verified model-path table: `PROJECT_CONTEXT.md`.
+
+**Active docker-compose services**: `controller, separator, diarizer, pyannote, face, speaker, vibevoice-asr, tts-cosyvoice, webapp-backend, webapp-frontend`.
+
+**Experimental / comparison paths explored** (isolated containers, not all kept in the active compose): NeMo TitaNet & Sortformer diarization, pyannote-community, MOSS-TTS, VibeVoice ASR, visual ASD (LightASD + insightface) speaker re-assignment.
+
+**Recent ASR experiments**: full-audio ASR + Viterbi word-to-chunk assignment to cut short-chunk word-drop / hallucination — now consolidated into the modular `src/run_asr.py` and `src/repair_patches/boost_subchunk_asr.py` (the earlier standalone `scripts/full_boost_asr.py` / `window_asr.py` prototypes were folded in and removed).
+
 ---
 ---
 
@@ -517,6 +536,25 @@ WORD_SIDE_SIM_MIN=0.40
 | BS-RoFormer | vocals/instruments separation | MIT |
 | silero-vad | voice activity detection | MIT |
 | emotion2vec_plus_large | emotion classification | Apache 2.0 |
+
+## 런타임 환경 + 실험 기록 (2026-06-18)
+
+**검증된 로컬 런타임** — 단일 자족 루트 `Capstone_dub/`:
+
+| 항목 | 값 |
+|---|---|
+| GPU | NVIDIA RTX 5080, 16 GB VRAM |
+| 호스트 | Windows 11 + WSL2 + Docker Desktop |
+| 드라이버 / CUDA | 드라이버 CUDA 13.2 / 컨테이너 base 이미지 `nvidia/cuda:12.1.1`·`12.4.1` |
+| Python | 3.10(CPU 서비스) ~ 3.12(GPU 서비스), 서비스별 venv |
+
+모델은 레포 내 `media/model_cache` 마운트에서 **완전 오프라인 로드**된다. `docker-compose.override.yml`이 `HF_HOME`·`MODELSCOPE_CACHE`·`TORCH_HOME`·`ERES2NETV2_CACHE_DIR`을 `/workspace/project/...`로 교정해 재다운로드가 발생하지 않는다. `src/daemon_lifecycle.py`가 단일 16 GB GPU에 맞춰 diarize(8903)/ASR(8902) 데몬을 한 번에 하나씩 juggling한다. 전수 검증된 모델 경로표는 `PROJECT_CONTEXT.md` 참조.
+
+**활성 docker-compose 서비스**: `controller, separator, diarizer, pyannote, face, speaker, vibevoice-asr, tts-cosyvoice, webapp-backend, webapp-frontend`.
+
+**실험·비교 경로 (격리 컨테이너, 활성 compose에 전부 남기지는 않음)**: NeMo TitaNet·Sortformer 화자분리, pyannote-community, MOSS-TTS, VibeVoice ASR, 시각 ASD(LightASD + insightface) 화자 재배정.
+
+**최근 ASR 실험**: 통짜 오디오 ASR + Viterbi 단어-청크 배정으로 짧은 청크 단어 유실/환각 완화 — 현재는 모듈화된 `src/run_asr.py`와 `src/repair_patches/boost_subchunk_asr.py`로 통합(초기 standalone `scripts/full_boost_asr.py`·`window_asr.py` 프로토타입은 흡수·삭제됨).
 
 ## License
 

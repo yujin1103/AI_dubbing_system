@@ -84,6 +84,13 @@ def build_step_runtime(config: dict[str, Any]) -> dict[StepName, StepRuntime]:
         "redirect_nonspeech":        StepRuntime(service="separator", tool=vad_model),
         "diarize":                   StepRuntime(service="diarizer", tool=diarize_tool),
         "rttm_to_json":              StepRuntime(service="controller", tool=None),
+        "face_clustering":           StepRuntime(service="face", tool="insightface+lightasd"),
+        "build_repair_inputs":       StepRuntime(service="controller", tool=asr_tool),
+        "apply_preserved_repair":    StepRuntime(
+            service="diarizer",
+            tool="4way-fusion+repair" if bool(deep_get(config, ("preserved_repair", "enabled"), False)) else "skipped",
+        ),
+        "apply_gapfilled":           StepRuntime(service="controller", tool=None),
         "merge_chunks":              StepRuntime(service="controller", tool=None),
         "cut_chunks":                StepRuntime(service="controller", tool="ffmpeg"),
         "extract_emotion":           StepRuntime(service="speaker", tool=emotion_tool),

@@ -5,6 +5,10 @@ export const PIPELINE_STEPS = [
   "redirect_nonspeech",
   "diarize",
   "rttm_to_json",
+  "face_clustering",
+  "build_repair_inputs",
+  "apply_preserved_repair",
+  "apply_gapfilled",
   "merge_chunks",
   "cut_chunks",
   "extract_emotion",
@@ -52,6 +56,7 @@ export interface RunRecord {
 
 export interface RunOverrides {
   target_language?: string;
+  source_language?: string;
   fit_to_duration?: boolean;
   duration_fit_max_tempo?: number;
   use_separator?: boolean;
@@ -114,6 +119,8 @@ export interface ReferenceCandidate {
   wav?: string | null;
   accepted: boolean;
   score?: number | null;
+  mos?: number | null;
+  mos_recommended?: boolean;
   warnings: string[];
   critical_flags: string[];
 }
@@ -183,7 +190,8 @@ export type ActivityKind =
   | "chunk_speaker_edit"
   | "chunk_reference_edit"
   | "chunk_redub"
-  | "step_rerun";
+  | "step_rerun"
+  | "mos_scored";
 
 export interface ActivityEvent {
   ts: number;
@@ -268,6 +276,7 @@ export const api = {
   listChunks: (id: string) => request<ChunkRow[]>("GET", `/api/runs/${id}/chunks`),
   getChunk: (id: string, chunkId: string) => request<ChunkRow>("GET", `/api/runs/${id}/chunks/${chunkId}`),
   getSpeakerReferenceBank: (id: string) => request<Record<string, ReferenceCandidate[]>>("GET", `/api/runs/${id}/speaker-reference-bank`),
+  scoreSpeakerReferenceBank: (id: string) => request<Record<string, ReferenceCandidate[]>>("POST", `/api/runs/${id}/speaker-reference-bank/score`),
   patchChunk: (id: string, chunkId: string, payload: PatchChunkPayload) => request<ChunkRow>("PATCH", `/api/runs/${id}/chunks/${chunkId}`, payload),
   patchChunks: (id: string, payload: BulkPatchChunksRequest) => request<ChunkRow[]>("PATCH", `/api/runs/${id}/chunks`, payload),
   redubChunk: (id: string, chunkId: string) => request<RunRecord>("POST", `/api/runs/${id}/chunks/${chunkId}/redub`),

@@ -24,3 +24,18 @@ webapp/frontend/dist/
 webapp/frontend/.vite/
 runs/
 configs/runs/
+# 대용량 비-webapp 트리 — 어떤 Dockerfile 도 이 디렉토리를 COPY 하지 않으며(런타임은 compose
+# volume bind-mount 로 제공), 빌드 컨텍스트에 넣을 필요가 없다. 특히 CosyVoice/ 는 깨진 git 심링크
+# (local -> ../cosyvoice/local 등)가 있어 Windows 빌드 컨텍스트 sender 가 실패한다. 또 media/·trt_work/·
+# CosyVoice/ 는 합쳐 160GB+ 라 제외해야 컨텍스트 tar 가 현실적인 시간 안에 끝난다.
+CosyVoice/
+media/
+trt_work/
+gfpgan/
+v195_engine/
+full_dubbing_pipeline/
+*.docx
+# 호스트 venv 들은 Linux lib64 -> lib 심링크가 있어 Windows 컨텍스트 sender 가 못 읽는다.
+# 어떤 이미지도 COPY 하지 않으므로 전부 제외(.venv 외 venv_trt/venv_lipsync/venv_asr/...).
+venv*/
+**/lib64

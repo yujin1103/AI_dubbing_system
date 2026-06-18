@@ -790,6 +790,14 @@ function ChunkDetail({
     onSuccess: (res) => setPreview({ instruction: res.instruction, source: res.source }),
   });
 
+  // MOS 추천 채점 — controller 에서 MOS 모델로 화자별 레퍼런스 후보를 채점, 최고 MOS 에 추천 표시.
+  // 기존 후보/선택은 불변(추천 배지만 추가). blocking ~30-60s.
+  const refBankClient = useQueryClient();
+  const scoreMosMutation = useMutation({
+    mutationFn: () => api.scoreSpeakerReferenceBank(runId),
+    onSuccess: (data) => refBankClient.setQueryData(["speaker-reference-bank", runId], data),
+  });
+
   // 새 청크 선택 시 편집 상태 초기화
   useEffect(() => {
     setEqEdit(false);
@@ -990,9 +998,20 @@ function ChunkDetail({
           </div>
           {referenceModeDraft === "speaker_bank" ? (
             <div className="rounded-[1.5rem] border border-border-hairline bg-surface-soft p-3">
-              <div className="mb-3 flex items-center justify-between">
+              <div className="mb-3 flex items-center justify-between gap-2">
                 <p className="font-mono text-data-label uppercase text-data-label">bank candidates</p>
-                <span className="font-mono text-caption-sm text-mute">{acceptedCandidates.length}/{referenceCandidates.length} accepted</span>
+                <div className="flex items-center gap-2">
+                  <span className="font-mono text-caption-sm text-mute">{acceptedCandidates.length}/{referenceCandidates.length} accepted</span>
+                  <button
+                    type="button"
+                    onClick={() => scoreMosMutation.mutate()}
+                    disabled={scoreMosMutation.isPending}
+                    title="MOS 모델로 화자별 후보를 채점해 가장 깨끗한 음성을 추천합니다(기존 선택은 유지)"
+                    className="rounded-full border border-border-hairline bg-white px-2 py-0.5 text-[10px] font-semibold text-primary hover:border-primary disabled:opacity-50"
+                  >
+                    {scoreMosMutation.isPending ? "MOS 채점 중…" : "★ MOS로 추천"}
+                  </button>
+                </div>
               </div>
               {referenceCandidates.length ? (
                 <div className="space-y-2">
@@ -1112,11 +1131,15 @@ function ReferenceCandidateRow({
             <span className={`rounded-full px-2 py-0.5 text-[10px] font-semibold ${candidate.accepted ? "bg-status-done/10 text-status-done" : "bg-term-yellow/10 text-term-yellow"}`}>
               {candidate.accepted ? "OK" : "CHECK"}
             </span>
+            {candidate.mos_recommended ? (
+              <span className="rounded-full bg-primary/10 px-2 py-0.5 text-[10px] font-semibold text-primary">★ MOS 추천</span>
+            ) : null}
           </div>
           <p className="mt-1 line-clamp-2 text-caption-sm text-secondary">{candidate.text_src || "No transcript"}</p>
           <p className="mt-1 font-mono text-caption-sm text-mute">
             {formatRange(candidate.start, candidate.end)} · {formatDuration(candidate.duration)}
             {candidate.score != null ? ` · score ${candidate.score.toFixed(2)}` : ""}
+            {candidate.mos != null ? ` · MOS ${candidate.mos.toFixed(2)}` : ""}
           </p>
           {candidate.critical_flags.length ? (
             <p className="mt-1 font-mono text-caption-sm text-term-yellow">{candidate.critical_flags.join(", ")}</p>

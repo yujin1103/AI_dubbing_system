@@ -13,6 +13,9 @@ STEP_SERVICE: dict[StepName, str] = {
     "diarize": "diarizer",
     "rttm_to_json": "controller",
     "face_clustering": "face",
+    "build_repair_inputs": "controller",  # fusion diar+vocals+faces+풀영상ASR 를 repair run_dir 형식으로 조립(ASR 데몬 호출)
+    "apply_preserved_repair": "diarizer",  # 8 repair patch 를 /opt/venv_diarizen subprocess 로 실행 → diarizer 컨테이너
+    "apply_gapfilled": "controller",  # gapfilled 화자분리를 청크 입력(diarization_json)으로 export(파일 변환)
     "merge_chunks": "controller",
     "cut_chunks": "controller",
     "extract_emotion": "speaker",
@@ -39,7 +42,15 @@ def steps_in_range(from_step: StepName, to_step: StepName) -> list[StepName]:
 
 
 def resolve_service(step: StepName, *, use_separator: bool) -> str:
-    """단계별 실제 실행 서비스 — separate_audio 만 use_separator 에 따라 분기."""
+    """단계별 실제 실행 서비스 — separate_audio 만 use_separator 에 따라 분기.
+
+    PIPELINE_ALL_IN_SERVICE env 가 설정되면 모든 단계를 그 단일 서비스로 라우팅한다.
+    (예: 검증된 dubbing_pipeline:full 이미지를 controller 로 재사용 — GPU 서비스 6개를
+    새로 빌드하지 않고, 데몬+venv_lipsync 인프로세스가 다 있는 단일 풀-환경 컨테이너에서 실행.)"""
+    import os
+    all_in = os.environ.get("PIPELINE_ALL_IN_SERVICE")
+    if all_in:
+        return all_in
     if step == "separate_audio" and not use_separator:
         return "controller"
     return STEP_SERVICE[step]

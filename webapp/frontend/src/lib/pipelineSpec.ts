@@ -1,4 +1,4 @@
-// 16단계 더빙 파이프라인의 화면 표시 메타데이터
+// 20단계 더빙 파이프라인의 화면 표시 메타데이터 (src/pipeline.py:STEP_FUNCTIONS 와 동기)
 import { PIPELINE_STEPS, type StepName } from "@/api/client";
 
 export interface StepMeta {
@@ -56,6 +56,38 @@ export const PIPELINE_STEP_META: Record<StepName, StepMeta> = {
     service: "controller",
     inputs: ["diarization.rttm"],
     outputs: ["chunks.json"],
+  },
+  face_clustering: {
+    label: "Face Clustering",
+    shortLabel: "face_clustering",
+    description: "InsightFace 임베딩 + LightASD 활성화자 검출로 얼굴 클러스터를 만들어 화자분리 보정 신호로 씁니다.",
+    service: "face",
+    inputs: ["input.mp4", "diarization.json"],
+    outputs: ["faces.json", "face_clusters.json"],
+  },
+  build_repair_inputs: {
+    label: "Build Repair Inputs",
+    shortLabel: "repair_inputs",
+    description: "fusion 화자분리·보컬·얼굴·풀영상 ASR을 검증된 repair 입력(run_dir) 형식으로 조립합니다.",
+    service: "controller",
+    inputs: ["diarization.json", "dialogue.wav", "faces.json"],
+    outputs: ["repair_run_dir/"],
+  },
+  apply_preserved_repair: {
+    label: "Apply Preserved Repair",
+    shortLabel: "preserved_repair",
+    description: "검증된 4-way fusion + 8 repair patch(gap-fill·face-identity·word-split 등)로 화자분리를 보정합니다. config에서 비활성이면 건너뜁니다.",
+    service: "diarizer",
+    inputs: ["repair_run_dir/"],
+    outputs: ["*_segments_gapfilled.json"],
+  },
+  apply_gapfilled: {
+    label: "Apply Gapfilled",
+    shortLabel: "apply_gapfilled",
+    description: "보정된 gapfilled 화자분리를 청크 단계 입력으로 export합니다.",
+    service: "controller",
+    inputs: ["*_segments_gapfilled.json"],
+    outputs: ["diarization.json"],
   },
   merge_chunks: {
     label: "Merge Chunks",
@@ -149,13 +181,23 @@ export const PIPELINE_STEP_META: Record<StepName, StepMeta> = {
 
 export const PIPELINE_PHASES: PipelinePhase[] = [
   { id: "audio", label: "Audio Prep", steps: ["extract_audio", "separate_audio", "redirect_nonspeech"] },
-  { id: "diarization", label: "Diarization & ASR", steps: ["diarize", "rttm_to_json", "merge_chunks", "cut_chunks", "extract_emotion"] },
+  { id: "diarization", label: "Diarization & ASR", steps: ["diarize", "rttm_to_json", "face_clustering", "build_repair_inputs", "apply_preserved_repair", "apply_gapfilled", "merge_chunks", "cut_chunks", "extract_emotion"] },
   { id: "text", label: "Text Processing", steps: ["run_asr", "translate", "build_timeline"] },
   { id: "synthesis", label: "Synthesis", steps: ["generate_tts_instructions", "run_tts", "validate_tts", "compose_audio", "mux"] },
 ];
 
 export function getStepMeta(step: StepName): StepMeta {
-  return PIPELINE_STEP_META[step];
+  // backend 가 새 단계를 추가해도 UI 가 죽지 않도록 안전한 기본값 fallback
+  return (
+    PIPELINE_STEP_META[step] ?? {
+      label: step,
+      shortLabel: step,
+      description: "",
+      service: "controller",
+      inputs: [],
+      outputs: [],
+    }
+  );
 }
 
 export function isStepName(value: string | undefined): value is StepName {

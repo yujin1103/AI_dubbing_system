@@ -1,0 +1,6 @@
+# webapp-backend 빌드는 webapp/backend/requirements.txt 만 COPY 한다(소스 전체는 런타임에
+# compose volume 으로 bind-mount). 따라서 webapp/ 외 모든 것을 빌드 컨텍스트에서 배제해,
+# 호스트 repo 곳곳의 깨진 심링크(CosyVoice/examples/.../local, venv_trt/lib64 등 Windows 에서
+# 못 읽는 POSIX symlink)와 160GB+ 데이터 트리를 통째로 피한다.
+*
+!webapp

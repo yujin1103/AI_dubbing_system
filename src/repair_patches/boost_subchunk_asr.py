@@ -26,8 +26,13 @@ from pathlib import Path
 
 import requests
 
+import os
 ASR_URL = "http://127.0.0.1:8902/transcribe"
-BOOST_AREA = (0.0, 30.0)   # boost 처리할 시간 범위 (초)
+# 전체 구간 boost (env 로 조절). 짧은 발화는 영상 어디서나 나오므로 0~끝 전체.
+# BOOST_END=0 (기본) 이면 영상 전체 길이로 자동 설정.
+BOOST_START = float(os.environ.get("BOOST_START", "0.0"))
+BOOST_END = float(os.environ.get("BOOST_END", "0.0"))   # 0 → 전체
+BOOST_VOL = float(os.environ.get("BOOST_VOL", "3.0"))
 WIN = 4.0                  # sub-chunk 길이
 HOP = 3.0                  # 다음 sub-chunk 시작점 (overlap = WIN - HOP)
 LANG = "English"

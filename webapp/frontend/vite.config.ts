@@ -21,6 +21,8 @@ export default defineConfig({
       "/api": { target: BACKEND_HTTP, changeOrigin: true, ws: true },
       "/static": { target: BACKEND_HTTP, changeOrigin: true },
       "/ws": { target: BACKEND_WS, ws: true, changeOrigin: true },
+      // 실시간 통역 서버(controller:8910) — 페이지+WS 를 /rt 로 프록시
+      "/rt": { target: "http://controller:8910", ws: true, changeOrigin: true, rewrite: (p) => p.replace(/^\/rt/, "") },
     },
     watch: {
       usePolling: true,

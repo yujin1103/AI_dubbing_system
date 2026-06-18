@@ -1,7 +1,7 @@
 // Activity 페이지와 Dashboard cross-run feed 가 공유하는 한 이벤트 카드
 import type { ReactNode } from "react";
 import { Link } from "react-router-dom";
-import { Activity as ActivityIcon, Edit3, MessageSquare, PlayCircle, Plus, RotateCcw, Sliders, XCircle } from "lucide-react";
+import { Activity as ActivityIcon, Edit3, MessageSquare, PlayCircle, Plus, RotateCcw, Sliders, Star, XCircle } from "lucide-react";
 import type { ActivityEvent, ActivityKind } from "@/api/client";
 import { stripEndOfPrompt } from "@/lib/ttsInstruct";
 
@@ -116,6 +116,7 @@ export function kindMeta(kind: ActivityKind) {
     case "chunk_reference_edit": return { label: "Reference edit", Icon: MessageSquare, bg: "bg-primary/10", fg: "text-primary" };
     case "chunk_redub": return { label: "Chunk Redub", Icon: RotateCcw, bg: "bg-term-yellow/15", fg: "text-term-yellow" };
     case "step_rerun": return { label: "Step 재실행", Icon: PlayCircle, bg: "bg-term-yellow/15", fg: "text-term-yellow" };
+    case "mos_scored": return { label: "MOS 추천 채점", Icon: Star, bg: "bg-primary/10", fg: "text-primary" };
   }
 }
 

@@ -108,11 +108,21 @@ def list_speaker_reference_bank(record: RunRecord) -> dict[str, list[ReferenceCa
     if not rows:
         return {}
     min_prompt_sec = float(deep_get(config, ("tts", "min_prompt_sec"), 1.2) or 1.2)
+    # MOS 추천(additive): reference_mos.json 이 있으면 후보별 MOS 를 붙이고 화자별 최고 MOS 에 추천 표시.
+    # 기존 후보·정렬·선택 로직은 그대로 둔다(MOS 는 보조 신호일 뿐).
+    mos_raw = _read_json_object(_reference_mos_path_value(config))
+    mos_map: dict[str, float] = {}
+    for k, v in (mos_raw or {}).items():
+        try:
+            mos_map[str(k)] = float(v)
+        except (TypeError, ValueError):
+            continue
     grouped: dict[str, list[ReferenceCandidate]] = {}
     for row in rows:
         candidate = _reference_candidate_from_row(row, min_prompt_sec=min_prompt_sec)
         if candidate is None:
             continue
+        candidate.mos = mos_map.get(candidate.chunk_id)
         speaker = candidate.speaker or ""
         if not speaker:
             continue
@@ -127,6 +137,9 @@ def list_speaker_reference_bank(record: RunRecord) -> dict[str, list[ReferenceCa
             ),
             reverse=True,
         )
+        scored = [c for c in grouped[speaker] if c.mos is not None]
+        if scored:
+            max(scored, key=lambda c: float(c.mos or 0.0)).mos_recommended = True
     return grouped
 
 
@@ -325,6 +338,14 @@ def _chunk_overrides_path_value(config: dict[str, Any]) -> str:
     if master_path:
         return _project_relative(_resolve_project_path(master_path).with_name("chunk_overrides.json"))
     return "meta/input/chunk_overrides.json"
+
+
+def _reference_mos_path_value(config: dict[str, Any]) -> str | None:
+    """스피커 뱅크 MOS 채점 결과(reference_mos.json) — master_timeline 과 같은 디렉토리."""
+    master_path = _config_value(config, "paths.master_timeline_json")
+    if master_path:
+        return _project_relative(_resolve_project_path(master_path).with_name("reference_mos.json"))
+    return None
 
 
 def _read_json_object(path_value: str | None) -> dict[str, Any]:

@@ -685,7 +685,9 @@ def run_pipeline(
 ) -> None:
     ensure_project_layout(config)
     stop_on_error = bool(deep_get(config, ("pipeline", "stop_on_error"), True))
+    from daemon_lifecycle import prepare_step
     for step_name, handler in select_steps(only=only, from_step=from_step, to_step=to_step):
+        prepare_step(step_name)  # 16GB GPU juggling: 이 단계에 필요한 데몬만 ON, 나머지 OFF
         logger.info("Starting step: %s", step_name)
         try:
             handler(config)

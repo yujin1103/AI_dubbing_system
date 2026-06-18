@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import json
 import os
+import subprocess
 from pathlib import Path
 
 from fastapi import APIRouter, HTTPException, Query
@@ -183,6 +184,31 @@ def get_speaker_reference_bank(run_id: str) -> dict[str, list[ReferenceCandidate
     return artifacts.list_speaker_reference_bank(_get_run_or_404(run_id))
 
 
+@router.post("/{run_id}/speaker-reference-bank/score", response_model=dict[str, list[ReferenceCandidate]])
+def score_speaker_reference_bank(run_id: str) -> dict[str, list[ReferenceCandidate]]:
+    """controller 에서 MOS 모델(wav2vec2 + best.pt)로 각 화자 레퍼런스 후보의 음성품질을 채점하고
+    화자별 최고 MOS 후보에 추천 표시를 붙인다. 기존 후보·선택 로직은 불변(추천은 보조 신호).
+    blocking ~30-60s(모델 로드 1.1GB + 후보 채점)."""
+    record = _get_run_or_404(run_id)
+    _ensure_editable(record)
+    cmd = [
+        "docker", "compose",
+        "-p", pipeline_runner.COMPOSE_PROJECT,
+        "-f", pipeline_runner.COMPOSE_FILE,
+        "exec", "-T", "controller",
+        "python", "src/score_reference_mos.py", "--config", record.config_path,
+    ]
+    try:
+        proc = subprocess.run(cmd, cwd=str(PROJECT_ROOT), timeout=900, capture_output=True, text=True)
+    except subprocess.TimeoutExpired as exc:
+        raise HTTPException(status_code=504, detail="MOS scoring timed out") from exc
+    if proc.returncode != 0:
+        detail = (proc.stderr or proc.stdout or "unknown error")[-500:]
+        raise HTTPException(status_code=500, detail=f"MOS scoring failed: {detail}")
+    activity.record(run_id, "mos_scored", note=(proc.stdout or "")[-200:])
+    return artifacts.list_speaker_reference_bank(record)
+
+
 @router.patch("/{run_id}/chunks/{chunk_id}", response_model=ChunkRow)
 def patch_chunk(run_id: str, chunk_id: str, payload: PatchChunkPayload) -> ChunkRow:
     record = _get_run_or_404(run_id)
@@ -340,10 +366,9 @@ async def redub_chunk(run_id: str, chunk_id: str) -> RunRecord:
     except KeyError as exc:
         raise HTTPException(status_code=404, detail="chunk not found") from exc
     activity.record(run_id, "chunk_redub", chunk_id=chunk_id)
-    # 1) gen_tts_instructions ~ validate_tts 만 실제로 다시 돌림 (mux는 사용자가 명시 트리거)
-    _queue_steps(run_id, "generate_tts_instructions", to_step="validate_tts")
-    # 2) compose_audio + mux 도 pending 으로 마킹 — 새 dub 으로 최종 영상이 stale 함을 UI에 신호
-    run_store.reset_steps(run_id, ["compose_audio", "mux"])
+    # gen_tts_instructions ~ mux 까지 자동 재실행 — 청크 dub 뿐 아니라 최종 합성/영상까지 갱신해
+    # "청크는 반영됐는데 최종 영상은 stale" 한 부분반영 문제를 없앤다(단일·다중 리더빙 모두).
+    _queue_steps(run_id, "generate_tts_instructions", to_step="mux")
     return _get_run_or_404(run_id)
 
 
@@ -361,10 +386,9 @@ async def redub_chunks(run_id: str, payload: BulkRedubChunksRequest) -> RunRecor
         raise HTTPException(status_code=404, detail="chunk not found") from exc
     for chunk_id in chunk_ids:
         activity.record(run_id, "chunk_redub", chunk_id=chunk_id)
-    # 1) gen_tts_instructions ~ validate_tts 만 실제로 다시 돌림 (mux는 사용자가 명시 트리거)
-    _queue_steps(run_id, "generate_tts_instructions", to_step="validate_tts")
-    # 2) compose_audio + mux 도 pending 으로 마킹 — 새 dub 으로 최종 영상이 stale 함을 UI에 신호
-    run_store.reset_steps(run_id, ["compose_audio", "mux"])
+    # gen_tts_instructions ~ mux 까지 자동 재실행 — 청크 dub 뿐 아니라 최종 합성/영상까지 갱신해
+    # "청크는 반영됐는데 최종 영상은 stale" 한 부분반영 문제를 없앤다(단일·다중 리더빙 모두).
+    _queue_steps(run_id, "generate_tts_instructions", to_step="mux")
     return _get_run_or_404(run_id)
 
 

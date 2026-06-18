@@ -166,6 +166,7 @@ def transcribe_chunks(
     if _asr_daemon:
         import requests as _rq
         results = []
+        _fail = 0
         for _wav in audio_paths:
             try:
                 _resp = _rq.post(
@@ -181,6 +182,13 @@ def transcribe_chunks(
             except Exception as _e:
                 logger.warning("ASR 데몬 전사 실패 (%s): %s", _wav, _e)
                 results.append({"text": "", "language": None})
+                _fail += 1
+        # 전부 실패 = 데몬 미기동/연결불가. 빈 전사로 조용히 넘어가면 번역·더빙이 통째로 날아가므로 loud fail.
+        if audio_paths and _fail == len(audio_paths):
+            raise RuntimeError(
+                "ASR 데몬(%s) 전사 전부 실패 (%d/%d) — 데몬 미기동/연결불가. "
+                "빈 전사로 진행하지 않고 단계를 실패 처리합니다." % (_asr_daemon, _fail, len(audio_paths))
+            )
     else:
         model = Qwen3ASRModel.from_pretrained(
             str(resolve_project_path(model_dir)),
