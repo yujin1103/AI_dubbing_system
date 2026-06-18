@@ -164,7 +164,7 @@ Models load fully offline from the in-repo `media/model_cache` mount. `docker-co
 
 **Active docker-compose services**: `controller, separator, diarizer, pyannote, face, speaker, vibevoice-asr, tts-cosyvoice, webapp-backend, webapp-frontend`.
 
-**Experimental / comparison paths explored** (isolated containers, not all kept in the active compose): NeMo TitaNet & Sortformer diarization, pyannote-community, MOSS-TTS, VibeVoice ASR, visual ASD (LightASD + insightface) speaker re-assignment.
+**Auxiliary services & experiments**: `pyannote`, `face` (visual ASD), and `vibevoice-asr` run as separate compose services — `pyannote` + NeMo feed the 4-way diarization fusion (active `diarization.engine = fusion_4way`), `face` does LightASD + insightface speaker re-assignment, `vibevoice-asr` is an alternate ASR backend. A trained **MOS evaluator** (`src/mos_evaluator.py`, wav2vec2 + MLP head, scores dubbed speech 1–5) exists for TTS naturalness but is not yet wired into the active `validate_tts` (`tts.validation.enabled=false` by default). A separate real-time speech-to-speech interpreter prototype lives in `realtime_interpreter/` (not part of the batch pipeline).
 
 **Recent ASR experiments**: full-audio ASR + Viterbi word-to-chunk assignment to cut short-chunk word-drop / hallucination — now consolidated into the modular `src/run_asr.py` and `src/repair_patches/boost_subchunk_asr.py` (the earlier standalone `scripts/full_boost_asr.py` / `window_asr.py` prototypes were folded in and removed).
 
@@ -552,7 +552,7 @@ WORD_SIDE_SIM_MIN=0.40
 
 **활성 docker-compose 서비스**: `controller, separator, diarizer, pyannote, face, speaker, vibevoice-asr, tts-cosyvoice, webapp-backend, webapp-frontend`.
 
-**실험·비교 경로 (격리 컨테이너, 활성 compose에 전부 남기지는 않음)**: NeMo TitaNet·Sortformer 화자분리, pyannote-community, MOSS-TTS, VibeVoice ASR, 시각 ASD(LightASD + insightface) 화자 재배정.
+**보조 서비스 & 실험**: `pyannote`·`face`(시각 ASD)·`vibevoice-asr`가 별도 compose 서비스로 동작 — `pyannote`+NeMo는 4-way 화자분리 융합(활성 `diarization.engine = fusion_4way`), `face`는 LightASD+insightface 화자 재배정, `vibevoice-asr`는 대체 ASR 백엔드. 학습된 **MOS 평가기**(`src/mos_evaluator.py`, wav2vec2 + MLP head, 더빙 음성 1~5점)는 TTS 자연스러움 채점용으로 구현돼 있으나 활성 `validate_tts`엔 아직 미연결(`tts.validation.enabled=false` 기본). 실시간 음성↔음성 통역 프로토타입은 별도 `realtime_interpreter/`에 있다(배치 파이프라인과 분리).
 
 **최근 ASR 실험**: 통짜 오디오 ASR + Viterbi 단어-청크 배정으로 짧은 청크 단어 유실/환각 완화 — 현재는 모듈화된 `src/run_asr.py`와 `src/repair_patches/boost_subchunk_asr.py`로 통합(초기 standalone `scripts/full_boost_asr.py`·`window_asr.py` 프로토타입은 흡수·삭제됨).
 
